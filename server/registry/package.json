@@ -1,9 +1,9 @@
 {
-  "name": "magicbook-server",
+  "name": "magicbook-registry",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Magicbook server — 统一服务端: /sandbox + /opencode + /extension 三路由, local/cluster 两启动模式",
+  "description": "Magicbook registry 服务 — vsix 拓展分发（元数据/上传/下载/下架）, :7781",
   "main": "dist/main.js",
   "scripts": {
     "dev": "tsx watch src/main.ts",
@@ -13,13 +13,11 @@
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
-    "dockerode": "^4.0.2",
     "express": "^4.21.2",
     "multer": "^1.4.5-lts.1"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.5",
-    "@types/dockerode": "^3.3.31",
     "@types/express": "^4.17.21",
     "@types/multer": "^1.4.12",
     "@types/node": "^22.0.0",

@@ -9,13 +9,15 @@
  *   - URI = file:// + cwd 根 + 相对路径
  */
 
-import { Injectable } from '@opensumi/di';
+import { Injectable, Autowired } from '@opensumi/di';
 import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser';
 import { Domain } from '@opensumi/ide-core-common';
+import { IFileServiceClient } from '@opensumi/ide-file-service/lib/common';
 
 import type { FileCopyOptions, FileDeleteOptions, FileMoveOptions, FileSetContentOptions, FileStat, IFileSystem } from '../../core/commands/fs';
 import { FsToken } from '../../core/commands/fs';
 import { toFileUri, cwdRoot } from '../base';
+import { ServerFsProvider } from './provider';
 
 /** fs_base_url（sandbox 返回, 含 /fs 前缀） */
 function fsBaseUrl(): string {
@@ -73,10 +75,44 @@ function bytesToBase64(input: Uint8Array): string {
 export class FileSystemServiceImpl implements IFileSystem, ClientAppContribution {
   static instance: FileSystemServiceImpl | null = null;
 
-  /** 容器启动: 挂全局单例 */
+  @Autowired(IFileServiceClient)
+  private readonly fileService!: IFileServiceClient;
+
+  private eventSource: EventSource | null = null;
+
+  /** 容器启动: 挂全局单例 + 注册 server fs provider（explorer 数据源）+ 订阅 fs SSE */
   onStart(): void {
     (window as any).__APP_FS__ = this;
     console.log('[filesystem] service ready, fsBaseUrl:', fsBaseUrl() || '(unset)');
+    // 注册 file scheme provider → explorer / 编辑器经 opensumi 标准链路读 server fs
+    this.fileService.registerProvider('file', new ServerFsProvider());
+    console.log('[filesystem] server fs provider registered (scheme=file)');
+    this.connectEvents();
+  }
+
+  /** 订阅 /fs/events SSE, 收到变更后派发 fs:changed（explorer 等监听刷新） */
+  private connectEvents(): void {
+    const base = fsBaseUrl();
+    if (!base) return;
+    const es = new EventSource(`${base}/events`);
+    this.eventSource = es;
+    es.onmessage = (msg) => {
+      try {
+        const change = JSON.parse(msg.data);
+        const rel = change.path || '/';
+        const uri = toFileUri(rel);
+        window.dispatchEvent(new CustomEvent('fs:changed', {
+          detail: { ...change, uri },
+        }));
+      } catch {
+        /* ignore bad frame */
+      }
+    };
+    es.onerror = () => {
+      // 断线自动重连（EventSource 内置重连）
+      console.warn('[filesystem] fs events 断线, 等待重连');
+    };
+    console.log('[filesystem] fs events subscribed:', `${base}/events`);
   }
 
   private api(path: string): string {

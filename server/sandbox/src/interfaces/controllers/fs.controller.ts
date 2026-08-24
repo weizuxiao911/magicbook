@@ -8,13 +8,22 @@
 import type { Request, Response } from 'express';
 
 import type { FsService } from '../../application/fs.service';
+import type { FsEventStream } from '../../infrastructure/fs/watcher';
 
 export class FsController {
-  constructor(private readonly fs: FsService) {}
+  constructor(
+    private readonly fs: FsService,
+    private readonly events: FsEventStream,
+  ) {}
 
   /** GET /fs/cwd */
   getCwd = (_req: Request, res: Response): void => {
     res.json({ cwd: this.fs.getCwd() });
+  };
+
+  /** GET /fs/events — SSE 实时推送工作目录变更 */
+  sseEvents = (_req: Request, res: Response): void => {
+    this.events.subscribe(res);
   };
 
   /** GET /fs/dir?path= */

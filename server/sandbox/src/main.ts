@@ -1,10 +1,12 @@
 /**
- * 组合根 / 启动入口 — src/main.ts
+ * 组合根 / 启动入口 — server/sandbox/src/main.ts
  *
- * DDD 依赖装配（手动组合根）:
- *   infrastructure 实现 domain 端口 → application 编排 → interfaces 暴露 HTTP.
+ * sandbox 服务（:7780）:
+ *   - /sandbox/*   沙箱管理（返回 fs_base_url / opencode_base_url, 两者共享同一 cwd）
+ *   - /fs/*        文件系统（内置实现, 与 opencode 同一 cwd）
+ *   - opencode 生命周期（探活 + 自启 serve, cwd=workspace）
  *
- * 依赖方向: interfaces → application → domain ← infrastructure.
+ * DDD 依赖装配: infrastructure 实现 domain 端口 → application 编排 → interfaces 暴露 HTTP.
  */
 
 import express from 'express';
@@ -13,29 +15,27 @@ import { loadConfig, type ServerConfig } from './infrastructure/config';
 import { LocalSandboxRepository } from './infrastructure/sandbox/local';
 import { ClusterSandboxRepository } from './infrastructure/sandbox/cluster';
 import { LocalFsRepository } from './infrastructure/fs/local';
-import { LocalExtensionRepository } from './infrastructure/extension/local';
+import { WorkspaceWatcher, FsEventStream } from './infrastructure/fs/watcher';
 import type { SandboxRepository } from './domain/repositories/sandbox-repository';
 
 import { SandboxService } from './application/sandbox.service';
 import { FsService } from './application/fs.service';
-import { ExtensionService } from './application/extension.service';
 
 import { SandboxController } from './interfaces/controllers/sandbox.controller';
 import { FsController } from './interfaces/controllers/fs.controller';
-import { ExtensionController } from './interfaces/controllers/extension.controller';
 import { registerRoutes, type Controllers } from './interfaces/routes';
 
 function createSandboxRepository(config: ServerConfig): SandboxRepository {
-  // server 自身对外 base（沙箱返回 fs/registry 完整地址用）:
-  // 本期先按监听地址推导, 部署时可用 PUBLIC_BASE_URL 覆盖
-  const serverBase = process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${config.port}`;
+  // sandbox 服务自身对外 base（fs_base_url 用）; registry 独立服务地址（registry_url 用）
+  const sandboxBase = process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${config.port}`;
+  const registryBase = process.env.REGISTRY_URL || 'http://127.0.0.1:7781';
 
   switch (config.mode) {
     case 'cluster':
-      return new ClusterSandboxRepository(config, serverBase);
+      return new ClusterSandboxRepository(config, sandboxBase, registryBase);
     case 'local':
     default:
-      return new LocalSandboxRepository(config, serverBase);
+      return new LocalSandboxRepository(config, sandboxBase, registryBase);
   }
 }
 
@@ -43,15 +43,16 @@ function createControllers(config: ServerConfig): Controllers {
   const sandboxRepo = createSandboxRepository(config);
 
   const sandboxService = new SandboxService(sandboxRepo);
-  const fsService = new FsService(new LocalFsRepository(), config.workspaceRoot);
-  const extensionService = new ExtensionService(
-    new LocalExtensionRepository(config, 'localhost'),
-  );
+  const fsRepository = new LocalFsRepository();
+  const fsService = new FsService(fsRepository, config.workspaceRoot);
+  // 文件监听 + SSE 事件流（explorer 实时刷新数据源）
+  const watcher = new WorkspaceWatcher(config.workspaceRoot);
+  watcher.start();
+  const fsEvents = new FsEventStream(watcher);
 
   return {
     sandbox: new SandboxController(sandboxService),
-    fs: new FsController(fsService),
-    extension: new ExtensionController(extensionService, `${config.extensionDir}/uploads`),
+    fs: new FsController(fsService, fsEvents),
   };
 }
 
@@ -75,24 +76,24 @@ async function main(): Promise<void> {
 
   // 健康检查
   app.get('/health', (req, res) => {
-    res.json({ ok: true, mode: config.mode, pid: process.pid });
+    res.json({ ok: true, service: 'sandbox', mode: config.mode, pid: process.pid });
   });
 
-  // 业务路由（opencode 不经 server 代理: Local 直连上游, cluster 经 ingress 暴露）
+  // 业务路由（opencode 不经代理: Local 直连上游, cluster 经 ingress 暴露）
   registerRoutes(app, controllers);
 
   // 统一错误处理
   app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    console.error('[server] error:', err?.message || err);
+    console.error('[sandbox] error:', err?.message || err);
     res.status(err?.status || 500).json({ error: err?.message || 'internal error' });
   });
 
   app.listen(config.port, () => {
-    console.log(`[magicbook-server] listening on :${config.port}, mode=${config.mode}`);
+    console.log(`[sandbox] listening on :${config.port}, mode=${config.mode}`);
   });
 }
 
 main().catch((err) => {
-  console.error('[magicbook-server] failed to start:', err);
+  console.error('[sandbox] failed to start:', err);
   process.exit(1);
 });

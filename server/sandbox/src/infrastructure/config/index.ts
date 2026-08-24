@@ -13,15 +13,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export type ServerMode = 'local' | 'cluster';
 
 export interface ServerConfig {
-  /** HTTP 监听端口 */
+  /** HTTP 监听端口（默认 7780） */
   port: number;
   /** 启动模式 */
   mode: ServerMode;
-  /** 沙箱工作区根目录（本地模式; 集群模式由 k8s 分配） */
+  /** 沙箱工作区根目录（fs 与 opencode 共享同一 cwd） */
   workspaceRoot: string;
-  /** vsix 拓展存储目录 */
-  extensionDir: string;
-  /** 上游 opencode 地址（本地模式直接转发） */
+  /** 上游 opencode 地址（本地模式直连） */
   opencodeBaseUrl: string;
   /** 沙箱 TTL（毫秒, 集群模式闲置回收） */
   sandboxTtlMs: number;
@@ -35,10 +33,9 @@ export function loadConfig(): ServerConfig {
   const root = process.env.MAGICBOOK_ROOT || REPO_ROOT;
 
   return {
-    port: Number(process.env.SERVER_PORT || 7787),
+    port: Number(process.env.SERVER_PORT || 7780),
     mode,
     workspaceRoot: process.env.WORKSPACE_ROOT || path.join(root, 'workspace'),
-    extensionDir: process.env.EXTENSION_DIR || path.join(root, 'server', 'extensions'),
     opencodeBaseUrl: process.env.OPENCODE_BASE_URL || 'http://127.0.0.1:24096',
     sandboxTtlMs: Number(process.env.SANDBOX_TTL_MS || 30 * 60 * 1000),
   };

@@ -10,7 +10,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
 
-import type { ServerConfig } from '../config';
 import type { ExtensionRepository } from '../../domain/repositories/extension-repository';
 import type { ExtensionMeta } from '../../domain/models/extension';
 
@@ -33,12 +32,12 @@ export class LocalExtensionRepository implements ExtensionRepository {
   private readonly uploadDir: string;
 
   constructor(
-    config: ServerConfig,
+    baseDir: string,
     private readonly publicHost: string,
   ) {
-    this.vsixDir = path.join(config.extensionDir, 'vsix');
-    this.distDir = path.join(config.extensionDir, 'dist');
-    this.uploadDir = path.join(config.extensionDir, 'uploads');
+    this.vsixDir = path.join(baseDir, 'vsix');
+    this.distDir = path.join(baseDir, 'dist');
+    this.uploadDir = path.join(baseDir, 'uploads');
     fs.mkdirSync(this.vsixDir, { recursive: true });
     fs.mkdirSync(this.distDir, { recursive: true });
     fs.mkdirSync(this.uploadDir, { recursive: true });

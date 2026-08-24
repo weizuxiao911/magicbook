@@ -1,0 +1,29 @@
+{
+  "name": "magicbook-sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Magicbook sandbox 服务 — /sandbox + /fs（与 opencode 共享同一 cwd）+ opencode 生命周期, local/cluster 两模式",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "dockerode": "^4.0.2",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.5",
+    "@types/dockerode": "^3.3.31",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.5.4"
+  }
+}

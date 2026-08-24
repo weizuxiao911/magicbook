@@ -1,20 +1,19 @@
 /**
  * 路由注册 — interfaces/http/routes/index.ts
  *
- * 薄路由层: 只做 URL → Controller 映射, 业务全在 controller/service.
- * opencode 不经 server 代理（Local 直连, cluster 经 ingress 暴露）.
+ * sandbox 服务: /sandbox/* + /fs/*.
+ * opencode 不经代理（Local 直连, cluster 经 ingress 暴露）.
+ * vsix 拓展分发由独立 registry 服务提供（:7781）.
  */
 
 import { Router } from 'express';
 
 import type { SandboxController } from '../controllers/sandbox.controller';
 import type { FsController } from '../controllers/fs.controller';
-import type { ExtensionController } from '../controllers/extension.controller';
 
 export interface Controllers {
   sandbox: SandboxController;
   fs: FsController;
-  extension: ExtensionController;
 }
 
 export function registerRoutes(router: Router, c: Controllers): void {
@@ -23,8 +22,9 @@ export function registerRoutes(router: Router, c: Controllers): void {
   router.post('/sandbox', c.sandbox.create);
   router.get('/sandbox/:runtimeId/events', c.sandbox.events);
 
-  // 文件系统
+  // 文件系统（与 opencode 共享同一 cwd）
   router.get('/fs/cwd', c.fs.getCwd);
+  router.get('/fs/events', c.fs.sseEvents);
   router.get('/fs/dir', c.fs.listDir);
   router.post('/fs/dir', c.fs.mkdir);
   router.get('/fs/file', c.fs.readFile);
@@ -34,11 +34,4 @@ export function registerRoutes(router: Router, c: Controllers): void {
   router.get('/fs/search', c.fs.search);
   router.post('/fs/move', c.fs.move);
   router.post('/fs/copy', c.fs.copy);
-
-  // vsix 拓展
-  router.get('/extension', c.extension.listMetadata);
-  router.get('/extension/vsix/:file', c.extension.getVsix);
-  router.post('/extension/vsix', c.extension.postVsix);
-  router.delete('/extension/vsix/:file', c.extension.deleteVsix);
-  router.get('/extension/dist/:id/*', c.extension.getDistAsset);
 }

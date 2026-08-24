@@ -15,7 +15,7 @@ import { Domain } from '@opensumi/ide-core-common';
 
 import type { ISandbox, SandboxEvent, SandboxRuntime } from '../../core/commands/sandbox';
 import { SandboxToken } from '../../core/commands/sandbox';
-import { appBaseUrl, authHeaders } from '../base';
+import { sandboxBaseUrl, authHeaders } from '../base';
 
 @Injectable()
 @Domain(ClientAppContribution)
@@ -26,7 +26,7 @@ export class SandboxServiceImpl implements ISandbox, ClientAppContribution {
   constructor() {
     SandboxServiceImpl.instance = this;
     (window as any).__APP_SANDBOX__ = this;
-    console.log('[sandbox] service installed, appBaseUrl:', appBaseUrl() || '(unset)');
+    console.log('[sandbox] service installed, appBaseUrl:', sandboxBaseUrl() || '(unset)');
   }
 
   /** 容器启动生命周期: 自动获取 runtime 并应用协议地址（Local 模式启动即就绪） */
@@ -46,19 +46,19 @@ export class SandboxServiceImpl implements ISandbox, ClientAppContribution {
   }
 
   async get(): Promise<SandboxRuntime> {
-    const rt = await this.http<SandboxRuntime>(`${appBaseUrl()}/sandbox`);
+    const rt = await this.http<SandboxRuntime>(`${sandboxBaseUrl()}/sandbox`);
     this.runtime = rt;
     return rt;
   }
 
   async create(): Promise<SandboxRuntime> {
-    const rt = await this.http<SandboxRuntime>(`${appBaseUrl()}/sandbox`, { method: 'POST' });
+    const rt = await this.http<SandboxRuntime>(`${sandboxBaseUrl()}/sandbox`, { method: 'POST' });
     this.runtime = rt;
     return rt;
   }
 
   onEvents(runtimeId: string, handler: (e: SandboxEvent) => void): () => void {
-    const es = new EventSource(`${appBaseUrl()}/sandbox/${encodeURIComponent(runtimeId)}/events`);
+    const es = new EventSource(`${sandboxBaseUrl()}/sandbox/${encodeURIComponent(runtimeId)}/events`);
     es.onmessage = (msg) => {
       try {
         const evt = JSON.parse(msg.data) as SandboxEvent;

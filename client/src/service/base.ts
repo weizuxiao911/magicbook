@@ -1,8 +1,10 @@
 /**
  * 全局配置读取 — client/src/service/base.ts
  *
- * 纯浏览器: 所有服务地址从 window.__APP_CONFIG__ 读取（webapp 容器启动期注入）.
- * 前端只配置 APP_BASE_URL（统一 server 入口）, 其他协议地址由 server 返回后动态设置.
+ * 纯浏览器: 服务地址从 window.__APP_CONFIG__ 读取（编译期注入）:
+ *   - sandboxBaseUrl: 沙箱调度服务（.env SANDBOX_BASE_URL）
+ *   - registryBaseUrl: 拓展分发服务（.env REGISTRY_BASE_URL）
+ *   - opencode/fs 地址由 sandbox 返回后动态设置（applyRuntime 写入）
  */
 
 /** 从全局配置读取服务地址 */
@@ -11,9 +13,14 @@ export function getBaseUrlFromConfig(key: string): string {
   return config?.[key] || '';
 }
 
-/** 统一 server 入口（.env 唯一配置项） */
-export function appBaseUrl(): string {
-  return getBaseUrlFromConfig('appBaseUrl');
+/** 沙箱调度服务地址（.env SANDBOX_BASE_URL） */
+export function sandboxBaseUrl(): string {
+  return getBaseUrlFromConfig('sandboxBaseUrl');
+}
+
+/** 拓展分发服务地址（.env REGISTRY_BASE_URL） */
+export function registryBaseUrl(): string {
+  return getBaseUrlFromConfig('registryBaseUrl');
 }
 
 /**

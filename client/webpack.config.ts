@@ -205,7 +205,8 @@ export default (): webpack.Configuration => ({
     }),
     // 纯前端: 编译期从 .env 读取配置, DefinePlugin 注入为全局常量（产物无 process/node 引用）
     new webpack.DefinePlugin({
-      __APP_BASE_URL__: JSON.stringify(loadEnvVar('APP_BASE_URL', '')),
+      __APP_SANDBOX_BASE_URL__: JSON.stringify(loadEnvVar('SANDBOX_BASE_URL', '')),
+      __APP_REGISTRY_BASE_URL__: JSON.stringify(loadEnvVar('REGISTRY_BASE_URL', '')),
       __APP_DEPLOY_ENV__: JSON.stringify(process.env.DEPLOY_ENV || 'development'),
     }),
     // 第三方库（opensumi/codeblitz）浏览器 fallback: 构建期 polyfill, src 本身零 node 依赖
