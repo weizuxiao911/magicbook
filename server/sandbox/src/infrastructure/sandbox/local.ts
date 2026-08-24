@@ -20,8 +20,6 @@ export class LocalSandboxRepository implements SandboxRepository {
     private readonly config: ServerConfig,
     /** sandbox 服务自身对外 base（fs_base_url 用） */
     private readonly sandboxBase: string,
-    /** registry 独立服务 base（registry_url 用） */
-    private readonly registryBase: string,
   ) {}
 
   resolveCwd(user: string, tenant: string): string {
@@ -57,8 +55,6 @@ export class LocalSandboxRepository implements SandboxRepository {
       this.config.opencodeBaseUrl,
       // 默认 shell（终端创建用）
       defaultShell,
-      // registry 独立服务
-      `${this.registryBase.replace(/\/+$/, '')}/extension`,
       'local',
       'ready',
       tenant,

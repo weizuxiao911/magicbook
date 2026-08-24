@@ -24,7 +24,6 @@ export class ClusterSandboxRepository implements SandboxRepository {
   constructor(
     private readonly config: ServerConfig,
     private readonly sandboxBase: string,
-    private readonly registryBase: string,
   ) {}
 
   resolveCwd(user: string, tenant: string): string {

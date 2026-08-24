@@ -17,7 +17,6 @@ export interface SandboxRuntime {
   pty_base_url: string;
   /** 默认 shell（宿主机事实: darwin zsh / linux bash / win powershell） */
   default_shell: string;
-  registry_url: string;
   /** 运行模式: local（免登录直连）| cluster（需登录） */
   mode: 'local' | 'cluster';
 }

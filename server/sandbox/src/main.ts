@@ -26,14 +26,13 @@ import { registerRoutes, type Controllers } from './interfaces/routes';
 function createSandboxRepository(config: ServerConfig): SandboxRepository {
   // sandbox 服务自身对外 base（fs_base_url 用）; registry 独立服务地址（registry_url 用）
   const sandboxBase = process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${config.port}`;
-  const registryBase = process.env.REGISTRY_URL || 'http://127.0.0.1:7781';
 
   switch (config.mode) {
     case 'cluster':
-      return new ClusterSandboxRepository(config, sandboxBase, registryBase);
+      return new ClusterSandboxRepository(config, sandboxBase);
     case 'local':
     default:
-      return new LocalSandboxRepository(config, sandboxBase, registryBase);
+      return new LocalSandboxRepository(config, sandboxBase);
   }
 }
 

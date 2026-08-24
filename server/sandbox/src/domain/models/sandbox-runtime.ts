@@ -22,7 +22,6 @@ export class SandboxRuntime {
     public readonly ptyBaseUrl: string,
     /** 默认 shell（宿主机事实: darwin zsh / linux bash / win powershell, 或 $SHELL） */
     public readonly defaultShell: string,
-    public readonly registryUrl: string,
     public readonly mode: SandboxMode = 'local',
     public readonly status: SandboxStatus = 'ready',
     public readonly tenant: string = 'default',

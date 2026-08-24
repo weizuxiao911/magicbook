@@ -13,11 +13,8 @@ import { RegistryToken } from '../core/commands/registry';
 
 
 function registryUrl(): string {
-  // 优先 sandbox runtime 返回的完整 registry_url（含 /extension）;
-  // 未应用前 fallback 到 .env REGISTRY_BASE_URL
-  const raw = ((window as any).__APP_CONFIG__?.registryUrl || registryBaseUrl()).replace(/\/+$/, '');
-  // 统一返回服务根（剥离 /extension 后缀, 方法里拼 /extension）
-  return raw.replace(/\/extension$/, '');
+  // client 自己配置（编译期 REGISTRY_BASE_URL）; 统一返回服务根（剥离 /extension 后缀, 方法里拼 /extension）
+  return registryBaseUrl().replace(/\/extension$/, '');
 }
 
 /** 拓展分发服务地址（.env REGISTRY_BASE_URL, 编译期注入） */
