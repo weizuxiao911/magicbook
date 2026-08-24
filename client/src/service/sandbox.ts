@@ -13,9 +13,19 @@ import { Injectable } from '@opensumi/di';
 import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser';
 import { Domain } from '@opensumi/ide-core-common';
 
-import type { ISandbox, SandboxEvent, SandboxRuntime } from '../../core/commands/sandbox';
-import { SandboxToken } from '../../core/commands/sandbox';
-import { sandboxBaseUrl, authHeaders } from '../base';
+import type { ISandbox, SandboxEvent, SandboxRuntime } from '../core/commands/sandbox';
+import { SandboxToken } from '../core/commands/sandbox';
+
+/** 沙箱调度服务地址（.env SANDBOX_BASE_URL, 编译期注入） */
+function sandboxBaseUrl(): string {
+  return ((window as any).__APP_CONFIG__?.sandboxBaseUrl || '').replace(/\/+$/, '');
+}
+
+/** 登录身份请求头（X-User-Id） */
+function authHeaders(): Record<string, string> {
+  const auth = (window as any).__APP_AUTH__;
+  return { 'X-User-Id': auth?.getUsername?.() || 'default' };
+}
 
 @Injectable()
 @Domain(ClientAppContribution)

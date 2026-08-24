@@ -17,7 +17,7 @@ import { CommandService } from '@opensumi/ide-core-common';
 
 import { getSandboxService } from '../../service/sandbox';
 import { getAuthService } from '../../service/auth';
-import { toFileUri } from '../../service/base';
+import { toFileUri } from '../../core/commands/fs/uri';
 import { APP_CHAT_CONFIG } from '../../core/config/brand';
 import { FsToken, type IFileSystem } from '../../core/commands/fs';
 

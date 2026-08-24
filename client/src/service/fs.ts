@@ -14,10 +14,10 @@ import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser
 import { Domain } from '@opensumi/ide-core-common';
 import { IFileServiceClient } from '@opensumi/ide-file-service/lib/common';
 
-import type { FileCopyOptions, FileDeleteOptions, FileMoveOptions, FileSetContentOptions, FileStat, IFileSystem } from '../../core/commands/fs';
-import { FsToken } from '../../core/commands/fs';
-import { toFileUri, cwdRoot } from '../base';
-import { ServerFsProvider } from './provider';
+import type { FileCopyOptions, FileDeleteOptions, FileMoveOptions, FileSetContentOptions, FileStat, IFileSystem } from '../core/commands/fs';
+import { FsToken } from '../core/commands/fs';
+import { registerFsOpensumiProvider } from '../core/commands/fs/opensumi';
+import { toFileUri, cwdRoot } from '../core/commands/fs/uri';
 
 /** fs_base_url（sandbox 返回, 含 /fs 前缀） */
 function fsBaseUrl(): string {
@@ -85,7 +85,8 @@ export class FileSystemServiceImpl implements IFileSystem, ClientAppContribution
     (window as any).__APP_FS__ = this;
     console.log('[filesystem] service ready, fsBaseUrl:', fsBaseUrl() || '(unset)');
     // 注册 file scheme provider → explorer / 编辑器经 opensumi 标准链路读 server fs
-    this.fileService.registerProvider('file', new ServerFsProvider());
+    // core/commands/fs 负责 opensumi 对接（provider 实现 + 注册）, service 只提供实现
+    registerFsOpensumiProvider(this.fileService, this);
     console.log('[filesystem] server fs provider registered (scheme=file)');
     this.connectEvents();
   }

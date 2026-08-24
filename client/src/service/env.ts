@@ -8,8 +8,8 @@
 import { Injectable } from '@opensumi/di';
 import { BrowserModule } from '@opensumi/ide-core-browser';
 
-import type { IEnvService, Platform } from '../../core/commands/env';
-import { EnvToken } from '../../core/commands/env';
+import type { IEnvService, Platform } from '../core/commands/env';
+import { EnvToken } from '../core/commands/env';
 
 let _cachedPlatform: Platform | null = null;
 

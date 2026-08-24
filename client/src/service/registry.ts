@@ -8,9 +8,9 @@
 import { Injectable } from '@opensumi/di';
 import { BrowserModule } from '@opensumi/ide-core-browser';
 
-import type { ExtensionMetadata, IRegistry } from '../../core/commands/registry';
-import { RegistryToken } from '../../core/commands/registry';
-import { registryBaseUrl } from '../base';
+import type { ExtensionMetadata, IRegistry } from '../core/commands/registry';
+import { RegistryToken } from '../core/commands/registry';
+
 
 function registryUrl(): string {
   // 优先 sandbox runtime 返回的完整 registry_url（含 /extension）;
@@ -18,6 +18,11 @@ function registryUrl(): string {
   const raw = ((window as any).__APP_CONFIG__?.registryUrl || registryBaseUrl()).replace(/\/+$/, '');
   // 统一返回服务根（剥离 /extension 后缀, 方法里拼 /extension）
   return raw.replace(/\/extension$/, '');
+}
+
+/** 拓展分发服务地址（.env REGISTRY_BASE_URL, 编译期注入） */
+function registryBaseUrl(): string {
+  return ((window as any).__APP_CONFIG__?.registryBaseUrl || '').replace(/\/+$/, '');
 }
 
 @Injectable()

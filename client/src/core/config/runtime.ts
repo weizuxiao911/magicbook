@@ -15,8 +15,8 @@
 
 import { WORKSPACE_ROOT, type IAppRendererProps } from '@codeblitzjs/ide-core';
 
-import { getFileSystemService } from '../../service/filesystem';
-import { toFileUri } from '../../service/base';
+import { getFileSystemService } from '../../service/fs';
+import { toFileUri } from '../../core/commands/fs/uri';
 
 /** 相对路径 → file:// URI（根 = sandbox cwd） */
 function relToUri(filepath: string): string {

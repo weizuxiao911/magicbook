@@ -4,7 +4,7 @@ import { CommandService } from '@opensumi/ide-core-common';
 
 import { FsToken, type IFileSystem } from '@/core/commands/fs';
 import { EnvToken, type IEnvService } from '@/core/commands/env';
-import { toFileUri } from '@/service/base';
+import { toFileUri } from '@/core/commands/fs/uri';
 
 /**
  * WelcomeView — webapp 主区欢迎页

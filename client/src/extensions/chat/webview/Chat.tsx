@@ -5,7 +5,7 @@ import { SlotLocation } from '@opensumi/ide-core-browser';
 import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 
 import { FsToken, type IFileSystem } from '@/core/commands/fs';
-import { toFileUri } from '@/service/base';
+import { toFileUri } from '@/core/commands/fs/uri';
 
 import {
   aiListAgents,

@@ -11,8 +11,8 @@ import { Injectable, Autowired, INJECTOR_TOKEN, Injector } from '@opensumi/di';
 import { BrowserModule } from '@opensumi/ide-core-browser';
 import { CommandService } from '@opensumi/ide-core-common';
 
-import type { AuthEvent, IAuth } from '../../core/commands/auth';
-import { AuthToken, AUTH_CMD } from '../../core/commands/auth';
+import type { AuthEvent, IAuth } from '../core/commands/auth';
+import { AuthToken, AUTH_CMD } from '../core/commands/auth';
 
 const USER_COOKIE = 'animbook_username';
 

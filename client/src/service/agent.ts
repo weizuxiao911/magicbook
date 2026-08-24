@@ -13,8 +13,8 @@ import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser
 import { Domain } from '@opensumi/ide-core-common';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
-import type { IAgent, AgentMessage, AgentModel, AgentSession } from '../../core/commands/agent';
-import { AgentToken } from '../../core/commands/agent';
+import type { IAgent, AgentMessage, AgentModel, AgentSession } from '../core/commands/agent';
+import { AgentToken } from '../core/commands/agent';
 
 let _client: any = null;
 

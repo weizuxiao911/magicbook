@@ -1,29 +1,30 @@
 /**
- * server fs provider — service/filesystem/provider.ts
+ * fs opensumi 对接 — core/commands/fs/opensumi.ts
  *
- * opensumi 标准 FileSystemProvider（scheme='file'）: 对接 server /fs/*.
- * 注册进 IFileServiceClient 后, explorer / 编辑器经 opensumi 标准链路惰性读写 server fs.
+ * 按 opensumi FileSystemProvider 机制接入: 实现 opensumi 扩展点, 注册进 IFileServiceClient.
+ * 内部经 FsToken（IFileSystem 接口）消费 service 实现（server /fs/*）.
  *
  * 事件: onDidChangeFile 由 fs:changed（server SSE 监听）驱动, 宿主机变更实时刷新 explorer.
  */
 
-import { Emitter, Event, FileSystemProviderCapabilities } from '@opensumi/ide-core-common';
+import { Emitter, Event } from '@opensumi/ide-core-common';
 import type { Uri } from '@opensumi/ide-core-common';
-import type { FileSystemProvider, FileStat, FileType, FileChangeEvent, IFileSystemProvider } from '@opensumi/ide-file-service/lib/common';
+import type { FileStat, FileType, FileChangeEvent, FileSystemProvider, IFileSystemProvider } from '@opensumi/ide-file-service/lib/common';
 
-import { getFileSystemService } from './index';
-import { toFileUri } from '../base';
+import type { IFileSystem } from './index';
 
-export class ServerFsProvider implements IFileSystemProvider {
+/** opensumi FileSystemProvider 实现（scheme='file', 对接 server fs） */
+export class FsOpensumiProvider implements IFileSystemProvider, FileSystemProvider {
   readonly scheme = 'file';
 
-  readonly capabilities: FileSystemProviderCapabilities = FileSystemProviderCapabilities.FileReadWrite;
+  // FileSystemProviderCapabilities.FileReadWrite（const enum 运行时不可用, 直接用值）
+  readonly capabilities = 2 as any;
   readonly onDidChangeCapabilities: Event<void> = Event.None;
 
   private readonly onDidChangeFileEmitter = new Emitter<FileChangeEvent>();
   readonly onDidChangeFile: Event<FileChangeEvent> = this.onDidChangeFileEmitter.event;
 
-  constructor() {
+  constructor(private readonly fs: IFileSystem) {
     // 宿主机变更（server SSE /fs/events → fs:changed）→ 通知 explorer
     window.addEventListener('fs:changed', (e) => {
       const detail = (e as CustomEvent).detail || {};
@@ -35,11 +36,11 @@ export class ServerFsProvider implements IFileSystemProvider {
   }
 
   async stat(uri: Uri): Promise<FileStat | undefined> {
-    return getFileSystemService().getFileStat(uri.toString());
+    return this.fs.getFileStat(uri.toString());
   }
 
   async readDirectory(uri: Uri): Promise<[string, FileType][]> {
-    const stat = await getFileSystemService().getFileStat(uri.toString());
+    const stat = await this.fs.getFileStat(uri.toString());
     return (stat?.children || []).map((c) => [
       c.uri.split('/').pop() || '',
       c.isDirectory ? 2 : 1,
@@ -47,24 +48,24 @@ export class ServerFsProvider implements IFileSystemProvider {
   }
 
   async createDirectory(uri: Uri): Promise<void> {
-    await getFileSystemService().createFolder(uri.toString());
+    await this.fs.createFolder(uri.toString());
   }
 
   async readFile(uri: Uri): Promise<Uint8Array> {
-    const { content } = await getFileSystemService().resolveContent(uri.toString());
+    const { content } = await this.fs.resolveContent(uri.toString());
     return new TextEncoder().encode(content || '');
   }
 
   async writeFile(uri: Uri, content: Uint8Array, options: { create: boolean; overwrite: boolean }): Promise<void> {
-    await getFileSystemService().write(uri.toString(), content);
+    await this.fs.write(uri.toString(), content);
   }
 
   async delete(uri: Uri, options: { recursive: boolean; moveToTrash?: boolean }): Promise<void> {
-    await getFileSystemService().delete(uri.toString(), options);
+    await this.fs.delete(uri.toString(), options);
   }
 
   async rename(oldUri: Uri, newUri: Uri, options: { overwrite: boolean }): Promise<void> {
-    await getFileSystemService().move(oldUri.toString(), newUri.toString(), options);
+    await this.fs.move(oldUri.toString(), newUri.toString(), options);
   }
 
   watch(uri: Uri, options: { recursive: boolean; excludes: string[] }): number {
@@ -77,7 +78,10 @@ export class ServerFsProvider implements IFileSystemProvider {
   }
 }
 
-/** 注册 server fs provider（explorer 数据源） */
-export function registerServerFsProvider(register: (provider: IFileSystemProvider) => { dispose: () => void }): { dispose: () => void } {
-  return register(new ServerFsProvider());
+/** 注册 fs provider 到 opensumi IFileServiceClient（file scheme） */
+export function registerFsOpensumiProvider(
+  fileService: { registerProvider(scheme: string, provider: FileSystemProvider): unknown },
+  fs: IFileSystem,
+): unknown {
+  return fileService.registerProvider('file', new FsOpensumiProvider(fs));
 }

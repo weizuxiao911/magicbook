@@ -12,7 +12,7 @@ import { LoginModule } from '../../extensions/login';
 import { SandboxModule } from '../../service/sandbox';
 import { AgentModule } from '../../service/agent';
 import { RegistryModule } from '../../service/registry';
-import { FileSystemModule } from '../../service/filesystem';
+import { FileSystemModule } from '../../service/fs';
 import { EnvModule } from '../../service/env';
 import { AuthModule } from '../../service/auth';
 
