@@ -13,6 +13,10 @@ export interface SandboxRuntime {
   cwd: string;
   opencode_base_url: string;
   fs_base_url: string;
+  /** 终端（PTY）服务地址（sandbox 内置 /pty, 与 fs 同级; WebSocket 由 client 自行 http→ws） */
+  pty_base_url: string;
+  /** 默认 shell（宿主机事实: darwin zsh / linux bash / win powershell） */
+  default_shell: string;
   registry_url: string;
   /** 运行模式: local（免登录直连）| cluster（需登录） */
   mode: 'local' | 'cluster';

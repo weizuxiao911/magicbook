@@ -84,13 +84,16 @@ export class SandboxServiceImpl implements ISandbox {
       ...((window as any).__APP_CONFIG__ || {}),
       agentUrl: rt.opencode_base_url,
       fsUrl: rt.fs_base_url,
+      ptyUrl: rt.pty_base_url,
+      defaultShell: rt.default_shell,
       registryUrl: rt.registry_url,
     };
-    // runtime 就绪广播（agent/fs 等 service 监听后自建实例）
+    // runtime 就绪广播（agent/fs/terminal 等 service 监听后自建实例）
     window.dispatchEvent(new CustomEvent('runtime-ready', { detail: rt }));
     console.log('[sandbox] runtime applied:', {
       agent: rt.opencode_base_url,
       fs: rt.fs_base_url,
+      pty: rt.pty_base_url,
       registry: rt.registry_url,
     });
   }

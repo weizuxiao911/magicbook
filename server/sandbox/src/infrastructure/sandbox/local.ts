@@ -35,6 +35,10 @@ export class LocalSandboxRepository implements SandboxRepository {
 
   async ensure(user: string, tenant: string): Promise<SandboxRuntime> {
     const cwd = this.resolveCwd(user, tenant);
+    const isWin = process.platform === 'win32';
+    const defaultShell = isWin
+      ? 'powershell.exe'
+      : process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
     fs.mkdirSync(this.hostRoot(), { recursive: true });
     // opencode 探活 + 自启（不存在则启动, cwd=workspace; 与 fs 共享同一 cwd）
     await ensureOpencode(this.config);
@@ -46,6 +50,10 @@ export class LocalSandboxRepository implements SandboxRepository {
       this.config.opencodeBaseUrl,
       // fs 由 sandbox 服务内置实现（同一 cwd）
       `${base}/fs`,
+      // pty（终端）: client 直连 opencode /pty（sandbox 只管理 opencode 生命周期）
+      this.config.opencodeBaseUrl,
+      // 默认 shell（终端创建用）
+      defaultShell,
       // registry 独立服务
       `${this.registryBase.replace(/\/+$/, '')}/extension`,
       'local',

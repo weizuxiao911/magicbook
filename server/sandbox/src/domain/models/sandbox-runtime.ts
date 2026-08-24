@@ -18,6 +18,10 @@ export class SandboxRuntime {
     public readonly cwd: string,
     public readonly opencodeBaseUrl: string,
     public readonly fsBaseUrl: string,
+    /** 终端（PTY）服务地址（sandbox 内置 /pty, 与 fs 同级; WebSocket 由 client 自行 http→ws） */
+    public readonly ptyBaseUrl: string,
+    /** 默认 shell（宿主机事实: darwin zsh / linux bash / win powershell, 或 $SHELL） */
+    public readonly defaultShell: string,
     public readonly registryUrl: string,
     public readonly mode: SandboxMode = 'local',
     public readonly status: SandboxStatus = 'ready',

@@ -15,6 +15,10 @@ export interface SandboxResponse {
   cwd: string;
   opencode_base_url: string;
   fs_base_url: string;
+  /** 终端（PTY）服务地址（sandbox 内置 /pty, 与 fs 同级） */
+  pty_base_url: string;
+  /** 默认 shell（宿主机事实: darwin zsh / linux bash / win powershell） */
+  default_shell: string;
   registry_url: string;
   /** 运行模式: local（免登录直连）| cluster（需登录） */
   mode: 'local' | 'cluster';
@@ -26,6 +30,8 @@ function toDto(runtime: SandboxRuntime): SandboxResponse {
     cwd: runtime.cwd,
     opencode_base_url: runtime.opencodeBaseUrl,
     fs_base_url: runtime.fsBaseUrl,
+    pty_base_url: runtime.ptyBaseUrl,
+    default_shell: runtime.defaultShell,
     registry_url: runtime.registryUrl,
     mode: runtime.mode,
   };

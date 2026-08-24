@@ -2,9 +2,10 @@
  * 组合根 / 启动入口 — server/sandbox/src/main.ts
  *
  * sandbox 服务（:7780）:
- *   - /sandbox/*   沙箱管理（返回 fs_base_url / opencode_base_url, 两者共享同一 cwd）
+ *   - /sandbox/*   沙箱管理（返回 fs_base_url / pty_base_url / opencode_base_url; pty 由 client 直连 opencode）
  *   - /fs/*        文件系统（内置实现, 与 opencode 同一 cwd）
- *   - opencode 生命周期（探活 + 自启 serve, cwd=workspace）
+ *   - opencode 生命周期（探活 + 自启 serve, cwd=workspace; 终端 PTY 能力由 opencode /pty 提供,
+ *     pty_base_url 即 opencode 地址, client 直连）
  *
  * DDD 依赖装配: infrastructure 实现 domain 端口 → application 编排 → interfaces 暴露 HTTP.
  */
@@ -55,7 +56,6 @@ function createControllers(config: ServerConfig): Controllers {
     fs: new FsController(fsService, fsEvents),
   };
 }
-
 async function main(): Promise<void> {
   const config = loadConfig();
   const controllers = createControllers(config);

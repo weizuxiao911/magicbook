@@ -13,17 +13,19 @@ import { SandboxModule } from '../../service/sandbox';
 import { AgentModule } from '../../service/agent';
 import { RegistryModule } from '../../service/registry';
 import { FileSystemModule } from '../../service/fs';
+import { TerminalModule } from '../../service/terminal';
 import { EnvModule } from '../../service/env';
 import { AuthModule } from '../../service/auth';
 
 export function getBuiltinModules(_opts?: { vsixMetadata?: any[] }): any[] {
   return [
     TerminalNextModule,
-    // service 实现模块（注册 Token: ISandbox/IAgent/IRegistry/IFileSystem/IEnvService/IAuth）
+    // service 实现模块（注册 Token: ISandbox/IAgent/IRegistry/IFileSystem/ITerminalServicePath/IEnvService/IAuth）
     SandboxModule,
     AgentModule,
     RegistryModule,
     FileSystemModule,
+    TerminalModule,
     EnvModule,
     AuthModule,
     // 内置拓展

@@ -10,7 +10,6 @@ import { Router } from 'express';
 
 import type { SandboxController } from '../controllers/sandbox.controller';
 import type { FsController } from '../controllers/fs.controller';
-
 export interface Controllers {
   sandbox: SandboxController;
   fs: FsController;
