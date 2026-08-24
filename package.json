@@ -1,0 +1,15 @@
+{
+  "name": "magicbook",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Magicbook — C/S 架构可交互工作台：server（统一服务端）+ client（opensumi/codeblitz）",
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "build": "npm --prefix server run build && npm --prefix client run build"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.4"
+  }
+}

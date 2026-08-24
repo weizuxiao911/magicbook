@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1b1140"/>
+      <stop offset="55%" stop-color="#3b1d8f"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 底板 -->
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#bg)"/>
+  <rect x="3" y="3" width="58" height="58" rx="14" fill="none" stroke="url(#glow)" stroke-width="1" opacity="0.5"/>
+
+  <!-- 全息电路线 -->
+  <g stroke="#38bdf8" stroke-width="1" fill="none" opacity="0.55">
+    <path d="M8 20h6l3-3 3 3h4"/>
+    <path d="M8 44h5l2 2h5"/>
+    <path d="M56 20h-5l-3-3-3 3h-4"/>
+    <path d="M56 44h-5l-2 2h-5"/>
+  </g>
+  <g fill="#38bdf8" opacity="0.8">
+    <circle cx="8" cy="20" r="1.3"/>
+    <circle cx="56" cy="20" r="1.3"/>
+    <circle cx="8" cy="44" r="1.3"/>
+    <circle cx="56" cy="44" r="1.3"/>
+  </g>
+
+  <!-- 打开的书 (双层叠影 = 全息) -->
+  <g filter="url(#softGlow)">
+    <g opacity="0.35" transform="translate(-1.5 -1.5)">
+      <path d="M32 19c-3-2.4-7-3.2-10.5-2.6V44c3.5-.6 7.5.2 10.5 2.6V19z" fill="#38bdf8"/>
+      <path d="M32 19c3-2.4 7-3.2 10.5-2.6V44c-3.5-.6-7.5.2-10.5 2.6V19z" fill="#38bdf8"/>
+    </g>
+    <path d="M32 18c-3-2.4-7-3.2-10.5-2.6V45c3.5-.6 7.5.2 10.5 2.6V18z" fill="#fff" opacity="0.96"/>
+    <path d="M32 18c3-2.4 7-3.2 10.5-2.6V45c-3.5-.6-7.5.2-10.5 2.6V18z" fill="#ede9fe"/>
+  </g>
+
+  <!-- 书脊 + 光束 -->
+  <line x1="32" y1="18" x2="32" y2="47.6" stroke="#8b5cf6" stroke-width="1.6" stroke-linecap="round"/>
+  <line x1="32" y1="18" x2="32" y2="47.6" stroke="#38bdf8" stroke-width="0.6" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- 左页文字 (发光蓝) -->
+  <g stroke="#7dd3fc" stroke-width="1.8" stroke-linecap="round">
+    <line x1="14" y1="24" x2="25" y2="24"/>
+    <line x1="14" y1="29" x2="25" y2="29"/>
+    <line x1="14" y1="34" x2="22" y2="34"/>
+  </g>
+  <!-- 右页文字 (紫) -->
+  <g stroke="#a78bfa" stroke-width="1.8" stroke-linecap="round">
+    <line x1="39" y1="24" x2="50" y2="24"/>
+    <line x1="39" y1="29" x2="50" y2="29"/>
+    <line x1="42" y1="34" x2="50" y2="34"/>
+  </g>
+
+  <!-- 魔法能量星 -->
+  <g filter="url(#softGlow)">
+    <path d="M48 7l1.7 4.1 4.1 1.7-4.1 1.7L48 18.6l-1.7-4.1-4.1-1.7 4.1-1.7L48 7z" fill="#fde047"/>
+  </g>
+  <circle cx="56" cy="20" r="1.6" fill="#fde047" opacity="0.9"/>
+  <circle cx="43" cy="5.5" r="1.2" fill="#38bdf8" opacity="0.85"/>
+  <circle cx="9" cy="10" r="1" fill="#fde047" opacity="0.7"/>
+</svg>

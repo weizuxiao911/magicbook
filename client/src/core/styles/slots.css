@@ -1,0 +1,201 @@
+/* webapp slot chrome — 5 个常用槽位的视觉与间距
+ *
+ * 槽位(slot)是 OpenSumi/CodeBlitz 框架的布局原子:
+ *   top    - 顶部标题栏(由 client/src/components/TopBar 渲染)
+ *   left   - 左侧活动栏(图标) + 侧栏(资源管理器/搜索等 panel)
+ *   main   - 中央编辑区(空态由 client/src/components/LandingChrome 渲染)
+ *   right  - 右侧栏(Agent 等 panel, 由 VSIX 注入)
+ *   statusBar - 底部状态栏(由 @opensumi/ide-status-bar 提供)
+ *   bottom - 底部 panel(由 VSIX 注入)
+ *
+ * 框架只提供槽位 chrome(背景 / 边框 / 宽度 / padding); 槽位里的内容(icons / file tree /
+ * agent chat / 状态项)由 VSIX 通过 contributes.views / sumiContributes.browserViews.{slot} 注入。
+ *
+ * 类名约定:
+ *   .-app-slot                  - 通用槽位根元素(占位用, 大多数槽位已被框架自带元素覆盖)
+ *   .-app-slot-activity-bar     - 左侧活动栏(48px 宽, 纵向图标列)
+ *   .-app-slot-sidebar          - 侧栏 panel 内容区
+ *   .-app-slot-sidebar-title     - 侧栏 panel 标题
+ *   .-app-slot-editor           - 中央编辑区
+ *   .-app-slot-right-panel      - 右侧 panel 容器
+ *   .-app-slot-right-panel-head - 右侧 panel 标题栏
+ *   .-app-slot-right-panel-body - 右侧 panel 主体
+ *   .-app-slot-right-panel-foot - 右侧 panel 输入栏
+ *   .-app-slot-bottom-panel     - 底部 panel
+ */
+
+.-app-slot {
+  background: transparent;
+  color: var(--foreground, #e5e7eb);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12px;
+  user-select: none;
+}
+
+/* —— 左侧活动栏 (48px 宽, 纵向图标列) —— */
+.-app-slot-activity-bar {
+  width: 48px;
+  min-width: 48px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 0;
+  gap: 2px;
+}
+
+.-app-slot-activity-bar__icon {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--descriptionForeground, #8b929b);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.-app-slot-activity-bar__icon:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--foreground, #e5e7eb);
+}
+
+.-app-slot-activity-bar__icon.is-active {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--foreground, #e5e7eb);
+  position: relative;
+}
+
+.-app-slot-activity-bar__icon.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--foreground, #e5e7eb);
+  border-radius: 0 1px 1px 0;
+}
+
+/* —— 侧栏 panel —— */
+.-app-slot-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.-app-slot-sidebar__title {
+  height: 35px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 12px 0 20px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--descriptionForeground, #8b929b);
+}
+
+.-app-slot-sidebar__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+/* —— 中央编辑区 —— */
+.-app-slot-editor {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* —— 右侧 panel 容器(Agent / chat 等) —— */
+.-app-slot-right-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.-app-slot-right-panel__head {
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--descriptionForeground, #8b929b);
+}
+
+.-app-slot-right-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px;
+}
+
+.-app-slot-right-panel__foot {
+  flex-shrink: 0;
+  padding: 8px 12px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.-app-slot-right-panel__foot-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  cursor: text;
+  color: var(--descriptionForeground, #8b929b);
+  font-size: 13px;
+}
+
+.-app-slot-right-panel__foot-input:hover {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* —— 底部 panel —— */
+.-app-slot-bottom-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.-app-slot-bottom-panel__title {
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--descriptionForeground, #8b929b);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.-app-slot-bottom-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0;
+}

@@ -1,0 +1,36 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+out/
+*.vsix
+.webpack-cache/
+
+# 环境配置（仅 .env.example 提交到 git，其它 gitignore）
+.env
+.env.local
+.env.*.local
+.env.development
+.env.staging
+.env.production
+
+# 运行时工作区/数据
+/workspace/
+/data/
+
+# server 运行时产物（上传 vsix / 解压 dist / 上传临时文件）
+/server/extensions/
+
+# 临时
+.cache/
+*.log
+.logs/
+.tmp/
+
+# 编辑器/系统
+.DS_Store
+.idea/
+.vscode/
+.playwright-mcp/
+.userData/
