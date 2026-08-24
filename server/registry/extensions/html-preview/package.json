@@ -1,0 +1,33 @@
+{
+  "name": "magicbook-html-preview",
+  "displayName": "HTML Preview",
+  "description": "HTML 文件预览（customEditor + webview 渲染）",
+  "version": "0.1.0",
+  "publisher": "weizuxiao911",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onCustomEditor:magicbook.htmlPreview",
+    "onCommand:magicbook.htmlPreview.show"
+  ],
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "magicbook.htmlPreview",
+        "displayName": "HTML Preview",
+        "selector": [{ "filenamePattern": "*.html" }],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "magicbook.htmlPreview.show",
+        "title": "HTML: 预览当前文件"
+      }
+    ]
+  }
+}
