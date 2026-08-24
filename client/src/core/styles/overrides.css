@@ -106,11 +106,15 @@
   border: none !important;
 }
 
-/* explorer 文件树: 字体 14px + 行高 1.25 垂直居中（层级缩进保留默认, 不强制 padding） */
+/* explorer 文件树: 行高 1.5 倍（相对 14px 字体 = 21px, 默认 22 偏挤）+ 垂直居中（层级缩进保留默认, 不强制 padding） */
+[class*="file_tree_node___"] {
+  height: 21px !important;
+  line-height: 21px !important;
+}
 [class*="file_tree_node_displayname___"],
 [class*="file_tree_node_segment___"] {
   font-size: 14px !important;
-  line-height: 1.25 !important;
+  line-height: 1.5 !important;
 }
 [class*="file_tree_node_content___"] {
   display: flex !important;
