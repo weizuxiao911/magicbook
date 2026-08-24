@@ -5,6 +5,7 @@
  */
 
 import { TerminalNextModule } from '@opensumi/ide-terminal-next/lib/browser';
+import { TaskModule } from '@opensumi/ide-task/lib/browser';
 import { ActionsModule } from '../../extensions/actions';
 import { WelcomeModule } from '../../extensions/welcome';
 import { ChatModule } from '../../extensions/chat';
@@ -20,6 +21,7 @@ import { AuthModule } from '../../service/auth';
 export function getBuiltinModules(_opts?: { vsixMetadata?: any[] }): any[] {
   return [
     TerminalNextModule,
+    TaskModule,
     // service 实现模块（注册 Token: ISandbox/IAgent/IRegistry/IFileSystem/ITerminalServicePath/IEnvService/IAuth）
     SandboxModule,
     AgentModule,

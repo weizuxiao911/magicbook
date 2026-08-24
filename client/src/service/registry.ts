@@ -1,25 +1,49 @@
 /**
- * registry 实现 — service/registry/index.ts
+ * registry 实现 — service/registry.ts
  *
- * implements core/commands/registry 的 IRegistry: 对接 server /extension/*.
- * 启动期拉取 vsix 元数据 → 填充 __APP_REGISTRY_METADATA__（codeblitz ext host 加载）.
+ * implements core/commands/registry 的 IRegistry: 对接 registry 分发服务（:7781, HTTPS, kt-ext 协议）.
+ *   - 启动期拉取 /metadata.json（codeblitz IExtensionBasicMetadata 完整字段）→ __APP_REGISTRY_METADATA__
+ *   - 覆盖 kt-ext 静态资源解析 → 直连 registry 真实地址（自签证书需本机信任, 部署用正式证书）
  */
 
 import { Injectable } from '@opensumi/di';
-import { BrowserModule } from '@opensumi/ide-core-browser';
+import { BrowserModule, Domain, URI } from '@opensumi/ide-core-browser';
+import { StaticResourceContribution, StaticResourceService } from '@opensumi/ide-core-browser/lib/static-resource';
+import { EXT_SCHEME } from '@codeblitzjs/ide-sumi-core/lib/common/constant';
 
 import type { ExtensionMetadata, IRegistry } from '../core/commands/registry';
 import { RegistryToken } from '../core/commands/registry';
 
-
-function registryUrl(): string {
-  // client 自己配置（编译期 REGISTRY_BASE_URL）; 统一返回服务根（剥离 /extension 后缀, 方法里拼 /extension）
-  return registryBaseUrl().replace(/\/extension$/, '');
-}
-
-/** 拓展分发服务地址（.env REGISTRY_BASE_URL, 编译期注入） */
+/** registry 服务地址（编译期 REGISTRY_BASE_URL 注入; HTTPS, kt-ext 协议） */
 function registryBaseUrl(): string {
   return ((window as any).__APP_CONFIG__?.registryBaseUrl || '').replace(/\/+$/, '');
+}
+
+/**
+ * kt-ext 静态资源贡献 — 覆盖 codeblitz 默认的 kt-ext→https 解析.
+ * codeblitz 默认把 kt-ext://<host>/<id> 转 https://<host>/<id>; 这里改为直连 registryBaseUrl,
+ * 让扩展代码/资源从 registry 加载.
+ */
+@Injectable()
+@Domain(StaticResourceContribution)
+export class RegistryStaticResourceContribution implements StaticResourceContribution {
+  registerStaticResolver(service: StaticResourceService): void {
+    const base = registryBaseUrl();
+    service.registerStaticResourceProvider({
+      scheme: EXT_SCHEME,
+      resolveStaticResource: (uri) => {
+        const path = uri.path.toString();
+        // 保留原 host（registry 扩展 / 内置 marketplace 资源各自命中）; 仅 kt-ext → https
+        const scheme = uri.scheme === 'https' || uri.scheme === 'http' ? uri.scheme : base.startsWith('https') ? 'https' : 'http';
+        return URI.from({
+          scheme,
+          authority: uri.authority || new URL(base).host,
+          path: `${path}`,
+        });
+      },
+      roots: [base],
+    });
+  }
 }
 
 @Injectable()
@@ -27,9 +51,9 @@ export class RegistryServiceImpl implements IRegistry {
   static instance: RegistryServiceImpl | null = null;
 
   async listMetadata(): Promise<ExtensionMetadata[]> {
-    const base = registryUrl();
+    const base = registryBaseUrl();
     if (!base) return [];
-    const res = await fetch(`${base}/extension`, { headers: { Accept: 'application/json' } });
+    const res = await fetch(`${base}/metadata.json`, { headers: { Accept: 'application/json' } });
     if (!res.ok) throw new Error(`registry metadata fetch failed: ${res.status}`);
     const json = await res.json();
     return Array.isArray(json) ? json : [];
@@ -39,7 +63,7 @@ export class RegistryServiceImpl implements IRegistry {
     try {
       const metadata = await this.listMetadata();
       (window as any).__APP_REGISTRY_METADATA__ = metadata;
-      console.log('[registry] metadata 拉取 OK:', metadata.length, 'entries');
+      console.log('[registry] metadata 拉取 OK:', metadata.length, 'entries:', metadata.map((m) => m.extension.name).join(', '));
       return metadata;
     } catch (e: any) {
       console.warn('[registry] metadata 拉取失败:', e?.message);
@@ -49,12 +73,12 @@ export class RegistryServiceImpl implements IRegistry {
   }
 
   getVsixUrl(name: string): string {
-    const base = registryUrl();
-    return `${base}/extension/vsix/${encodeURIComponent(name)}`;
+    const base = registryBaseUrl();
+    return `${base}/vsix/${encodeURIComponent(name)}`;
   }
 
   isReady(): boolean {
-    return !!registryUrl();
+    return !!registryBaseUrl();
   }
 }
 
@@ -65,7 +89,12 @@ export function getRegistryService(): IRegistry {
 
 @Injectable()
 export class RegistryModule extends BrowserModule {
-  providers = [{ token: RegistryToken, useFactory: () => getRegistryService() }];
+  providers = [
+    RegistryStaticResourceContribution,
+    { token: RegistryToken, useFactory: () => getRegistryService() },
+  ];
+
+  contributionProvider = [StaticResourceContribution];
 }
 
 /** 安装全局单例 */

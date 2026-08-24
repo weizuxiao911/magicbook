@@ -8,7 +8,9 @@
   "engines": {
     "vscode": "^1.75.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "main": "./extension.js",
   "activationEvents": [
     "onCustomEditor:magicbook.htmlPreview",
@@ -19,7 +21,11 @@
       {
         "viewType": "magicbook.htmlPreview",
         "displayName": "HTML Preview",
-        "selector": [{ "filenamePattern": "*.html" }],
+        "selector": [
+          {
+            "filenamePattern": "*.html"
+          }
+        ],
         "priority": "default"
       }
     ],
@@ -29,5 +35,6 @@
         "title": "HTML: 预览当前文件"
       }
     ]
-  }
+  },
+  "browser": "./extension.js"
 }

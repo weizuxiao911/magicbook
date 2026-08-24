@@ -1,0 +1,15 @@
+# 依赖
+node_modules/
+
+# 构建产物
+out/
+dist/
+*.vsix
+
+# webview 构建产物
+webview/dist/
+
+# 临时
+.cache/
+*.log
+.DS_Store

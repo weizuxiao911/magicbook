@@ -24,9 +24,11 @@ function renderPreview(html) {
 }
 
 function activate(context) {
+  console.log('[html-preview] activate called');
   // customEditor provider: html 文件 → webview 渲染预览（文档变更实时刷新）
   const provider = {
     async resolveCustomTextEditor(document, webviewPanel, _token) {
+      console.log('[html-preview] resolveCustomTextEditor:', document.uri.toString());
       const update = () => {
         webviewPanel.webview.html = renderPreview(document.getText());
       };
