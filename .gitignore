@@ -19,10 +19,7 @@ out/
 /workspace/
 /data/
 
-# server 拓展: 源码在 extensions/<name>/ 入库; 产物（上传 vsix / 解压 dist / 上传临时）忽略
-/server/extensions/vsix/
-/server/extensions/dist/
-/server/extensions/uploads/
+# server 拓展源码（server/extensions/<name>/ 入库）; 分发存储产物归 registry（registry/.gitignore）
 
 # 临时
 .cache/

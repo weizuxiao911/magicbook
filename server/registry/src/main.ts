@@ -18,8 +18,8 @@ import { registerRoutes } from './interfaces/routes';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.PORT || 7781);
-// registry 服务存储根（registry/extensions/）
-const STORE_DIR = process.env.STORE_DIR || path.resolve(__dirname, '..', '..', 'extensions');
+// registry 服务存储根（registry/extensions/: vsix/dist/uploads, 分发运行时数据）
+const STORE_DIR = process.env.STORE_DIR || path.resolve(__dirname, '..', 'extensions');
 const PUBLIC_HOST = process.env.PUBLIC_HOST || `localhost:${PORT}`;
 
 function main(): void {

@@ -1,0 +1,5 @@
+# 分发存储产物（vsix 原包 / 解压产物 / 上传缓存）不入库
+extensions/vsix/
+extensions/dist/
+extensions/uploads/
+*.vsix
