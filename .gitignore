@@ -19,8 +19,10 @@ out/
 /workspace/
 /data/
 
-# server 运行时产物（上传 vsix / 解压 dist / 上传临时文件）
-/server/extensions/
+# server 拓展: 源码在 extensions/<name>/ 入库; 产物（上传 vsix / 解压 dist / 上传临时）忽略
+/server/extensions/vsix/
+/server/extensions/dist/
+/server/extensions/uploads/
 
 # 临时
 .cache/
