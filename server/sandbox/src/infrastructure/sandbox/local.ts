@@ -3,7 +3,7 @@
  *
  * 本地模式: 无独立容器, cwd 即 workspace 本身（workspaceRoot/, 不按用户分目录）.
  *   - opencode: 直接使用配置的上游 opencodeBaseUrl（生命周期: 探活 + 自启, cwd=workspace）
- *   - fs: sandbox 服务内置（fs_base_url = 自身 /fs, 与 opencode 同一 cwd）
+ *   - fs: 独立服务（fs_base_url = :24097, 生命周期由 sandbox 管理, 与 opencode 同一 cwd）
  *   - registry: 独立服务（registry_url 由 REGISTRY_URL 配置）
  */
 
@@ -13,6 +13,7 @@ import type { ServerConfig } from '../config';
 import type { SandboxRepository } from '../../domain/repositories/sandbox-repository';
 import { SandboxRuntime } from '../../domain/models/sandbox-runtime';
 import { ensureOpencode } from '../opencode/lifecycle';
+import { ensureFs } from '../fs/lifecycle';
 
 export class LocalSandboxRepository implements SandboxRepository {
   constructor(
@@ -42,14 +43,16 @@ export class LocalSandboxRepository implements SandboxRepository {
     fs.mkdirSync(this.hostRoot(), { recursive: true });
     // opencode 探活 + 自启（不存在则启动, cwd=workspace; 与 fs 共享同一 cwd）
     await ensureOpencode(this.config);
+    // fs 服务探活 + 自启（独立服务 :24097, 与 opencode 同级）
+    await ensureFs(this.config);
     const base = this.sandboxBase.replace(/\/+$/, '');
     return new SandboxRuntime(
       user,
       cwd,
       // Local 模式: client 直连上游 opencode（不经代理转发）
       this.config.opencodeBaseUrl,
-      // fs 由 sandbox 服务内置实现（同一 cwd）
-      `${base}/fs`,
+      // fs 独立服务（:24097, sandbox 管理生命周期; 与 opencode 同一 cwd）
+      this.config.fsBaseUrl,
       // pty（终端）: client 直连 opencode /pty（sandbox 只管理 opencode 生命周期）
       this.config.opencodeBaseUrl,
       // 默认 shell（终端创建用）

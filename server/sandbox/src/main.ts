@@ -3,9 +3,7 @@
  *
  * sandbox 服务（:7780）:
  *   - /sandbox/*   沙箱管理（返回 fs_base_url / pty_base_url / opencode_base_url; pty 由 client 直连 opencode）
- *   - /fs/*        文件系统（内置实现, 与 opencode 同一 cwd）
- *   - opencode 生命周期（探活 + 自启 serve, cwd=workspace; 终端 PTY 能力由 opencode /pty 提供,
- *     pty_base_url 即 opencode 地址, client 直连）
+ *   - fs/pty 为独立服务（fs:24097 / opencode:24096, 生命周期由 sandbox 管理; client 直连地址）
  *
  * DDD 依赖装配: infrastructure 实现 domain 端口 → application 编排 → interfaces 暴露 HTTP.
  */
@@ -15,15 +13,14 @@ import express from 'express';
 import { loadConfig, type ServerConfig } from './infrastructure/config';
 import { LocalSandboxRepository } from './infrastructure/sandbox/local';
 import { ClusterSandboxRepository } from './infrastructure/sandbox/cluster';
-import { LocalFsRepository } from './infrastructure/fs/local';
-import { WorkspaceWatcher, FsEventStream } from './infrastructure/fs/watcher';
+
 import type { SandboxRepository } from './domain/repositories/sandbox-repository';
 
 import { SandboxService } from './application/sandbox.service';
-import { FsService } from './application/fs.service';
+
 
 import { SandboxController } from './interfaces/controllers/sandbox.controller';
-import { FsController } from './interfaces/controllers/fs.controller';
+
 import { registerRoutes, type Controllers } from './interfaces/routes';
 
 function createSandboxRepository(config: ServerConfig): SandboxRepository {
@@ -44,16 +41,9 @@ function createControllers(config: ServerConfig): Controllers {
   const sandboxRepo = createSandboxRepository(config);
 
   const sandboxService = new SandboxService(sandboxRepo);
-  const fsRepository = new LocalFsRepository();
-  const fsService = new FsService(fsRepository, config.workspaceRoot);
-  // 文件监听 + SSE 事件流（explorer 实时刷新数据源）
-  const watcher = new WorkspaceWatcher(config.workspaceRoot);
-  watcher.start();
-  const fsEvents = new FsEventStream(watcher);
 
   return {
     sandbox: new SandboxController(sandboxService),
-    fs: new FsController(fsService, fsEvents),
   };
 }
 async function main(): Promise<void> {

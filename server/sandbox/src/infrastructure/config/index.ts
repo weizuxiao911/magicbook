@@ -21,6 +21,8 @@ export interface ServerConfig {
   workspaceRoot: string;
   /** 上游 opencode 地址（本地模式直连） */
   opencodeBaseUrl: string;
+  /** fs 服务地址（独立服务 :24097, 生命周期由 sandbox 管理; 与 opencode 共享 cwd） */
+  fsBaseUrl: string;
   /** 沙箱 TTL（毫秒, 集群模式闲置回收） */
   sandboxTtlMs: number;
 }
@@ -37,6 +39,7 @@ export function loadConfig(): ServerConfig {
     mode,
     workspaceRoot: process.env.WORKSPACE_ROOT || path.join(root, 'workspace'),
     opencodeBaseUrl: process.env.OPENCODE_BASE_URL || 'http://127.0.0.1:24096',
+    fsBaseUrl: process.env.FS_BASE_URL || 'http://127.0.0.1:24097',
     sandboxTtlMs: Number(process.env.SANDBOX_TTL_MS || 30 * 60 * 1000),
   };
 }
