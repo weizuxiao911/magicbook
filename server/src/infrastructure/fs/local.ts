@@ -62,7 +62,7 @@ export class LocalFsRepository implements FsRepository {
     } else {
       fs.writeFileSync(full, JSON.stringify(body ?? ''), 'utf-8');
     }
-    return { ok: true, path: full };
+    return { ok: true, path: p };
   }
 
   async remove(cwd: string, p: string): Promise<void> {
@@ -81,7 +81,7 @@ export class LocalFsRepository implements FsRepository {
     }
     const st = fs.statSync(full);
     return {
-      path: full,
+      path: p,
       type: st.isDirectory() ? 'directory' : 'file',
       size: st.size,
       mtime: st.mtime.toISOString(),
@@ -106,5 +106,35 @@ export class LocalFsRepository implements FsRepository {
     };
     walk(full, 0);
     return results;
+  }
+
+  async move(cwd: string, from: string, to: string, overwrite?: boolean): Promise<void> {
+    const src = resolveSafe(cwd, from);
+    const dst = resolveSafe(cwd, to);
+    if (fs.existsSync(dst)) {
+      if (!overwrite) {
+        const err = new Error(`target exists: ${to}`) as Error & { status?: number };
+        err.status = 409;
+        throw err;
+      }
+      fs.rmSync(dst, { recursive: true, force: true });
+    }
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.renameSync(src, dst);
+  }
+
+  async copy(cwd: string, from: string, to: string, overwrite?: boolean): Promise<void> {
+    const src = resolveSafe(cwd, from);
+    const dst = resolveSafe(cwd, to);
+    if (fs.existsSync(dst)) {
+      if (!overwrite) {
+        const err = new Error(`target exists: ${to}`) as Error & { status?: number };
+        err.status = 409;
+        throw err;
+      }
+      fs.rmSync(dst, { recursive: true, force: true });
+    }
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.cpSync(src, dst, { recursive: true });
   }
 }

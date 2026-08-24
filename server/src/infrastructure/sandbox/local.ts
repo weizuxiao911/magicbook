@@ -21,13 +21,18 @@ export class LocalSandboxRepository implements SandboxRepository {
   ) {}
 
   resolveCwd(user: string, tenant: string): string {
-    // 本地模式: cwd 就是 workspace 本身
+    // 本地模式: cwd 是相对地址（/workspace）, 供 client 做 file:// 根与 opencode 共享
+    return '/workspace';
+  }
+
+  /** 宿主机绝对工作区根（fs 操作内部用） */
+  private hostRoot(): string {
     return this.config.workspaceRoot;
   }
 
   async ensure(user: string, tenant: string): Promise<SandboxRuntime> {
     const cwd = this.resolveCwd(user, tenant);
-    fs.mkdirSync(cwd, { recursive: true });
+    fs.mkdirSync(this.hostRoot(), { recursive: true });
     // opencode 探活 + 自启（不存在则启动, 幂等）
     await ensureOpencode(this.config);
     const base = this.serverBase.replace(/\/+$/, '');

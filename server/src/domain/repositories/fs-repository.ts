@@ -21,4 +21,8 @@ export interface FsRepository {
   stat(cwd: string, path: string): Promise<FileMeta>;
   /** 递归查找 */
   search(cwd: string, path: string, pattern: string): Promise<string[]>;
+  /** 移动/重命名（opensumi move） */
+  move(cwd: string, from: string, to: string, overwrite?: boolean): Promise<void>;
+  /** 复制（opensumi copy） */
+  copy(cwd: string, from: string, to: string, overwrite?: boolean): Promise<void>;
 }

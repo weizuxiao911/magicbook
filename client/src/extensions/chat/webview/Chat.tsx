@@ -5,6 +5,7 @@ import { SlotLocation } from '@opensumi/ide-core-browser';
 import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 
 import { FsToken, type IFileSystem } from '@/core/commands/fs';
+import { toFileUri } from '@/service/base';
 
 import {
   aiListAgents,
@@ -742,10 +743,11 @@ const [usable, setUsable] = useState<boolean>(() => {
 
   // 异步列某目录子项 (ide 相对路径)
   const loadMentionDir = useCallback(async (idePath: string) => {
-    if (!fs?.readdir) return [];
+    if (!fs?.getFileStat) return [];
     try {
-      const list = await fs.readdir(idePath);
-      return (list || []).filter((e: any) => e && e.name && e.name !== '.' && e.name !== '..');
+      const uri = toFileUri(idePath);
+      const stat = await fs.getFileStat(uri);
+      return (stat?.children || []).filter((e: any) => e && e.uri && !e.uri.endsWith('/.') && !e.uri.endsWith('/..'));
     } catch {
       return [];
     }
@@ -777,8 +779,9 @@ const [usable, setUsable] = useState<boolean>(() => {
           const list = await loadMentionDir(idePath);
           for (const e of list) {
             if (cancelled) return;
-            const isDir = e.type === 'directory';
-            const childRel = rel ? `${rel}/${e.name}` : e.name;
+            const name = e.uri.split('/').pop() || '';
+            const isDir = e.isDirectory;
+            const childRel = rel ? `${rel}/${name}` : name;
             out.push({ path: childRel, type: isDir ? 'dir' as const : 'file' as const, depth });
             if (isDir) nextQueue.push({ idePath: `/${childRel}`, rel: childRel, depth: depth + 1 });
           }
@@ -982,14 +985,14 @@ const [usable, setUsable] = useState<boolean>(() => {
 
   const onUploadFile = useCallback(async (files: FileList | null) => {
     if (!files || !files.length) return;
-    if (!fs?.writeFile) { setError('沙箱文件系统未就绪'); return; }
+    if (!fs?.write) { setError('沙箱文件系统未就绪'); return; }
     const added: Array<{ name: string; path: string }> = [];
     for (const f of Array.from(files)) {
       try {
         const buf = await f.arrayBuffer();
         const safe = f.name.replace(/[^\w.\-\u4e00-\u9fa5]/g, '_');
         const path = `/${safe}`;
-        await fs.writeFile(path, { base64: bytesToBase64(new Uint8Array(buf)) });
+        await fs.write(toFileUri(path), new Uint8Array(buf));
         added.push({ name: f.name, path });
       } catch (e) { setError(`上传 ${f.name} 失败: ${String((e as any)?.message || e)}`); }
     }
@@ -1001,7 +1004,7 @@ const [usable, setUsable] = useState<boolean>(() => {
     const images = items.filter((it) => it.kind === 'file' && it.type.startsWith('image/'));
     if (images.length === 0) return; // 纯文本粘贴交给 textarea 默认行为
     e.preventDefault();
-    if (!fs?.writeFile) { setError('沙箱文件系统未就绪'); return; }
+    if (!fs?.write) { setError('沙箱文件系统未就绪'); return; }
     const added: Array<{ name: string; path: string; dataUrl?: string }> = [];
     for (const it of images) {
       try {
@@ -1011,7 +1014,7 @@ const [usable, setUsable] = useState<boolean>(() => {
         const name = `paste-${Date.now()}-${Math.floor(Math.random() * 1000)}.${ext}`;
         const path = `/${name}`;
         const buf = new Uint8Array(await f.arrayBuffer());
-        await fs.writeFile(path, { base64: bytesToBase64(buf) });
+        await fs.write(toFileUri(path), buf);
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const fr = new FileReader();
           fr.onload = () => resolve(String(fr.result || ''));

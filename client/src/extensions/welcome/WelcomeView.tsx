@@ -4,6 +4,7 @@ import { CommandService } from '@opensumi/ide-core-common';
 
 import { FsToken, type IFileSystem } from '@/core/commands/fs';
 import { EnvToken, type IEnvService } from '@/core/commands/env';
+import { toFileUri } from '@/service/base';
 
 /**
  * WelcomeView — webapp 主区欢迎页
@@ -34,7 +35,7 @@ export const WelcomeView: React.FC<{ resource?: any }> = () => {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || !files.length) return;
-    if (!fs?.writeFile) {
+    if (!fs?.write) {
       alert('沙箱文件系统未就绪');
       return;
     }
@@ -44,7 +45,7 @@ export const WelcomeView: React.FC<{ resource?: any }> = () => {
         const text = await f.text();
         const safe = f.name.replace(/[^\w.\-\u4e00-\u9fa5]/g, '_');
         const idePath = `/${safe}`;
-        await fs.writeFile(idePath, text);
+        await fs.write(toFileUri(idePath), text);
         results.push(safe);
       } catch (err) {
         console.error('[welcome] upload failed:', f.name, err);

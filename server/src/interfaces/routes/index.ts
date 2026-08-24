@@ -30,8 +30,10 @@ export function registerRoutes(router: Router, c: Controllers): void {
   router.get('/fs/file', c.fs.readFile);
   router.put('/fs/file', c.fs.writeFile);
   router.delete('/fs/file', c.fs.remove);
-  router.get('/fs/file/meta', c.fs.stat);
+  router.get('/fs/stat', c.fs.stat);
   router.get('/fs/search', c.fs.search);
+  router.post('/fs/move', c.fs.move);
+  router.post('/fs/copy', c.fs.copy);
 
   // vsix 拓展
   router.get('/extension', c.extension.listMetadata);

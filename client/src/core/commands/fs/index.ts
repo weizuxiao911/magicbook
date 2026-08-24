@@ -2,91 +2,91 @@
  * IFileSystem 接口定义 — core/commands/fs
  *
  * 全局协议/接口定义（内核）: 文件系统能力契约.
- * 按 node:fs/promises + node:path 标准定义:
- *   - fs 部分: readFile / writeFile / readdir / rm / mkdir / stat（+ cwd / find 自扩展）
- *   - path 部分: join / resolve / basename / dirname / extname / isAbsolute / normalize
+ * **以 opensumi 文件系统（IFileServiceClient）为标准**:
+ *   - 方法: getFileStat / resolveContent / setContent / createFile / createFolder / delete / move / copy
+ *   - 类型: FileStat（uri / lastModification / isDirectory / children / size / type）
+ *   - 路径: URI（file://...）
  *
  * 实现: service/filesystem（implements IFileSystem, 对接 server /fs/*）.
+ * server 按本接口暴露 RESTful 端点.
  * 使用方通过 useInjectable(FsToken) 注入.
- *
- * 路径约定（平台无关）: 一律使用 IDE 相对路径（/foo）; 路径运算由 server 端按平台处理,
- * client 只传路径字符串.
  */
 
-/** 目录条目（readdir 返回值, ≈ fs.Dirent 子集） */
-export interface FsEntry {
-  name: string;
-  type: 'file' | 'directory';
+/** 同 vscode FileType / opensumi FileType */
+export enum FileType {
+  Unknown = 0,
+  File = 1,
+  Directory = 2,
+  SymbolicLink = 64,
 }
 
-/** 文件元信息（≈ fs.Stats 子集） */
-export interface FsStats {
-  path: string;
-  type: 'file' | 'directory';
-  size: number;
-  mtime: string;
+/** opensumi FileStat 标准 */
+export interface FileStat {
+  /** 资源路径（file:// URI） */
+  uri: string;
+  /** 最后修改时间（毫秒时间戳） */
+  lastModification: number;
+  /** 创建时间（毫秒时间戳） */
+  createTime?: number;
+  /** 是否为文件夹 */
+  isDirectory: boolean;
+  /** 是否为软连接 */
+  isSymbolicLink?: boolean;
+  /** 子项（isDirectory 且已 resolve 时存在; undefined 表示未解析） */
+  children?: FileStat[];
+  /** 文件大小 */
+  size?: number;
+  /** 同 vscode FileType */
+  type?: FileType;
+  /** 只读 */
+  readonly?: boolean;
+  /** 真实资源路径 */
+  realUri?: string;
 }
 
-/** 写文件结果 */
-export interface FsWriteResult {
-  ok: boolean;
-  path: string;
+/** 读内容选项 */
+export interface FileSetContentOptions {
+  encoding?: 'utf8' | 'binary';
+  overwriteEncoding?: boolean;
 }
 
-/** 读文件选项（对齐 fs/promises readFile options） */
-export interface FsReadOptions {
-  /** 返回类型: 默认 utf-8 字符串; true 返回二进制（对齐 readFile encoding: 'utf8' | 'buffer'） */
-  binary?: boolean;
+/** 移动选项 */
+export interface FileMoveOptions {
+  overwrite?: boolean;
 }
 
-/**
- * 文件系统能力接口 — fs 部分（对齐 fs/promises）.
- */
-export interface IFs {
-  /** 当前用户 cwd（≈ process.cwd, 自扩展） */
-  cwd(): Promise<string>;
-  /** 列目录（≈ fs/promises readdir） */
-  readdir(path: string): Promise<FsEntry[]>;
-  /** 读文件（≈ fs/promises readFile; options.binary=true 返回 Uint8Array, 默认 utf-8 字符串） */
-  readFile(path: string, options?: FsReadOptions): Promise<string | Uint8Array>;
-  /** 写文件（≈ fs/promises writeFile; content 原文 / { base64 } 二进制） */
-  writeFile(path: string, content: string | { base64: string }): Promise<FsWriteResult>;
-  /** 删除文件/目录递归（≈ fs/promises rm recursive+force） */
-  rm(path: string): Promise<void>;
-  /** 建目录递归（≈ fs/promises mkdir recursive） */
-  mkdir(path: string): Promise<void>;
-  /** 元信息（≈ fs/promises stat） */
-  stat(path: string): Promise<FsStats>;
-  /** 递归查找文件名（≈ find, 自扩展） */
-  find(path: string, pattern?: string): Promise<string[]>;
+/** 复制选项 */
+export interface FileCopyOptions {
+  overwrite?: boolean;
 }
 
-/**
- * 路径能力接口 — path 部分（对齐 node:path, 平台无关）.
- */
-export interface IPath {
-  /** 拼接路径（≈ path.join） */
-  join(...parts: string[]): string;
-  /** 解析绝对路径（≈ path.resolve） */
-  resolve(...parts: string[]): string;
-  /** 文件名（≈ path.basename） */
-  basename(p: string): string;
-  /** 目录部分（≈ path.dirname） */
-  dirname(p: string): string;
-  /** 扩展名（≈ path.extname） */
-  extname(p: string): string;
-  /** 是否绝对路径（≈ path.isAbsolute） */
-  isAbsolute(p: string): boolean;
-  /** 规范化（≈ path.normalize） */
-  normalize(p: string): string;
+/** 删除选项 */
+export interface FileDeleteOptions {
+  recursive?: boolean;
+  moveToTrash?: boolean;
 }
 
-/** 文件系统能力接口（fs + path 合并暴露） */
-export interface IFileSystem extends IFs, IPath {}
-
-/** BrowserFS 文件类型常量 */
-export const FILE_TYPE_FILE = 1;
-export const FILE_TYPE_DIR = 2;
+/** 文件系统能力接口（opensumi IFileService 标准） */
+export interface IFileSystem {
+  /** 获取文件/目录 stat（uri 指向文件夹时返回一层 children）; 不存在返回 undefined */
+  getFileStat(uri: string): Promise<FileStat | undefined>;
+  /** 解析文件内容 */
+  resolveContent(uri: string, options?: FileSetContentOptions): Promise<{ stat: FileStat; content: string }>;
+  /** 更新文件内容 */
+  setContent(file: FileStat, content: string, options?: FileSetContentOptions): Promise<FileStat>;
+  /** 创建文件 */
+  createFile(uri: string, options?: { content?: string; overwrite?: boolean }): Promise<FileStat>;
+  /** 创建目录 */
+  createFolder(uri: string): Promise<FileStat>;
+  /** 写入（支持二进制, 对齐 FileSystemProvider.write; 用于文件上传/粘贴等） */
+  write(uri: string, content: string | Uint8Array): Promise<void>;
+  /** 删除文件/目录 */
+  delete(uri: string, options?: FileDeleteOptions): Promise<void>;
+  /** 移动/重命名 */
+  move(sourceUri: string, targetUri: string, options?: FileMoveOptions): Promise<FileStat>;
+  /** 复制 */
+  copy(sourceUri: string, targetUri: string, options?: FileCopyOptions): Promise<FileStat>;
+}
 
 /** Fs Token（全局定义） — service/filesystem 局部实现 */
 export const FsToken: symbol = Symbol('IFileSystem');

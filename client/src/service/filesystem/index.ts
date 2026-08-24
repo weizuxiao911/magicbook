@@ -1,151 +1,180 @@
 /**
  * filesystem 实现 — service/filesystem/index.ts
  *
- * implements core/commands/fs 的 IFileSystem（fs + path）:
- *   - fs 部分: 对接 server /fs/*（readFile/writeFile/readdir/rm/mkdir/stat/find）
- *   - path 部分: 纯前端路径运算（POSIX 风格, IDE 相对路径 /foo, 平台无关）
+ * implements core/commands/fs 的 IFileSystem（opensumi IFileService 标准）.
  *
- * 基于 sandbox 返回的 fs_base_url（server 返回完整地址）.
+ * 契约:
+ *   - API 地址 = ${fs_base_url}/{api}（fs_base_url 由 sandbox server 返回, 含 /fs）
+ *   - cwd 根 = sandbox runtime 返回的 cwd（相对路径, 不写死）
+ *   - URI = file:// + cwd 根 + 相对路径
  */
 
 import { Injectable } from '@opensumi/di';
-import { BrowserModule } from '@opensumi/ide-core-browser';
+import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser';
+import { Domain } from '@opensumi/ide-core-common';
 
-import type { FsEntry, FsReadOptions, FsStats, FsWriteResult, IFileSystem } from '../../core/commands/fs';
+import type { FileCopyOptions, FileDeleteOptions, FileMoveOptions, FileSetContentOptions, FileStat, IFileSystem } from '../../core/commands/fs';
 import { FsToken } from '../../core/commands/fs';
+import { toFileUri, cwdRoot } from '../base';
 
-function fsUrl(): string {
+/** fs_base_url（sandbox 返回, 含 /fs 前缀） */
+function fsBaseUrl(): string {
   return ((window as any).__APP_CONFIG__?.fsUrl || '').replace(/\/+$/, '');
 }
 
+/** file:// URI → server 相对路径（剥离 cwd 根前缀, 如 /workspace/foo → /foo） */
+function uriToPath(uri: string): string {
+  const full = uri.replace(/^file:\/\//, '') || '/';
+  const root = cwdRoot();
+  if (root !== '/' && full.startsWith(root)) {
+    return full.slice(root.length) || '/';
+  }
+  return full;
+}
+
+/** 相对路径 → file:// URI（根 = cwd） */
+function pathToUri(path: string): string {
+  return toFileUri(path);
+}
+
+function toFileStat(dto: any): FileStat {
+  return {
+    uri: pathToUri(dto.path ?? '/'),
+    lastModification: dto.mtime ? new Date(dto.mtime).getTime() : 0,
+    isDirectory: dto.type === 'directory',
+    size: dto.size,
+    type: dto.type === 'directory' ? 2 : 1,
+  };
+}
+
 async function http<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await fetch(url, {
+    headers: { 'Content-Type': 'application/json' },
+    ...init,
+  });
   if (!res.ok) {
     throw new Error(`fs API ${res.status}: ${url}`);
   }
   return res.json() as Promise<T>;
 }
 
-/**
- * path 实现 — 纯前端 POSIX 风格路径运算（IDE 路径恒为 / 分隔, 平台无关）.
- */
-function posixPath() {
-  const SEP = '/';
-  return {
-    join(...parts: string[]): string {
-      return parts.filter((p) => p).join(SEP).replace(/\/{2,}/g, SEP);
-    },
-    resolve(...parts: string[]): string {
-      const joined = this.join(...parts);
-      return joined.startsWith(SEP) ? joined : `${SEP}${joined}`;
-    },
-    basename(p: string): string {
-      const idx = p.lastIndexOf(SEP);
-      return idx >= 0 ? p.slice(idx + 1) : p;
-    },
-    dirname(p: string): string {
-      const idx = p.lastIndexOf(SEP);
-      return idx > 0 ? p.slice(0, idx) : (idx === 0 ? SEP : '.');
-    },
-    extname(p: string): string {
-      const name = this.basename(p);
-      const idx = name.lastIndexOf('.');
-      return idx > 0 ? name.slice(idx) : '';
-    },
-    isAbsolute(p: string): boolean {
-      return p.startsWith(SEP);
-    },
-    normalize(p: string): string {
-      return p.replace(/\/{2,}/g, SEP).replace(/\/$/, '') || SEP;
-    },
-  };
+/** 字节 → base64（浏览器端, 分块避免栈溢出） */
+function bytesToBase64(input: Uint8Array): string {
+  let bin = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < input.length; i += chunk) {
+    bin += String.fromCharCode(...input.subarray(i, i + chunk));
+  }
+  return btoa(bin);
 }
 
 @Injectable()
-export class FileSystemServiceImpl implements IFileSystem {
+@Domain(ClientAppContribution)
+export class FileSystemServiceImpl implements IFileSystem, ClientAppContribution {
   static instance: FileSystemServiceImpl | null = null;
 
-  private path = posixPath();
+  /** 容器启动: 挂全局单例 */
+  onStart(): void {
+    (window as any).__APP_FS__ = this;
+    console.log('[filesystem] service ready, fsBaseUrl:', fsBaseUrl() || '(unset)');
+  }
 
-  private base(): string {
-    const base = fsUrl();
+  private api(path: string): string {
+    const base = fsBaseUrl();
     if (!base) throw new Error('fs base url not ready (sandbox runtime 未应用)');
-    return base;
+    return `${base}/${path}`;
   }
 
-  // ---- fs 部分 ----
-
-  async cwd(): Promise<string> {
-    const { cwd } = await http<{ cwd: string }>(`${this.base()}/fs/cwd`);
-    return cwd;
-  }
-
-  async readdir(path: string): Promise<FsEntry[]> {
-    return http<FsEntry[]>(`${this.base()}/fs/dir?path=${encodeURIComponent(path)}`);
-  }
-
-  async readFile(path: string, options?: FsReadOptions): Promise<string | Uint8Array> {
-    const binary = options?.binary === true;
-    const res = await fetch(`${this.base()}/fs/file?path=${encodeURIComponent(path)}${binary ? '&binary=1' : ''}`);
-    if (!res.ok) throw new Error(`fs read ${res.status}`);
-    if (binary) {
-      return new Uint8Array(await res.arrayBuffer());
+  async getFileStat(uri: string): Promise<FileStat | undefined> {
+    const path = uriToPath(uri);
+    try {
+      const meta = await http<any>(`${this.api('stat')}?path=${encodeURIComponent(path)}`);
+      const entries = path === cwdRoot() ? null : await http<any[]>(`${this.api('dir')}?path=${encodeURIComponent(path)}`).catch(() => null);
+      const stat = toFileStat(meta);
+      if (stat.isDirectory && entries) {
+        stat.children = entries.map((e) => toFileStat({ ...e, path: `${path === '/' ? '' : path}/${e.name}` }));
+      }
+      return stat;
+    } catch (e: any) {
+      if (e?.message?.includes('404')) return undefined;
+      throw e;
     }
-    return res.text();
   }
 
-  async writeFile(path: string, content: string | { base64: string }): Promise<FsWriteResult> {
-    const body = typeof content === 'string' ? { content } : { base64: content.base64 };
-    return http<FsWriteResult>(
-      `${this.base()}/fs/file?path=${encodeURIComponent(path)}`,
-      { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
-    );
+  async resolveContent(uri: string, options?: FileSetContentOptions): Promise<{ stat: FileStat; content: string }> {
+    const path = uriToPath(uri);
+    const res = await fetch(`${this.api('file')}?path=${encodeURIComponent(path)}${options?.encoding === 'binary' ? '&binary=1' : ''}`);
+    if (!res.ok) throw new Error(`fs resolveContent ${res.status}`);
+    const content = options?.encoding === 'binary'
+      ? Array.from(new Uint8Array(await res.arrayBuffer())).map((b) => String.fromCharCode(b)).join('')
+      : await res.text();
+    const stat: FileStat = await this.getFileStat(uri) ?? { uri, lastModification: Date.now(), isDirectory: false };
+    return { stat, content };
   }
 
-  async rm(path: string): Promise<void> {
-    await http<{ ok: boolean }>(`${this.base()}/fs/file?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+  async setContent(file: FileStat, content: string, options?: FileSetContentOptions): Promise<FileStat> {
+    const path = uriToPath(file.uri);
+    await http(`${this.api('file')}?path=${encodeURIComponent(path)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    });
+    const stat: FileStat = await this.getFileStat(file.uri) ?? file;
+    return stat;
   }
 
-  async mkdir(path: string): Promise<void> {
-    await http<{ ok: boolean }>(`${this.base()}/fs/dir?path=${encodeURIComponent(path)}`, { method: 'POST' });
+  async createFile(uri: string, options?: { content?: string; overwrite?: boolean }): Promise<FileStat> {
+    const path = uriToPath(uri);
+    await http(`${this.api('file')}?path=${encodeURIComponent(path)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ content: options?.content ?? '' }),
+    });
+    const stat: FileStat = await this.getFileStat(uri) ?? { uri, lastModification: Date.now(), isDirectory: false };
+    return stat;
   }
 
-  async stat(path: string): Promise<FsStats> {
-    return http<FsStats>(`${this.base()}/fs/file/meta?path=${encodeURIComponent(path)}`);
+  async createFolder(uri: string): Promise<FileStat> {
+    const path = uriToPath(uri);
+    await http(`${this.api('dir')}?path=${encodeURIComponent(path)}`, { method: 'POST' });
+    const stat: FileStat = await this.getFileStat(uri) ?? { uri, lastModification: Date.now(), isDirectory: true };
+    return stat;
   }
 
-  async find(path: string, pattern = '*'): Promise<string[]> {
-    return http<string[]>(`${this.base()}/fs/search?path=${encodeURIComponent(path)}&pattern=${encodeURIComponent(pattern)}`);
+  async write(uri: string, content: string | Uint8Array): Promise<void> {
+    const path = uriToPath(uri);
+    const body = typeof content === 'string'
+      ? { content }
+      : { base64: bytesToBase64(content) };
+    await http(`${this.api('file')}?path=${encodeURIComponent(path)}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
   }
 
-  // ---- path 部分 ----
-
-  join(...parts: string[]): string {
-    return this.path.join(...parts);
+  async delete(uri: string, options?: FileDeleteOptions): Promise<void> {
+    const path = uriToPath(uri);
+    await http(`${this.api('file')}?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
   }
 
-  resolve(...parts: string[]): string {
-    return this.path.resolve(...parts);
+  async move(sourceUri: string, targetUri: string, options?: FileMoveOptions): Promise<FileStat> {
+    const from = uriToPath(sourceUri);
+    const to = uriToPath(targetUri);
+    await http(`${this.api('move')}`, {
+      method: 'POST',
+      body: JSON.stringify({ from, to, overwrite: options?.overwrite }),
+    });
+    const stat: FileStat = await this.getFileStat(targetUri) ?? { uri: targetUri, lastModification: Date.now(), isDirectory: false };
+    return stat;
   }
 
-  basename(p: string): string {
-    return this.path.basename(p);
-  }
-
-  dirname(p: string): string {
-    return this.path.dirname(p);
-  }
-
-  extname(p: string): string {
-    return this.path.extname(p);
-  }
-
-  isAbsolute(p: string): boolean {
-    return this.path.isAbsolute(p);
-  }
-
-  normalize(p: string): string {
-    return this.path.normalize(p);
+  async copy(sourceUri: string, targetUri: string, options?: FileCopyOptions): Promise<FileStat> {
+    const from = uriToPath(sourceUri);
+    const to = uriToPath(targetUri);
+    await http(`${this.api('copy')}`, {
+      method: 'POST',
+      body: JSON.stringify({ from, to, overwrite: options?.overwrite }),
+    });
+    const stat: FileStat = await this.getFileStat(targetUri) ?? { uri: targetUri, lastModification: Date.now(), isDirectory: false };
+    return stat;
   }
 }
 
@@ -156,7 +185,12 @@ export function getFileSystemService(): IFileSystem {
 
 @Injectable()
 export class FileSystemModule extends BrowserModule {
-  providers = [{ token: FsToken, useFactory: () => getFileSystemService() }];
+  providers = [
+    { token: FsToken, useFactory: () => getFileSystemService() },
+    FileSystemServiceImpl,
+  ];
+
+  contributionProvider = ClientAppContribution;
 }
 
 /** 安装全局单例 */

@@ -43,7 +43,7 @@ function createControllers(config: ServerConfig): Controllers {
   const sandboxRepo = createSandboxRepository(config);
 
   const sandboxService = new SandboxService(sandboxRepo);
-  const fsService = new FsService(new LocalFsRepository(), sandboxRepo);
+  const fsService = new FsService(new LocalFsRepository(), config.workspaceRoot);
   const extensionService = new ExtensionService(
     new LocalExtensionRepository(config, 'localhost'),
   );
