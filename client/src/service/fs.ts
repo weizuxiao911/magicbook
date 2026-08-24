@@ -1,52 +1,27 @@
 /**
- * filesystem 实现 — service/filesystem/index.ts
+ * filesystem 实现 — service/fs.ts
  *
- * implements core/commands/fs 的 IFileSystem（opensumi IFileService 标准）.
+ * implements core/commands/fs 的 IFileSystem（相对路径 + 简单方法）:
+ *   - list / read / write / rm / mkdirp / move / find
+ *   - 对接 server /fs/*（fs_base_url 由 sandbox 返回, 含 /fs 前缀）
+ *   - 单实例: BrowserFS backend（core/config/bfs.ts, RemoteFS）内部调用本实例,
+ *     opensumi 容器与业务代码共用同一文件系统实例
  *
- * 契约:
- *   - API 地址 = ${fs_base_url}/{api}（fs_base_url 由 sandbox server 返回, 含 /fs）
- *   - cwd 根 = sandbox runtime 返回的 cwd（相对路径, 不写死）
- *   - URI = file:// + cwd 根 + 相对路径
+ * 路径: 一律 IDE 相对路径（/foo）, server 在 cwd 下操作.
  */
 
 import { Injectable, Autowired } from '@opensumi/di';
 import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser';
-import { Domain } from '@opensumi/ide-core-common';
+import { Domain, CommandService, FileChangeType } from '@opensumi/ide-core-common';
 import { IFileServiceClient } from '@opensumi/ide-file-service/lib/common';
+import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 
-import type { FileCopyOptions, FileDeleteOptions, FileMoveOptions, FileSetContentOptions, FileStat, IFileSystem } from '../core/commands/fs';
+import type { FsEntry, FileMeta, IFileSystem } from '../core/commands/fs';
 import { FsToken } from '../core/commands/fs';
-import { registerFsOpensumiProvider } from '../core/commands/fs/opensumi';
-import { toFileUri, cwdRoot } from '../core/commands/fs/uri';
 
 /** fs_base_url（sandbox 返回, 含 /fs 前缀） */
 function fsBaseUrl(): string {
   return ((window as any).__APP_CONFIG__?.fsUrl || '').replace(/\/+$/, '');
-}
-
-/** file:// URI → server 相对路径（剥离 cwd 根前缀, 如 /workspace/foo → /foo） */
-function uriToPath(uri: string): string {
-  const full = uri.replace(/^file:\/\//, '') || '/';
-  const root = cwdRoot();
-  if (root !== '/' && full.startsWith(root)) {
-    return full.slice(root.length) || '/';
-  }
-  return full;
-}
-
-/** 相对路径 → file:// URI（根 = cwd） */
-function pathToUri(path: string): string {
-  return toFileUri(path);
-}
-
-function toFileStat(dto: any): FileStat {
-  return {
-    uri: pathToUri(dto.path ?? '/'),
-    lastModification: dto.mtime ? new Date(dto.mtime).getTime() : 0,
-    isDirectory: dto.type === 'directory',
-    size: dto.size,
-    type: dto.type === 'directory' ? 2 : 1,
-  };
 }
 
 async function http<T>(url: string, init?: RequestInit): Promise<T> {
@@ -72,45 +47,83 @@ function bytesToBase64(input: Uint8Array): string {
 
 @Injectable()
 @Domain(ClientAppContribution)
-export class FileSystemServiceImpl implements IFileSystem, ClientAppContribution {
+export class FileSystemServiceImpl implements IFileSystem {
   static instance: FileSystemServiceImpl | null = null;
+
+  @Autowired(CommandService)
+  private readonly commandService!: CommandService;
 
   @Autowired(IFileServiceClient)
   private readonly fileService!: IFileServiceClient;
 
   private eventSource: EventSource | null = null;
 
-  /** 容器启动: 挂全局单例 + 注册 server fs provider（explorer 数据源）+ 订阅 fs SSE */
+  /** 容器启动: 挂全局单例 + 订阅 fs SSE（宿主机工作目录变更 → fs:changed 事件） */
   onStart(): void {
     (window as any).__APP_FS__ = this;
     console.log('[filesystem] service ready, fsBaseUrl:', fsBaseUrl() || '(unset)');
-    // 注册 file scheme provider → explorer / 编辑器经 opensumi 标准链路读 server fs
-    // core/commands/fs 负责 opensumi 对接（provider 实现 + 注册）, service 只提供实现
-    registerFsOpensumiProvider(this.fileService, this);
-    console.log('[filesystem] server fs provider registered (scheme=file)');
-    this.connectEvents();
+    // runtime 就绪（fsUrl 注入）→ 连接事件 + 刷新 explorer 重读
+    window.addEventListener('runtime-ready', () => {
+      this.connectEvents();
+      void this.verifyOpensumiLink();
+      void this.refreshExplorer();
+    });
+    if (fsBaseUrl()) this.connectEvents();
   }
 
-  /** 订阅 /fs/events SSE, 收到变更后派发 fs:changed（explorer 等监听刷新） */
+  /** 验证 opensumi IFileServiceClient → BrowserFS → server fs 链路（拓展读文件的通道） */
+  private async verifyOpensumiLink(): Promise<void> {
+    try {
+      const stat = await this.fileService.getFileStat('file:///workspace');
+      console.log('[filesystem] opensumi 链路验证: file:///workspace stat =', {
+        isDirectory: stat?.isDirectory,
+        children: stat?.children?.map((c) => ({ name: c.uri.split('/').pop(), isDirectory: c.isDirectory })),
+      });
+    } catch (e) {
+      console.warn('[filesystem] opensumi 链路验证失败:', e);
+    }
+  }
+
+  /** 刷新 explorer 文件树（runtime 就绪后触发 OverlayFS 重读: fireFilesChange 让 file-tree 重载） */
+  private async refreshExplorer(): Promise<void> {
+    try {
+      // 派发文件变化事件 → file-tree 重读受影响节点（触发 OverlayFS readDirectory 重新拉取）
+      this.fileService.fireFilesChange({ changes: [{ uri: 'file:///workspace', type: 1 }] });
+      console.log('[filesystem] explorer 已刷新 (fireFilesChange)');
+    } catch (e) {
+      console.warn('[filesystem] explorer 刷新失败:', e);
+    }
+  }
+
+  /** 订阅 /fs/events SSE, 收到变更后: 转 opensumi 文件变化事件(explorer 刷新 + 编辑器自动 revert) + 派发 fs:changed */
   private connectEvents(): void {
     const base = fsBaseUrl();
-    if (!base) return;
+    if (!base || this.eventSource) return;
     const es = new EventSource(`${base}/events`);
     this.eventSource = es;
+    const typeMap: Record<string, FileChangeType> = {
+      add: FileChangeType.ADDED,
+      change: FileChangeType.UPDATED,
+      unlink: FileChangeType.DELETED,
+    };
     es.onmessage = (msg) => {
       try {
         const change = JSON.parse(msg.data);
         const rel = change.path || '/';
-        const uri = toFileUri(rel);
+        // server 事件 → opensumi 文件变化事件: file-editor-doc 监听后自动重读内容, file-tree 自动刷新
+        const uri = `file://${WORKSPACE_ROOT}${rel}`;
+        console.log('[filesystem] fs event:', change.type, rel, '→ fireFilesChange', uri);
+        this.fileService.fireFilesChange({
+          changes: [{ uri, type: typeMap[change.type] ?? FileChangeType.UPDATED }],
+        });
         window.dispatchEvent(new CustomEvent('fs:changed', {
-          detail: { ...change, uri },
+          detail: { ...change, path: rel },
         }));
       } catch {
         /* ignore bad frame */
       }
     };
     es.onerror = () => {
-      // 断线自动重连（EventSource 内置重连）
       console.warn('[filesystem] fs events 断线, 等待重连');
     };
     console.log('[filesystem] fs events subscribed:', `${base}/events`);
@@ -122,96 +135,82 @@ export class FileSystemServiceImpl implements IFileSystem, ClientAppContribution
     return `${base}/${path}`;
   }
 
-  async getFileStat(uri: string): Promise<FileStat | undefined> {
-    const path = uriToPath(uri);
+  // ---- 相对路径接口（OverlayFS 对接）----
+
+  async list(idePath: string): Promise<FsEntry[]> {
+    return http<FsEntry[]>(`${this.api('dir')}?path=${encodeURIComponent(idePath)}`);
+  }
+
+  async exists(idePath: string): Promise<boolean> {
     try {
-      const meta = await http<any>(`${this.api('stat')}?path=${encodeURIComponent(path)}`);
-      const entries = path === cwdRoot() ? null : await http<any[]>(`${this.api('dir')}?path=${encodeURIComponent(path)}`).catch(() => null);
-      const stat = toFileStat(meta);
-      if (stat.isDirectory && entries) {
-        stat.children = entries.map((e) => toFileStat({ ...e, path: `${path === '/' ? '' : path}/${e.name}` }));
-      }
-      return stat;
-    } catch (e: any) {
-      if (e?.message?.includes('404')) return undefined;
-      throw e;
+      await http<any>(`${this.api('stat')}?path=${encodeURIComponent(idePath)}`);
+      return true;
+    } catch {
+      return false;
     }
   }
 
-  async resolveContent(uri: string, options?: FileSetContentOptions): Promise<{ stat: FileStat; content: string }> {
-    const path = uriToPath(uri);
-    const res = await fetch(`${this.api('file')}?path=${encodeURIComponent(path)}${options?.encoding === 'binary' ? '&binary=1' : ''}`);
-    if (!res.ok) throw new Error(`fs resolveContent ${res.status}`);
-    const content = options?.encoding === 'binary'
-      ? Array.from(new Uint8Array(await res.arrayBuffer())).map((b) => String.fromCharCode(b)).join('')
-      : await res.text();
-    const stat: FileStat = await this.getFileStat(uri) ?? { uri, lastModification: Date.now(), isDirectory: false };
-    return { stat, content };
+  async meta(idePath: string): Promise<FileMeta> {
+    return http<FileMeta>(`${this.api('stat')}?path=${encodeURIComponent(idePath)}`);
   }
 
-  async setContent(file: FileStat, content: string, options?: FileSetContentOptions): Promise<FileStat> {
-    const path = uriToPath(file.uri);
-    await http(`${this.api('file')}?path=${encodeURIComponent(path)}`, {
-      method: 'PUT',
-      body: JSON.stringify({ content }),
-    });
-    const stat: FileStat = await this.getFileStat(file.uri) ?? file;
-    return stat;
+  async read(idePath: string): Promise<string> {
+    const res = await fetch(`${this.api('file')}?path=${encodeURIComponent(idePath)}`);
+    if (!res.ok) throw new Error(`fs read ${res.status}`);
+    return res.text();
   }
 
-  async createFile(uri: string, options?: { content?: string; overwrite?: boolean }): Promise<FileStat> {
-    const path = uriToPath(uri);
-    await http(`${this.api('file')}?path=${encodeURIComponent(path)}`, {
-      method: 'PUT',
-      body: JSON.stringify({ content: options?.content ?? '' }),
-    });
-    const stat: FileStat = await this.getFileStat(uri) ?? { uri, lastModification: Date.now(), isDirectory: false };
-    return stat;
+  async readBinary(idePath: string): Promise<Uint8Array> {
+    const res = await fetch(`${this.api('file')}?path=${encodeURIComponent(idePath)}&binary=1`);
+    if (!res.ok) throw new Error(`fs readBinary ${res.status}`);
+    return new Uint8Array(await res.arrayBuffer());
   }
 
-  async createFolder(uri: string): Promise<FileStat> {
-    const path = uriToPath(uri);
-    await http(`${this.api('dir')}?path=${encodeURIComponent(path)}`, { method: 'POST' });
-    const stat: FileStat = await this.getFileStat(uri) ?? { uri, lastModification: Date.now(), isDirectory: true };
-    return stat;
+  async write(idePath: string, content: string | { base64: string }): Promise<boolean> {
+    const body = typeof content === 'string' ? { content } : { base64: content.base64 };
+    try {
+      await http(`${this.api('file')}?path=${encodeURIComponent(idePath)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  async write(uri: string, content: string | Uint8Array): Promise<void> {
-    const path = uriToPath(uri);
-    const body = typeof content === 'string'
-      ? { content }
-      : { base64: bytesToBase64(content) };
-    await http(`${this.api('file')}?path=${encodeURIComponent(path)}`, {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    });
+  async rm(idePath: string): Promise<boolean> {
+    try {
+      await http(`${this.api('file')}?path=${encodeURIComponent(idePath)}`, { method: 'DELETE' });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  async delete(uri: string, options?: FileDeleteOptions): Promise<void> {
-    const path = uriToPath(uri);
-    await http(`${this.api('file')}?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+  async mkdirp(idePath: string): Promise<boolean> {
+    try {
+      await http(`${this.api('dir')}?path=${encodeURIComponent(idePath)}`, { method: 'POST' });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  async move(sourceUri: string, targetUri: string, options?: FileMoveOptions): Promise<FileStat> {
-    const from = uriToPath(sourceUri);
-    const to = uriToPath(targetUri);
-    await http(`${this.api('move')}`, {
-      method: 'POST',
-      body: JSON.stringify({ from, to, overwrite: options?.overwrite }),
-    });
-    const stat: FileStat = await this.getFileStat(targetUri) ?? { uri: targetUri, lastModification: Date.now(), isDirectory: false };
-    return stat;
+  async move(from: string, to: string): Promise<boolean> {
+    try {
+      await http(`${this.api('move')}`, {
+        method: 'POST',
+        body: JSON.stringify({ from, to }),
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  async copy(sourceUri: string, targetUri: string, options?: FileCopyOptions): Promise<FileStat> {
-    const from = uriToPath(sourceUri);
-    const to = uriToPath(targetUri);
-    await http(`${this.api('copy')}`, {
-      method: 'POST',
-      body: JSON.stringify({ from, to, overwrite: options?.overwrite }),
-    });
-    const stat: FileStat = await this.getFileStat(targetUri) ?? { uri: targetUri, lastModification: Date.now(), isDirectory: false };
-    return stat;
+  async find(idePath: string, pattern = '*'): Promise<string[]> {
+    return http<string[]>(`${this.api('search')}?path=${encodeURIComponent(idePath)}&pattern=${encodeURIComponent(pattern)}`);
   }
 }
 

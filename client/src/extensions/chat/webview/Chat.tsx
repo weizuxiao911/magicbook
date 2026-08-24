@@ -5,7 +5,6 @@ import { SlotLocation } from '@opensumi/ide-core-browser';
 import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 
 import { FsToken, type IFileSystem } from '@/core/commands/fs';
-import { toFileUri } from '@/core/commands/fs/uri';
 
 import {
   aiListAgents,
@@ -743,11 +742,10 @@ const [usable, setUsable] = useState<boolean>(() => {
 
   // 异步列某目录子项 (ide 相对路径)
   const loadMentionDir = useCallback(async (idePath: string) => {
-    if (!fs?.getFileStat) return [];
+    if (!fs?.list) return [];
     try {
-      const uri = toFileUri(idePath);
-      const stat = await fs.getFileStat(uri);
-      return (stat?.children || []).filter((e: any) => e && e.uri && !e.uri.endsWith('/.') && !e.uri.endsWith('/..'));
+      const entries = await fs.list(idePath);
+      return (entries || []).filter((e: any) => e && e.name && e.name !== '.' && e.name !== '..');
     } catch {
       return [];
     }
@@ -779,8 +777,8 @@ const [usable, setUsable] = useState<boolean>(() => {
           const list = await loadMentionDir(idePath);
           for (const e of list) {
             if (cancelled) return;
-            const name = e.uri.split('/').pop() || '';
-            const isDir = e.isDirectory;
+            const name = e.name;
+            const isDir = e.type === 'directory';
             const childRel = rel ? `${rel}/${name}` : name;
             out.push({ path: childRel, type: isDir ? 'dir' as const : 'file' as const, depth });
             if (isDir) nextQueue.push({ idePath: `/${childRel}`, rel: childRel, depth: depth + 1 });
@@ -992,7 +990,7 @@ const [usable, setUsable] = useState<boolean>(() => {
         const buf = await f.arrayBuffer();
         const safe = f.name.replace(/[^\w.\-\u4e00-\u9fa5]/g, '_');
         const path = `/${safe}`;
-        await fs.write(toFileUri(path), new Uint8Array(buf));
+        await fs.write(path, { base64: bytesToBase64(new Uint8Array(buf)) });
         added.push({ name: f.name, path });
       } catch (e) { setError(`上传 ${f.name} 失败: ${String((e as any)?.message || e)}`); }
     }
@@ -1014,7 +1012,7 @@ const [usable, setUsable] = useState<boolean>(() => {
         const name = `paste-${Date.now()}-${Math.floor(Math.random() * 1000)}.${ext}`;
         const path = `/${name}`;
         const buf = new Uint8Array(await f.arrayBuffer());
-        await fs.write(toFileUri(path), buf);
+        await fs.write(path, { base64: bytesToBase64(buf) });
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const fr = new FileReader();
           fr.onload = () => resolve(String(fr.result || ''));

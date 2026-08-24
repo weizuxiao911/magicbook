@@ -25,8 +25,8 @@ export interface ServerConfig {
   sandboxTtlMs: number;
 }
 
-/** 本仓库根（magicbook/）— 从 config 模块文件位置推导（src/infrastructure/config → 上四级） */
-export const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
+/** 本仓库根（magicbook/）— 从 config 模块文件位置推导（server/sandbox/src/infrastructure/config → 上五级） */
+export const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..');
 
 export function loadConfig(): ServerConfig {
   const mode = (process.env.SERVER_MODE || 'local') as ServerMode;

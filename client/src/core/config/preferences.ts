@@ -15,4 +15,6 @@ export const preferences: IAppRendererProps['appConfig']['defaultPreferences'] =
   'editor.enablePreviewFromCodeNavigation': false,
   'editor.autoSave': 'afterDelay',
   'editor.autoSaveDelay': 100,
+  // 文件树每层缩进量(px): 默认 8 偏小, 加大到 16 让父子层级明显
+  'explorer.fileTree.indent': 16,
 };

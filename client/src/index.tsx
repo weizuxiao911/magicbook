@@ -13,4 +13,5 @@ if (!container) {
   throw new Error('Root container #root not found');
 }
 
+// 登录后 sandbox 才加载（LoginView.doLogin: get sandbox → applyRuntime → fsUrl 就绪）
 ReactDOM.createRoot(container).render(React.createElement(App));

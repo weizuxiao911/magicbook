@@ -4,7 +4,6 @@ import { CommandService } from '@opensumi/ide-core-common';
 
 import { FsToken, type IFileSystem } from '@/core/commands/fs';
 import { EnvToken, type IEnvService } from '@/core/commands/env';
-import { toFileUri } from '@/core/commands/fs/uri';
 
 /**
  * WelcomeView — webapp 主区欢迎页
@@ -45,7 +44,7 @@ export const WelcomeView: React.FC<{ resource?: any }> = () => {
         const text = await f.text();
         const safe = f.name.replace(/[^\w.\-\u4e00-\u9fa5]/g, '_');
         const idePath = `/${safe}`;
-        await fs.write(toFileUri(idePath), text);
+        await fs.write(idePath, text);
         results.push(safe);
       } catch (err) {
         console.error('[welcome] upload failed:', f.name, err);

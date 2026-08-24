@@ -10,7 +10,7 @@
  */
 
 import { Injectable } from '@opensumi/di';
-import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser';
+import { BrowserModule } from '@opensumi/ide-core-browser';
 import { Domain } from '@opensumi/ide-core-common';
 
 import type { ISandbox, SandboxEvent, SandboxRuntime } from '../core/commands/sandbox';
@@ -28,8 +28,8 @@ function authHeaders(): Record<string, string> {
 }
 
 @Injectable()
-@Domain(ClientAppContribution)
-export class SandboxServiceImpl implements ISandbox, ClientAppContribution {
+@Domain('SandboxService')
+export class SandboxServiceImpl implements ISandbox {
   static instance: SandboxServiceImpl | null = null;
   private runtime: SandboxRuntime | null = null;
 
@@ -39,21 +39,8 @@ export class SandboxServiceImpl implements ISandbox, ClientAppContribution {
     console.log('[sandbox] service installed, appBaseUrl:', sandboxBaseUrl() || '(unset)');
   }
 
-  /** 容器启动生命周期: 自动获取 runtime 并应用协议地址（Local 模式启动即就绪） */
-  onStart(): void {
-    void this.bootstrap();
-  }
-
-  /** 启动初始化: 获取沙箱 runtime → 应用协议地址（无需登录, Local 模式） */
-  private async bootstrap(): Promise<void> {
-    try {
-      const runtime = await this.get();
-      this.applyRuntime(runtime);
-      console.log('[sandbox] runtime 就绪:', runtime.runtimeId, 'cwd:', runtime.cwd, 'mode:', runtime.mode);
-    } catch (err) {
-      console.warn('[sandbox] 启动获取 runtime 失败（骨架模式）:', err);
-    }
-  }
+  // 注意: 不自动加载 sandbox —— 登录后由 LoginView.doLogin 调 get() + applyRuntime()（用户设计）
+  // sandbox service 只负责 查询/创建/重载 用户的沙箱, 无启动钩子
 
   async get(): Promise<SandboxRuntime> {
     const rt = await this.http<SandboxRuntime>(`${sandboxBaseUrl()}/sandbox`);
@@ -131,6 +118,4 @@ export class SandboxModule extends BrowserModule {
     { token: SandboxToken, useFactory: () => getSandboxService() },
     SandboxServiceImpl,
   ];
-
-  contributionProvider = ClientAppContribution;
 }

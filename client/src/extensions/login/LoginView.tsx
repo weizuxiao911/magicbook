@@ -17,7 +17,6 @@ import { CommandService } from '@opensumi/ide-core-common';
 
 import { getSandboxService } from '../../service/sandbox';
 import { getAuthService } from '../../service/auth';
-import { toFileUri } from '../../core/commands/fs/uri';
 import { APP_CHAT_CONFIG } from '../../core/config/brand';
 import { FsToken, type IFileSystem } from '../../core/commands/fs';
 
@@ -96,7 +95,7 @@ export const LoginView: React.FC = () => {
       void (async () => {
         try {
           if (fs?.write) {
-            await fs.write(toFileUri('/.env.user'), `USERNAME=${user}\n`);
+            await fs.write('/.env.user', `USERNAME=${user}\n`);
             console.log('[login] 已写入 workspace/.env.user');
           }
         } catch (err) {

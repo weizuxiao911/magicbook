@@ -14,6 +14,7 @@ import '@codeblitzjs/ide-core/languages';
 import { buildSlots } from './core/config/slots';
 import { getBuiltinModules } from './core/config/modules';
 import { preferences } from './core/config/preferences';
+import { runtimeConfig } from './core/config/runtime';
 import './core/styles/overrides.css';
 import './core/styles/slots.css';
 
@@ -32,7 +33,7 @@ export const App: React.FC = () => {
           ...getBuiltinModules(),
         ],
       }}
-      runtimeConfig={{} as any}
+      runtimeConfig={runtimeConfig as any}
     />
   );
 };

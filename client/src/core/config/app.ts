@@ -1,14 +1,15 @@
 /**
- * 系统配置 — core/config/app.ts
+ * 系统机制初始化 — core/config/app.ts
  *
- * 模块加载时挂载全局系统配置（window.__APP_CONFIG__）.
- * 编译期注入（webpack DefinePlugin 从 .env 读取）:
- *   __APP_SANDBOX_BASE_URL__   沙箱调度服务 URL
- *   __APP_REGISTRY_BASE_URL__  拓展分发服务 URL
- * 其余协议地址（opencode/fs）由 sandbox 返回后设置（applyRuntime 写入）.
+ * 模块加载时（App 渲染前, index.tsx import）完成全局机制挂载:
+ *   - window.__APP_CONFIG__: 编译期注入配置（sandbox/registry 地址, 其余协议地址由 sandbox 返回）
+ *   - BrowserFS backend 注册: RemoteFS（core/config/bfs.ts, 读写全透传 server fs, 调 service/fs 单实例）;
+ *     runtime.ts workspace.filesystem 按 fs: RemoteFS.Name 创建, 必须在渲染前注册
  */
 
+import { BrowserFS } from '@codeblitzjs/ide-sumi-core/lib/server/node';
 import { APP_CHAT_CONFIG } from './brand';
+import { RemoteFS } from './bfs';
 
 declare const __APP_SANDBOX_BASE_URL__: string;
 declare const __APP_REGISTRY_BASE_URL__: string;
@@ -33,5 +34,8 @@ function buildAppConfig(): AppConfig {
     chatConfig: APP_CHAT_CONFIG,
   };
 }
+
+// 文件系统机制: 注册 RemoteFS 为 BrowserFS backend（opensumi 容器经 BrowserFS 访问 service/fs 单实例）
+BrowserFS.addFileSystemType(RemoteFS.Name, RemoteFS as any);
 
 (window as any).__APP_CONFIG__ = buildAppConfig();

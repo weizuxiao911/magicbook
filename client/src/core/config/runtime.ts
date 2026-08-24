@@ -1,61 +1,36 @@
 /**
  * 运行时配置 — core/config/runtime.ts
  *
- * 文件系统: OverlayFS (InMemory 可写 + DynamicRequest 只读)
- *   - writable: InMemory      内存可写层 (浏览器侧编辑/镜像占位)
- *   - readable: DynamicRequest 远程只读层 (经 service/filesystem 拉取)
+ * 文件系统: RemoteFS（core/config/bfs.ts, BrowserFS backend, 读写全透传 server fs）
+ *   - opensumi 容器（explorer/编辑器）经 BrowserFS 访问, 内部调 service/fs 单实例
+ *     （业务代码经 useInjectable(FsToken) 访问同一实例 → 单实例统一）
+ *   - 读写全直连 server /fs/*（无缓存: 外部修改立即可见, 保存/创建/删除立即落盘, 无循环写回）
  *
- * 路径: file:// URI → IFileSystem（opensumi IFileService 标准）:
- *   - readDirectory → getFileStat(uri).children
- *   - readFile      → resolveContent(uri)
- *   - write         → setContent / createFile
- *   - delete        → delete(uri)
- *   - create        → createFile / createFolder
+ * 保存同步: onDidSaveTextDocument → write（backend 已直落 server, 此处幂等兜底）
  */
 
 import { WORKSPACE_ROOT, type IAppRendererProps } from '@codeblitzjs/ide-core';
 
 import { getFileSystemService } from '../../service/fs';
-import { toFileUri } from '../../core/commands/fs/uri';
 
-/** 相对路径 → file:// URI（根 = sandbox cwd） */
-function relToUri(filepath: string): string {
-  return toFileUri(filepath);
+/** BrowserFS 路径 → IDE 相对路径（去 /workspace 前缀） */
+function sandboxRel(path: string): string {
+  const p = path.startsWith(WORKSPACE_ROOT) ? path.slice(WORKSPACE_ROOT.length) : path;
+  return p || '/';
 }
 
-/** DynamicRequest readDirectory 回调 */
-async function sandboxReadDirectory(path: string): Promise<Array<[string, number]>> {
-  const uri = path.startsWith('file://') ? path : relToUri(path);
-  const stat = await getFileSystemService().getFileStat(uri);
-  const entries = stat?.children || [];
-  return entries.map((e) => {
-    const name = e.uri.split('/').pop() || '';
-    return [name, e.isDirectory ? 2 : 1];
-  });
-}
-
-/** DynamicRequest readFile 回调 */
-async function sandboxReadFile(path: string): Promise<Uint8Array> {
-  const uri = path.startsWith('file://') ? path : relToUri(path);
-  const { content } = await getFileSystemService().resolveContent(uri);
-  return new TextEncoder().encode(content || '');
-}
-
-/** 保存/删除 → 同步宿主机 */
+/** 保存 → 同步 server fs（backend 已直落, 此处幂等兜底） */
 function syncToSandbox(op: 'write' | 'delete', filepath: string, content?: string): void {
   void (async () => {
     try {
       const fsApi = getFileSystemService();
-      const uri = relToUri(filepath);
+      const rel = sandboxRel(filepath);
       if (op === 'write' && typeof content === 'string') {
-        const stat = await fsApi.getFileStat(uri);
-        if (stat) {
-          await fsApi.setContent(stat, content);
-        } else {
-          await fsApi.createFile(uri, { content });
-        }
+        await fsApi.write(rel, content);
+        console.log(`[runtime] sync write → server: ${rel}`, JSON.stringify(content.slice(0, 40)));
       } else if (op === 'delete') {
-        await fsApi.delete(uri);
+        await fsApi.rm(rel);
+        console.log(`[runtime] sync delete → server: ${rel}`);
       }
     } catch (err) {
       console.warn('[runtime] sync to sandbox failed:', op, filepath, err);
@@ -63,61 +38,20 @@ function syncToSandbox(op: 'write' | 'delete', filepath: string, content?: strin
   })();
 }
 
-/** 查询浏览器侧是否为目录 */
-async function isDirOnBrowser(filepath: string): Promise<boolean> {
-  try {
-    const fileService = (window as any).__APP_FILE_SERVICE__;
-    if (!fileService) return false;
-    const stat = await fileService.getFileStat(relToUri(filepath));
-    return !!stat?.isDirectory;
-  } catch {
-    return false;
-  }
-}
-
 export const runtimeConfig: IAppRendererProps['runtimeConfig'] = {
   workspace: {
     filesystem: {
-      fs: 'OverlayFS',
-      options: {
-        writable: { fs: 'InMemory' },
-        readable: {
-          fs: 'DynamicRequest',
-          options: {
-            readDirectory: sandboxReadDirectory,
-            readFile: sandboxReadFile,
-          },
-        },
-      },
+      fs: 'RemoteFS',
+      options: {},
     },
     onDidSaveTextDocument: ({ filepath, content }) => {
       syncToSandbox('write', filepath, content);
     },
-    onDidChangeFiles: (files) => {
-      (files || []).forEach((f) => {
-        if (f?.filepath && typeof f.content === 'string') {
-          syncToSandbox('write', f.filepath, f.content);
-        }
-      });
-    },
+    // 注意: onDidChangeFiles / onDidCreateFiles 由 IFileServiceClient.onFilesChanged 驱动,
+    // 而 onFilesChanged 会收到我们 fireFilesChange 的"外部变化"事件 → 写回旧内容/覆盖新建, 形成循环。
+    // backend 已把浏览器侧读写直落 server, 无需这些钩子; 保存由 onDidSaveTextDocument 兜底。
     onDidChangeTextDocument: (_args) => {
       // 实时变更不即时同步 (防抖由保存触发)
-    },
-    onDidCreateFiles: (files) => {
-      (files || []).forEach((f) => {
-        void (async () => {
-          try {
-            const uri = relToUri(f);
-            if (await isDirOnBrowser(f)) {
-              await getFileSystemService().createFolder(uri);
-            } else {
-              await getFileSystemService().createFile(uri, { content: '' });
-            }
-          } catch (err) {
-            console.warn('[runtime] create sync failed:', f, err);
-          }
-        })();
-      });
     },
     onDidDeleteFiles: (files) => {
       (files || []).forEach((f) => syncToSandbox('delete', f));

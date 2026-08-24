@@ -106,11 +106,7 @@
   border: none !important;
 }
 
-/* explorer 文件树: item 靠左对齐 + 字体 14px + 行高 1.25 垂直居中 */
-[class*="file_tree_node___"]:not([class*="file_tree_node_content"]):not([class*="file_tree_node_segment"]):not([class*="file_tree_node_overflow"]) {
-  padding-left: 12px !important;
-  margin-left: 0 !important;
-}
+/* explorer 文件树: 字体 14px + 行高 1.25 垂直居中（层级缩进保留默认, 不强制 padding） */
 [class*="file_tree_node_displayname___"],
 [class*="file_tree_node_segment___"] {
   font-size: 14px !important;
