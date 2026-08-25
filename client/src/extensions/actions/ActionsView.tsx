@@ -65,7 +65,7 @@ export const ActionsView: React.FC = () => {
 
   useEffect(() => {
     // 启动时: 确保 right slot 有激活的面板. OpenSumi 布局缓存可能是
-    // { currentId: "", size: 458 } (折叠态但容器占宽) → 刷新后右侧空栏.
+    // { currentId: "", size: 396 } (折叠态但容器占宽) → 刷新后右侧空栏.
     // 延迟到容器注册完再激活 AI 面板; 仅从未激活过时激活一次,
     // 避免用户折叠后定时器又把 right 重新展开.
     let disposed = false;
@@ -124,7 +124,7 @@ export const ActionsView: React.FC = () => {
   const toggleLeft = () => layoutService.toggleSlot(SlotLocation.left);
   const toggleBottom = () => layoutService.toggleSlot(SlotLocation.bottom);
 
-  // right 折叠/展开: 直接驱动 width 容器的内联 width 做帧动画 (458↔0), 全程平滑无顿感.
+  // right 折叠/展开: 直接驱动 width 容器的内联 width 做帧动画 (396↔0), 全程平滑无顿感.
   const toggleRight = () => {
     const right = layoutService.getTabbarService(SlotLocation.right);
     const willShow = !right.currentContainerId.get();
@@ -137,7 +137,7 @@ export const ActionsView: React.FC = () => {
 
     if (willShow) {
       // 展开: 先恢复显示 + toggleSlot (OpenSumi 设 49), 等渲染完成, 再 49 → prevSize 平滑放大
-      const prevSize = (right as any).prevSize || 458;
+      const prevSize = (right as any).prevSize || 396;
       right.updatePanelVisibility(true);
       layoutService.toggleSlot(SlotLocation.right);
       const el = widthEl();
@@ -157,7 +157,7 @@ export const ActionsView: React.FC = () => {
       // 折叠: 宽度 当前 → 0 平滑缩小 (此时不动 currentId, OpenSumi 不干扰)
       const el = widthEl();
       if (el) {
-        const from = el.getBoundingClientRect().width || 458;
+        const from = el.getBoundingClientRect().width || 396;
         el.style.minWidth = '0px';
         el.style.transition = `width ${DURATION}ms cubic-bezier(0.22,1,0.36,1)`;
         el.style.width = '0px';
