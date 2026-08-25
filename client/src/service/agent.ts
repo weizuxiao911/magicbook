@@ -19,7 +19,8 @@ import { AgentToken } from '../core/commands/agent';
 let _client: any = null;
 
 function agentUrl(): string {
-  return ((window as any).__APP_CONFIG__?.agentUrl || '').replace(/\/+$/, '');
+  const base = ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
+  return base ? `${base}/ai` : '';
 }
 
 @Injectable()
@@ -57,6 +58,13 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
     if (_client) return _client;
     const base = agentUrl();
     if (!base) return null;
+    // 预热: 带 x-current-cwd header 触发 sandbox 确保 opencode 就绪 (幂等, 不阻塞)
+    const cwd = localStorage.getItem('APP_CWD');
+    if (cwd) {
+      void fetch(`${base.replace(/\/ai$/, '')}/ai/path`, {
+        headers: { 'X-Current-Cwd': btoa(unescape(encodeURIComponent(cwd))) },
+      }).catch(() => { /* 预热失败忽略, SDK 请求时再触发 */ });
+    }
     _client = createOpencodeClient({ baseUrl: base, responseStyle: 'fields', throwOnError: true });
     (window as any).__APP_OPENCODE__ = _client;
     (window as any).__APP_OPENCODE_RUNTIME__ = { baseUrl: base };

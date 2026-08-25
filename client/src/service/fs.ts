@@ -20,14 +20,22 @@ import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 import type { FsEntry, FileMeta, IFileSystem } from '../core/commands/fs';
 import { FsToken } from '../core/commands/fs';
 
-/** fs_base_url（sandbox 返回, 含 /fs 前缀） */
+/** 服务地址（从 appBaseUrl 拼接 /fs） */
 function fsBaseUrl(): string {
-  return ((window as any).__APP_CONFIG__?.fsUrl || '').replace(/\/+$/, '');
+  const base = ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
+  return base ? `${base}/fs` : '';
+}
+
+/** 当前 cwd → base64 header 值 */
+function cwdHeader(): string | undefined {
+  const cwd = localStorage.getItem('APP_CWD');
+  return cwd ? btoa(unescape(encodeURIComponent(cwd))) : undefined;
 }
 
 async function http<T>(url: string, init?: RequestInit): Promise<T> {
+  const cwd = cwdHeader();
   const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(cwd ? { 'X-Current-Cwd': cwd } : {}) },
     ...init,
   });
   if (!res.ok) {
@@ -252,13 +260,19 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   async read(idePath: string): Promise<string> {
-    const res = await fetch(`${this.api('file')}?path=${encodeURIComponent(idePath)}`);
+    const cwd = cwdHeader();
+    const res = await fetch(`${this.api('file')}?path=${encodeURIComponent(idePath)}`, {
+      headers: { ...(cwd ? { 'X-Current-Cwd': cwd } : {}) },
+    });
     if (!res.ok) throw new Error(`fs read ${res.status}`);
     return res.text();
   }
 
   async readBinary(idePath: string): Promise<Uint8Array> {
-    const res = await fetch(`${this.api('file')}?path=${encodeURIComponent(idePath)}&binary=1`);
+    const cwd = cwdHeader();
+    const res = await fetch(`${this.api('file')}?path=${encodeURIComponent(idePath)}&binary=1`, {
+      headers: { ...(cwd ? { 'X-Current-Cwd': cwd } : {}) },
+    });
     if (!res.ok) throw new Error(`fs readBinary ${res.status}`);
     return new Uint8Array(await res.arrayBuffer());
   }

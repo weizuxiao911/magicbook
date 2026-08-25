@@ -24,7 +24,7 @@ export const WelcomeView: React.FC<{ resource?: any }> = () => {
   // 品牌/logo 从全局配置 (__APP_CONFIG__.chatConfig.brand) 读取, 不硬编码
   const brand = useMemo(() => {
     const cfg = (window as any).__APP_CONFIG__;
-    return cfg?.chatConfig?.brand || { name: '魔法书', logoChar: '', tagline: '' };
+    return cfg?.chatConfig?.brand || { name: 'AI 工作台', logoChar: '', tagline: '' };
   }, []);
 
   const workspaceDir = env?.getCwdSync?.() || '';

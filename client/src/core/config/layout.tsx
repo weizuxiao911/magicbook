@@ -4,17 +4,8 @@ import { BoxPanel, SplitPanel } from '@opensumi/ide-core-browser/lib/components'
 import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/injectable-hooks';
 import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 
-/**
- * LayoutComponent — core/config/layout.tsx
- *
- * 默认布局: top + main + right 三槽位显示.
- *   - left（资源管理器）/ bottom（终端）保留但默认收起
- *   - right（chat 面板）: 未登录时显示「去登录」按钮, 点击触发登录（login 槽位）
- *
- * 结构:
- *   - top-to-bottom BoxPanel: top 槽位 + 主 SplitPanel
- *   - main-horizontal: left（收起）+ main-vertical（main + bottom 收起）+ right
- */
+import { WorkspacePicker } from '../../extensions/workspace/WorkspacePicker';
+
 export function LayoutComponent(): React.ReactElement {
   useInjectable<IMainLayoutService>(IMainLayoutService);
 
@@ -38,8 +29,7 @@ export function LayoutComponent(): React.ReactElement {
           <SlotRenderer slot={SlotLocation.right} isTabbar defaultSize={396} minResize={240} minSize={49} />
         </SplitPanel>
       </BoxPanel>
-      {/* 登录面板: 挂载 login 拓展, 默认隐藏, 由 chat「去登录」按钮经 auth:show-login 事件唤起 */}
-      <SlotRenderer slot="login" id="login-slot" />
+      <WorkspacePicker />
     </React.Fragment>
   );
 }

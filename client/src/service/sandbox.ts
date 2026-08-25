@@ -16,9 +16,9 @@ import { Domain } from '@opensumi/ide-core-common';
 import type { ISandbox, SandboxEvent, SandboxRuntime } from '../core/commands/sandbox';
 import { SandboxToken } from '../core/commands/sandbox';
 
-/** 沙箱调度服务地址（.env SANDBOX_BASE_URL, 编译期注入） */
-function sandboxBaseUrl(): string {
-  return ((window as any).__APP_CONFIG__?.sandboxBaseUrl || '').replace(/\/+$/, '');
+/** 服务地址（.env APP_BASE_URL, 编译期注入） */
+function appBaseUrl(): string {
+  return ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
 }
 
 /** 登录身份请求头（X-User-Id） */
@@ -36,37 +36,24 @@ export class SandboxServiceImpl implements ISandbox {
   constructor() {
     SandboxServiceImpl.instance = this;
     (window as any).__APP_SANDBOX__ = this;
-    console.log('[sandbox] service installed, appBaseUrl:', sandboxBaseUrl() || '(unset)');
+    console.log('[sandbox] service installed, appBaseUrl:', appBaseUrl() || '(unset)');
   }
 
   // 注意: 不自动加载 sandbox —— 登录后由 LoginView.doLogin 调 get() + applyRuntime()（用户设计）
   // sandbox service 只负责 查询/创建/重载 用户的沙箱, 无启动钩子
 
   async get(): Promise<SandboxRuntime> {
-    const rt = await this.http<SandboxRuntime>(`${sandboxBaseUrl()}/sandbox`);
+    const rt: SandboxRuntime = { runtimeId: 'default', cwd: '', opencode_base_url: `${appBaseUrl()}/ai`, fs_base_url: `${appBaseUrl()}/fs`, pty_base_url: '', default_shell: '/bin/zsh', mode: 'local' };
     this.runtime = rt;
     return rt;
   }
 
   async create(): Promise<SandboxRuntime> {
-    const rt = await this.http<SandboxRuntime>(`${sandboxBaseUrl()}/sandbox`, { method: 'POST' });
-    this.runtime = rt;
-    return rt;
+    return this.get();
   }
 
   onEvents(runtimeId: string, handler: (e: SandboxEvent) => void): () => void {
-    const es = new EventSource(`${sandboxBaseUrl()}/sandbox/${encodeURIComponent(runtimeId)}/events`);
-    es.onmessage = (msg) => {
-      try {
-        const evt = JSON.parse(msg.data) as SandboxEvent;
-        handler(evt);
-        if (evt.type === 'ready' && evt.payload) this.runtime = evt.payload;
-      } catch {
-        /* ignore bad frame */
-      }
-    };
-    es.onerror = () => es.close();
-    return () => es.close();
+    return () => {};
   }
 
   getRuntime(): SandboxRuntime | null {
@@ -105,6 +92,34 @@ export class SandboxServiceImpl implements ISandbox {
       throw new Error(`sandbox API ${res.status}: ${url}`);
     }
     return res.json() as Promise<T>;
+  }
+
+  async setWorkspace(directory: string): Promise<SandboxRuntime> {
+    const res = await fetch(`${appBaseUrl()}/workspace/select`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ directory }),
+    });
+    if (!res.ok) throw new Error(`setWorkspace failed: ${res.status}`);
+    const rt: SandboxRuntime = { runtimeId: 'default', cwd: directory, opencode_base_url: `${appBaseUrl()}/ai`, fs_base_url: `${appBaseUrl()}/fs`, pty_base_url: '', default_shell: '/bin/zsh', mode: 'local' };
+    this.runtime = rt;
+    return rt;
+  }
+
+  async browse(path: string): Promise<{ path: string; directories: Array<{ name: string; path: string }> }> {
+    const res = await fetch(`${appBaseUrl()}/workspace/browse?path=${encodeURIComponent(path)}`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) throw new Error(`browse failed: ${res.status}`);
+    return res.json();
+  }
+
+  async mkdir(parent: string, name: string): Promise<{ ok: boolean; path: string }> {
+    const res = await fetch(`${appBaseUrl()}/workspace/mkdir`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parent, name }),
+    });
+    if (!res.ok) throw new Error(`mkdir failed: ${res.status}`);
+    return res.json();
   }
 }
 

@@ -5,8 +5,6 @@ import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 import { PreferenceService } from '@opensumi/ide-core-browser/lib/preferences';
 import { PreferenceScope } from '@opensumi/ide-core-common/lib/preferences/preference-scope';
 
-import { isLoggedIn, logout } from '../login';
-
 const THEME_DARK = 'opensumi-design-dark-theme';
 const THEME_LIGHT = 'opensumi-design-light-theme';
 const THEME_KEY = 'general.theme';
@@ -28,23 +26,11 @@ export const ActionsView: React.FC = () => {
   const [bottomVisible, setBottomVisible] = useState(false);
   const [rightVisible, setRightVisible] = useState(true);
   const [isDark, setIsDark] = useState(true);
-  const [loggedIn, setLoggedIn] = useState(isLoggedIn());
 
   // 品牌/logo 从全局配置 (__APP_CONFIG__.chatConfig.brand) 读取, 不硬编码
   const brand = React.useMemo(() => {
     const cfg = (window as any).__APP_CONFIG__;
-    return cfg?.chatConfig?.brand || { name: '魔法书', logoChar: '' };
-  }, []);
-
-  // 监听登录态 (登录/登出后更新)
-  useEffect(() => {
-    const onAuth = () => setLoggedIn(isLoggedIn());
-    window.addEventListener('app:auth-changed', onAuth);
-    const id = window.setInterval(() => setLoggedIn(isLoggedIn()), 1500);
-    return () => {
-      window.removeEventListener('app:auth-changed', onAuth);
-      window.clearInterval(id);
-    };
+    return cfg?.chatConfig?.brand || { name: 'AI 工作台', logoChar: '' };
   }, []);
 
   useEffect(() => {
@@ -226,13 +212,6 @@ export const ActionsView: React.FC = () => {
       <path d="M20 14.5A8 8 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z" />
     </svg>
   );
-  const LogoutIcon = () => (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-      <polyline points="16 17 21 12 16 7" />
-      <line x1="21" y1="12" x2="9" y2="12" />
-    </svg>
-  );
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', height: '100%', padding: '0 12px', fontSize: 13 }}>
@@ -264,12 +243,6 @@ export const ActionsView: React.FC = () => {
       <button type="button" title={rightVisible ? '折叠右侧栏' : '展开右侧栏'} onClick={toggleRight} style={iconBtnStyle}>
         <RightIcon filled={rightVisible} />
       </button>
-      {/* 退出登录: 固定在 actions 最右 */}
-      {loggedIn && (
-        <button type="button" title="退出登录" onClick={logout} style={iconBtnStyle}>
-          <LogoutIcon />
-        </button>
-      )}
     </div>
   );
 };

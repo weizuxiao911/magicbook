@@ -42,6 +42,12 @@ export interface ISandbox {
   getMode(): 'local' | 'cluster' | null;
   /** 应用运行时（由 server 返回的完整地址驱动各协议 baseUrl） */
   applyRuntime(rt: SandboxRuntime): void;
+  /** 切换工作目录, 重启 opencode + fs */
+  setWorkspace(directory: string): Promise<SandboxRuntime>;
+  /** 浏览目录 */
+  browse(path: string): Promise<{ path: string; directories: Array<{ name: string; path: string }> }>;
+  /** 创建子目录 */
+  mkdir(parent: string, name: string): Promise<{ ok: boolean; path: string }>;
 }
 
 /** Sandbox Token（全局定义） — service/sandbox 局部实现 */

@@ -9,8 +9,8 @@
 
 export const APP_CHAT_CONFIG = {
   brand: {
-    name: '魔法书',
-    nameZh: '魔法书',
+    name: 'AI 工作台',
+    nameZh: 'AI 工作台',
     tagline: 'C/S 架构可交互工作台',
     greeting: '你好，我是 {nameZh}',
     logoChar: '✦',

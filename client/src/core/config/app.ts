@@ -11,12 +11,12 @@ import { BrowserFS } from '@codeblitzjs/ide-sumi-core/lib/server/node';
 import { APP_CHAT_CONFIG } from './brand';
 import { RemoteFS } from './bfs';
 
-declare const __APP_SANDBOX_BASE_URL__: string;
+declare const __APP_BASE_URL__: string;
 declare const __APP_REGISTRY_BASE_URL__: string;
 declare const __APP_DEPLOY_ENV__: string;
 
 export interface AppConfig {
-  sandboxBaseUrl: string;
+  appBaseUrl: string;
   registryBaseUrl: string;
   deployEnv: string;
   workspaceDir: string;
@@ -26,7 +26,7 @@ export interface AppConfig {
 
 function buildAppConfig(): AppConfig {
   return {
-    sandboxBaseUrl: __APP_SANDBOX_BASE_URL__ || '',
+    appBaseUrl: __APP_BASE_URL__ || '',
     registryBaseUrl: __APP_REGISTRY_BASE_URL__ || '',
     deployEnv: __APP_DEPLOY_ENV__ || 'development',
     workspaceDir: '/workspace',
