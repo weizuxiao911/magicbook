@@ -26,16 +26,16 @@ export function LayoutComponent(): React.ReactElement {
           <SlotRenderer
             slot={SlotLocation.left}
             isTabbar
-            defaultSize={320}
+            defaultSize={240}
             defaultCollapsed={true}
-            minResize={204}
+            minResize={180}
             minSize={49}
           />
           <SplitPanel id="main-vertical" minResize={300} flexGrow={1} direction="top-to-bottom">
             <SlotRenderer flex={2} flexGrow={1} minResize={200} slot={SlotLocation.main} />
             <SlotRenderer flex={1} minResize={160} slot={SlotLocation.bottom} isTabbar defaultSize={200} defaultCollapsed={true} />
           </SplitPanel>
-          <SlotRenderer slot={SlotLocation.right} isTabbar defaultSize={458} minResize={320} minSize={49} />
+          <SlotRenderer slot={SlotLocation.right} isTabbar defaultSize={396} minResize={320} minSize={49} />
         </SplitPanel>
       </BoxPanel>
       {/* 登录面板: 挂载 login 拓展, 默认隐藏, 由 chat「去登录」按钮经 auth:show-login 事件唤起 */}

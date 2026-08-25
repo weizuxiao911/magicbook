@@ -480,15 +480,15 @@ body.vs,
     0 12px 24px color-mix(in srgb, #000 34%, transparent),
     0 6px 14px color-mix(in srgb, #000 24%, transparent) !important;
 }
-/* top_slot 类名命中时保持 64px 高度 (老类名兼容) */
+/* top_slot 类名命中时保持 48px 高度 (老类名兼容; 用户拍板 48px) */
 [class*="top_slot___"],
 [class*="design_top_slot"],
 [class*="top_slot"],
 [class*="design_top"],
 .-app-topbar {
-  height: 64px !important;
-  min-height: 64px !important;
-  max-height: 64px !important;
+  height: 48px !important;
+  min-height: 48px !important;
+  max-height: 48px !important;
 }
 .vs .-app-topbar,
 .vs [class*="top_slot___"],
