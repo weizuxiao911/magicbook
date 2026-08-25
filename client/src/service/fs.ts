@@ -183,7 +183,10 @@ export class FileSystemServiceImpl implements IFileSystem {
         // （html 曾被文本编辑器打开 → 恢复落回文本, webview 不渲染）; 用 forceOpenType 组件
         // 强制 viewType → 触发扩展 resolve. 串行避免 tab 竞态.
         const customEditorMap = buildCustomEditorMap();
+        // 非 target 的 customEditor 文件先逐个强制打开（target 单独走下面的 focus 激活,
+        // 避免对 target 多次 open 造成当前 tab 状态混乱 → 编辑区空白）
         for (const uri of alive) {
+          if (uri === target) continue;
           const viewType = matchCustomEditor(uri, customEditorMap);
           if (!viewType) continue;
           try {
