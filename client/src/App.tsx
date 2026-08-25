@@ -23,9 +23,15 @@ import './core/styles/slots.css';
 /** 渲染前暂存上次打开的编辑器 uris（容器初始化恢复失败会清空 storage, 登录后按暂存恢复） */
 function stashSavedEditorUris(): void {
   try {
-    const raw = localStorage.getItem('scoped:/workspace/:/workbench');
-    if (!raw) return;
-    const state = JSON.parse(raw) as { grid?: string };
+    // 自建持久化 key（watchEditorState 维护）; 兜底旧 opensumi workbench storage
+    const raw = localStorage.getItem('magicbook.editorUris');
+    if (raw) {
+      const arr = JSON.parse(raw) as string[];
+      if (Array.isArray(arr) && arr.length) { (window as any).__SAVED_EDITOR_URIS__ = arr; return; }
+    }
+    const legacy = localStorage.getItem('scoped:/workspace/:/workbench');
+    if (!legacy) return;
+    const state = JSON.parse(legacy) as { grid?: string };
     const grid = JSON.parse(state.grid || '{}') as { editorGroup?: { uris?: string[] } };
     const uris = grid?.editorGroup?.uris || [];
     if (uris.length) (window as any).__SAVED_EDITOR_URIS__ = uris;

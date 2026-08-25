@@ -14,6 +14,7 @@ import { Injectable, Autowired } from '@opensumi/di';
 import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser';
 import { Domain, CommandService, FileChangeType, URI } from '@opensumi/ide-core-common';
 import { IFileServiceClient } from '@opensumi/ide-file-service/lib/common';
+import { WorkbenchEditorService } from '@opensumi/ide-editor';
 import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 
 import type { FsEntry, FileMeta, IFileSystem } from '../core/commands/fs';
@@ -56,6 +57,9 @@ export class FileSystemServiceImpl implements IFileSystem {
   @Autowired(IFileServiceClient)
   private readonly fileService!: IFileServiceClient;
 
+  @Autowired(WorkbenchEditorService)
+  private readonly editorService!: WorkbenchEditorService;
+
   private eventSource: EventSource | null = null;
 
   /** 容器启动: 挂全局单例 + 订阅 fs SSE（宿主机工作目录变更 → fs:changed 事件） */
@@ -67,6 +71,7 @@ export class FileSystemServiceImpl implements IFileSystem {
       this.connectEvents();
       void this.verifyOpensumiLink();
       void this.refreshExplorer();
+      this.watchEditorState();
       this.restoreOpenedEditors();
     });
     if (fsBaseUrl()) this.connectEvents();
@@ -86,40 +91,65 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   /**
-   * 恢复上次打开的编辑器 tab.
-   * 容器初始化时 fsUrl 未就绪（登录前）恢复打开失败; 登录后（runtime-ready）按文件系统
-   * 校验保存的 workbench grid uris（存在才打开）.
+   * 恢复上次打开的编辑器 tab（与 explorer 加载解耦: 异步 500ms 延后, 互不影响）.
+   * 持久化由 watchEditorState 维护（打开自动加、关闭自动移除）; 这里只消费同一个
+   * runtime-ready 事件后各自工作.
+   * 恢复时并行校验文件存在（被删/不存在的跳过, 并从持久化自愈移除）, 避免反复
+   * 尝试打开已删除文件（404 / INVALID tab 污染恢复流程）.
    */
   private restoreOpenedEditors(): void {
     try {
-      // 优先用渲染前暂存（容器初始化失败会清空 storage）; 兜底读 storage
       const uris: string[] =
         (window as any).__SAVED_EDITOR_URIS__ ||
         (() => {
-          const raw = localStorage.getItem('scoped:/workspace/:/workbench');
+          const raw = localStorage.getItem('magicbook.editorUris');
           if (!raw) return [];
-          const state = JSON.parse(raw) as { grid?: string };
-          const grid = JSON.parse(state.grid || '{}') as { editorGroup?: { uris?: string[] } };
-          return grid?.editorGroup?.uris || [];
+          const arr = JSON.parse(raw);
+          return Array.isArray(arr) ? arr : [];
         })();
-      if (uris.length) console.log('[filesystem] 恢复编辑器 tab:', uris.length, uris);
-      // 与 fs 读取（explorer 加载）解耦: 延后执行等 UI/explorer 稳定, 不做 getFileStat 校验
-      // （打开失败自然忽略, 不影响 explorer 的 fs 读取）; 打开成功后同步 opensumi workbench
-      // storage（tab 关闭时 opensumi 自动移除记录, 这里只负责恢复时补写）
-      // 串行打开（并行会触发 EditorTabChangedError 竞态）; 不写 storage——恢复打开后
-      // opensumi 自己会保存 uris, tab 关闭时由 opensumi 自动移除记录
+      if (!uris.length) return;
+      console.log('[filesystem] 恢复编辑器 tab:', uris.length, uris);
       setTimeout(() => {
-        void uris.reduce(
-          (p, uri) =>
-            p.then(() =>
-              this.commandService
-                .executeCommand('editor.openUri', URI.parse(uri), { preview: false })
-                .then(() => console.log('[filesystem] 恢复打开成功:', uri))
-                .catch((e) => console.warn('[filesystem] 恢复打开失败:', uri, e)),
-            ),
-          Promise.resolve(),
-        );
-      }, 3000);
+        const alive: string[] = [];
+        void Promise.all(
+          uris.map((uri) =>
+            this.fileService
+              .getFileStat(uri)
+              .then((stat) => {
+                if (!stat || stat.isDirectory) return;
+                alive.push(uri);
+                return this.commandService
+                  .executeCommand('editor.openUri', URI.parse(uri), { preview: false })
+                  .then(() => console.log('[filesystem] 恢复打开成功:', uri))
+                  .catch((e) => console.warn('[filesystem] 恢复打开失败:', uri, e));
+              })
+              .catch(() => {}),
+          ),
+        ).then(() => {
+          if (alive.length !== uris.length) {
+            localStorage.setItem('magicbook.editorUris', JSON.stringify(alive));
+            console.log('[filesystem] 恢复状态自愈:', uris.filter((u) => !alive.includes(u)), '已从持久化移除');
+          }
+        });
+      }, 500);
+    } catch { /* ignore */ }
+  }
+
+  /**
+   * 监听编辑器 tab 变化（打开/关闭/切换）→ 把当前打开的 uris 持久化.
+   * 打开自动加入 state, 关闭自动从 state 移除（读当前真实状态写入, 不残留已关闭 tab）.
+   */
+  private watchEditorState(): void {
+    try {
+      // tab 变化事件在实现类上（token 接口未暴露）, 运行时一定存在
+      (this.editorService as any).onDidEditorGroupTabChanged?.(() => this.syncPersistedUris());
+    } catch { /* ignore */ }
+  }
+
+  private syncPersistedUris(): void {
+    try {
+      const uris = this.editorService.getAllOpenedUris().map((u) => u.toString());
+      localStorage.setItem('magicbook.editorUris', JSON.stringify(uris));
     } catch { /* ignore */ }
   }
 
