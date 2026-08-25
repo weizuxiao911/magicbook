@@ -103,20 +103,23 @@ export class FileSystemServiceImpl implements IFileSystem {
           return grid?.editorGroup?.uris || [];
         })();
       if (uris.length) console.log('[filesystem] 恢复编辑器 tab:', uris.length, uris);
-      uris.forEach((uri) => {
-        void this.fileService
-          .getFileStat(uri)
-          .then((stat) => {
-            if (stat && !stat.isDirectory) {
-              // 主线程 editor.openUri（无扩展命令的 URI.from 转换）
-              void this.commandService
+      // 与 fs 读取（explorer 加载）解耦: 延后执行等 UI/explorer 稳定, 不做 getFileStat 校验
+      // （打开失败自然忽略, 不影响 explorer 的 fs 读取）; 打开成功后同步 opensumi workbench
+      // storage（tab 关闭时 opensumi 自动移除记录, 这里只负责恢复时补写）
+      // 串行打开（并行会触发 EditorTabChangedError 竞态）; 不写 storage——恢复打开后
+      // opensumi 自己会保存 uris, tab 关闭时由 opensumi 自动移除记录
+      setTimeout(() => {
+        void uris.reduce(
+          (p, uri) =>
+            p.then(() =>
+              this.commandService
                 .executeCommand('editor.openUri', URI.parse(uri), { preview: false })
                 .then(() => console.log('[filesystem] 恢复打开成功:', uri))
-                .catch((e) => console.warn('[filesystem] 恢复打开失败:', uri, e));
-            }
-          })
-          .catch(() => {});
-      });
+                .catch((e) => console.warn('[filesystem] 恢复打开失败:', uri, e)),
+            ),
+          Promise.resolve(),
+        );
+      }, 3000);
     } catch { /* ignore */ }
   }
 
