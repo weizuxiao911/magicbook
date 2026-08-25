@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { SlotLocation, SlotRenderer } from '@opensumi/ide-core-browser';
 import { BoxPanel, SplitPanel } from '@opensumi/ide-core-browser/lib/components';
 import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/injectable-hooks';
@@ -16,7 +16,19 @@ import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
  *   - main-horizontal: left（收起）+ main-vertical（main + bottom 收起）+ right
  */
 export function LayoutComponent(): React.ReactElement {
-  useInjectable<IMainLayoutService>(IMainLayoutService);
+  const layoutService = useInjectable<IMainLayoutService>(IMainLayoutService);
+
+  // 强制默认宽度: opensumi layoutState 会保存旧宽度覆盖 defaultSize, 启动后按默认值重置
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        const svc = layoutService as any;
+        svc.getTabbarService?.(SlotLocation.left)?.resizeHandle?.setSize?.(240);
+        svc.getTabbarService?.(SlotLocation.right)?.resizeHandle?.setSize?.(396);
+      } catch { /* ignore */ }
+    }, 800);
+    return () => clearTimeout(t);
+  }, [layoutService]);
 
   return (
     <React.Fragment>
