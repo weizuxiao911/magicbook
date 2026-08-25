@@ -13,7 +13,6 @@
 import { Injectable, Autowired } from '@opensumi/di';
 import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser';
 import { Domain, CommandService, FileChangeType, URI } from '@opensumi/ide-core-common';
-import { EDITOR_COMMANDS } from '@opensumi/ide-core-browser';
 import { IFileServiceClient } from '@opensumi/ide-file-service/lib/common';
 import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 
@@ -109,9 +108,9 @@ export class FileSystemServiceImpl implements IFileSystem {
           .getFileStat(uri)
           .then((stat) => {
             if (stat && !stat.isDirectory) {
-              // 编辑器 API 命令（主线程直接打开, 比扩展命令 delegate 更可靠）
+              // 主线程 editor.openUri（无扩展命令的 URI.from 转换）
               void this.commandService
-                .executeCommand(EDITOR_COMMANDS.API_OPEN_EDITOR_COMMAND_ID, URI.parse(uri))
+                .executeCommand('editor.openUri', URI.parse(uri), { preview: false })
                 .then(() => console.log('[filesystem] 恢复打开成功:', uri))
                 .catch((e) => console.warn('[filesystem] 恢复打开失败:', uri, e));
             }
