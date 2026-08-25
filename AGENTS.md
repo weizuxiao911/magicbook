@@ -24,7 +24,7 @@ AI 工作台/
 │       ├── main.ts         # 入口: /ai 透传 + ws upgrade、/sandbox、/health、启动兜底清孤儿
 │       ├── routes/         # ai（反向代理）/ fs（文件系统）/ workspace（browse/ensure/select）
 │       └── service/        # opencode（探活/自启/清理）/ fswatch
-├── registry/               # 扩展分发: build → metadata.json + 静态资源（:7781）
+├── registry/               # 扩展分发: build → metadata.json + 静态资源（:7790）
 ├── client/                 # 客户端（opensumi/codeblitz）
 │   └── src/
 │       ├── core/           # 内核: config / commands
@@ -39,7 +39,7 @@ AI 工作台/
 # 根目录
 npm install
 npm run dev              # sandbox（tsx watch :7789）+ client（webpack-dev-server :7788）并发启动
-cd registry && npm run dev   # 扩展分发独立启动（:7781, 自签 HTTPS）
+cd registry && npm run dev   # 扩展分发独立启动（:7790, 自签 HTTPS）
 
 # 验证
 cd client && npm run typecheck   # tsc --noEmit
@@ -109,7 +109,7 @@ cd client && npm run typecheck   # tsc --noEmit 通过
 | readFile 报 Buffer.from undefined | globalThis.Buffer 不存在 | `import { Buffer } from 'buffer'`（codeblitz 依赖内, 非 node: 前缀） |
 | explorer「无打开的文件夹」 | 挂载时 fsUrl 未就绪（登录前）或 workspaceDir 不匹配 | workspaceDir='/'；RemoteFS 根目录 stat 兜底返回空目录（登录后刷新填充） |
 
-### registry / vsix 扩展（:7781，HTTPS，kt-ext）
+### registry / vsix 扩展（:7790，HTTPS，kt-ext）
 
 | 现象 | 根因 | 修复 |
 | --- | --- | --- |
@@ -125,7 +125,7 @@ cd client && npm run typecheck   # tsc --noEmit 通过
 ### 架构要点
 
 - 唯一配置：`.env.development` 的 `APP_BASE_URL`（client 编译期注入）；下游地址全部派生（/ai、/fs），opencode 与终端同址 `/ai`。
-- 服务端口：client :7788 / sandbox :7789 / opencode :24096（sandbox 拉起）/ registry :7781。
+- 服务端口：client :7788 / sandbox :7789 / opencode :24096（sandbox 拉起）/ registry :7790。
 - opencode 生命周期：sandbox 独家调度（/workspace/ensure|select 或带 X-Current-Cwd 的请求触发幂等 ensure）；启动兜底清孤儿 + 整进程组清理防逃逸。
 - 扩展源码：`extensions/<name>/`（入库）；产物（vsix/dist/uploads）归 registry（gitignore）。
 - vsix 开发规范（用户约定）: **一律 TypeScript**（`src/extension.ts` + esbuild → `dist/extension.js`）;

@@ -14,7 +14,7 @@
   ├── :7789   入口 — /ai 反向代理（→ opencode :24096）、/fs 文件系统、/workspace 调度、
   │            /sandbox 信息接口（baseurl + 默认 shell + 连接状态）、/health
   ├── opencode :24096  AI + 终端 PTY（/pty, node-pty; sandbox 探活/自启, 非默认启动）
-  └── registry :7781  vsix 扩展分发（HTTPS, kt-ext 协议; metadata.json + 静态资源）
+  └── registry :7790  vsix 扩展分发（HTTPS, kt-ext 协议; metadata.json + 静态资源）
 ```
 
 下游服务地址**全部由 `APP_BASE_URL` 派生**（不配置第二个地址）：
@@ -40,7 +40,7 @@ npm run dev        # sandbox（tsx watch）+ client（webpack-dev-server）并�
 | 工作台 | http://localhost:7788 | 浏览器打开 |
 | sandbox | http://127.0.0.1:7789 | 统一入口（/ai /fs /workspace /sandbox） |
 | opencode | http://127.0.0.1:24096 | AI + 终端（sandbox 自动拉起） |
-| registry | https://127.0.0.1:7781 | 扩展分发（自签证书; 单独 `cd registry && npm run dev`） |
+| registry | https://127.0.0.1:7790 | 扩展分发（自签证书; 单独 `cd registry && npm run dev`） |
 
 ### 配置（.env.development）
 
@@ -73,7 +73,7 @@ sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keyc
 ```bash
 cd registry
 npm run build     # 扫描 vsix → 解压 dist/<id>/ + 生成 metadata.json
-npm run serve     # HTTPS 分发（:7781）
+npm run serve     # HTTPS 分发（:7790）
 ```
 
 4. **客户端加载**：刷新工作台 → 打开匹配文件（如 `demo.html` / `demo.paper`）→ customEditor 激活 → 预览。

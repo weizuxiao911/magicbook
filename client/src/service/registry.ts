@@ -1,7 +1,7 @@
 /**
  * registry 实现 — service/registry.ts
  *
- * implements core/commands/registry 的 IRegistry: 对接 registry 分发服务（:7781, HTTPS, kt-ext 协议）.
+ * implements core/commands/registry 的 IRegistry: 对接 registry 分发服务（:7790, HTTPS, kt-ext 协议）.
  *   - 启动期拉取 /metadata.json（codeblitz IExtensionBasicMetadata 完整字段）→ __APP_REGISTRY_METADATA__
  *   - 覆盖 kt-ext 静态资源解析 → 直连 registry 真实地址（自签证书需本机信任, 部署用正式证书）
  */

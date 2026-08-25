@@ -21,7 +21,7 @@ const ROOT = path.resolve(__dirname, '..');
 const VSIX_DIR = path.join(ROOT, 'vsix');
 const DIST_DIR = path.join(ROOT, 'dist');
 
-const PUBLIC_HOST = process.env.PUBLIC_HOST || 'localhost:7781';
+const PUBLIC_HOST = process.env.PUBLIC_HOST || 'localhost:7790';
 
 const PICK_FIELDS = [
   'name',

@@ -20,7 +20,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.resolve(__dirname, '..', 'dist');
 const CERT_DIR = path.resolve(__dirname, '..', 'certs');
 
-const PORT = Number(process.env.PORT || 7781);
+const PORT = Number(process.env.PORT || 7790);
 
 const MIME: Record<string, string> = {
   '.js': 'application/javascript; charset=utf-8',
