@@ -10,6 +10,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
+import path from 'node:path';
 import http from 'node:http';
 import type { ServerConfig } from '../config';
 
@@ -39,10 +40,20 @@ export function isOpencodeAlive(base: string, timeoutMs = 1500): Promise<boolean
 function spawnOpencode(config: ServerConfig): Promise<boolean> {
   const { port } = parseBase(config.opencodeBaseUrl);
   return new Promise((resolve) => {
+    // 清理 npm_config_* 环境（npm 启动服务时设置 global/local prefix, 会被 pty 终端继承,
+    // 导致 nvm 报 "npm_config_prefix 不兼容" 并跳过加载 node → 终端 node -v 失败）
+    const env = { ...process.env };
+    for (const k of Object.keys(env)) {
+      if (k.startsWith('npm_config_')) delete env[k];
+    }
+    // PATH 补充 node bin（npm 启动可能缺; opencode 若按 npm 全局安装也需要其目录）
+    const nodeBin = path.dirname(process.execPath);
+    env.PATH = `${nodeBin}:${env.PATH || ''}`;
     const child = spawn('opencode', ['serve', '--port', String(port), '--hostname', '0.0.0.0'], {
       cwd: config.workspaceRoot,
       stdio: 'ignore',
       detached: false,
+      env,
     });
     processHandle = child;
     child.on('error', (err) => {

@@ -17,7 +17,7 @@ import type { ServerConfig } from '../config';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** 本仓库根（magicbook/）— infrastructure/fs → 上四级 */
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
+const SERVER_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
 
 let processHandle: ChildProcess | null = null;
 let starting: Promise<boolean> | null = null;
@@ -45,11 +45,21 @@ export function isFsAlive(base: string, timeoutMs = 1500): Promise<boolean> {
 function spawnFs(config: ServerConfig): Promise<boolean> {
   const { port } = parseBase(config.fsBaseUrl);
   return new Promise((resolve) => {
-    const child = spawn('npx', ['tsx', 'src/main.ts'], {
-      cwd: path.join(REPO_ROOT, 'server', 'fs'),
-      env: { ...process.env, FS_PORT: String(port), WORKSPACE_ROOT: config.workspaceRoot },
-      stdio: 'ignore',
+    // tsx watch 下直接 spawn node/npx 各种 ENOENT（PATH 被 npm 改写）;
+    // 用登录 shell 启动（加载用户环境, PATH 完整）
+    const fsRoot = path.join(SERVER_ROOT, 'fs');
+    const cmd = `cd "${fsRoot}" && npx tsx src/main.ts`;
+    const child = spawn('/bin/zsh', ['-lc', cmd], {
+      // fs 不 spawn 终端, 无需清理 npm_config_*（仅 opencode pty 需要）
+      env: {
+        ...process.env,
+        FS_PORT: String(port),
+        WORKSPACE_ROOT: config.workspaceRoot,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
+    child.stderr?.on('data', (d) => console.error('[fs] stderr:', String(d).slice(0, 300)));
+    child.stdout?.on('data', (d) => console.log('[fs] stdout:', String(d).slice(0, 200)));
     processHandle = child;
     child.on('error', (err) => {
       console.error('[fs] 启动失败:', err.message);
