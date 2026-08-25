@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { SlotLocation, SlotRenderer } from '@opensumi/ide-core-browser';
 import { BoxPanel, SplitPanel } from '@opensumi/ide-core-browser/lib/components';
 import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/injectable-hooks';
@@ -16,19 +16,7 @@ import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
  *   - main-horizontal: left（收起）+ main-vertical（main + bottom 收起）+ right
  */
 export function LayoutComponent(): React.ReactElement {
-  const layoutService = useInjectable<IMainLayoutService>(IMainLayoutService);
-
-  // 强制默认宽度: opensumi layoutState 会保存旧宽度覆盖 defaultSize, 启动后按默认值重置
-  useEffect(() => {
-    const t = setTimeout(() => {
-      try {
-        const svc = layoutService as any;
-        svc.getTabbarService?.(SlotLocation.left)?.resizeHandle?.setSize?.(240);
-        svc.getTabbarService?.(SlotLocation.right)?.resizeHandle?.setSize?.(396);
-      } catch { /* ignore */ }
-    }, 800);
-    return () => clearTimeout(t);
-  }, [layoutService]);
+  useInjectable<IMainLayoutService>(IMainLayoutService);
 
   return (
     <React.Fragment>
@@ -40,14 +28,14 @@ export function LayoutComponent(): React.ReactElement {
             isTabbar
             defaultSize={240}
             defaultCollapsed={true}
-            minResize={180}
+            minResize={120}
             minSize={49}
           />
           <SplitPanel id="main-vertical" minResize={300} flexGrow={1} direction="top-to-bottom">
             <SlotRenderer flex={2} flexGrow={1} minResize={200} slot={SlotLocation.main} />
             <SlotRenderer flex={1} minResize={160} slot={SlotLocation.bottom} isTabbar defaultSize={200} defaultCollapsed={true} />
           </SplitPanel>
-          <SlotRenderer slot={SlotLocation.right} isTabbar defaultSize={396} minResize={320} minSize={49} />
+          <SlotRenderer slot={SlotLocation.right} isTabbar defaultSize={396} minResize={240} minSize={49} />
         </SplitPanel>
       </BoxPanel>
       {/* 登录面板: 挂载 login 拓展, 默认隐藏, 由 chat「去登录」按钮经 auth:show-login 事件唤起 */}
