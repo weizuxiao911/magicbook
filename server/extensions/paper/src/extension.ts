@@ -35,7 +35,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // tab 栏 action: 存入试卷库 — 直接读当前 paper 文档内容保存 (不依赖 webview 渲染)
   context.subscriptions.push(
-    vscode.commands.registerCommand('magicbook.paper.saveToLibrary', async () => {
+    vscode.commands.registerCommand('paper.saveToLibrary', async () => {
       try {
         // 找当前激活的 .paper 文档 (custom editor 的 document)
         const editorDoc = vscode.window.activeTextEditor?.document

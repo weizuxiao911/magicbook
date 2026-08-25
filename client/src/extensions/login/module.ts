@@ -35,8 +35,8 @@ export const LOGIN_EVENTS = {
 
 /**
  * 登录相关全局命令 (跨拓展调用唯一通道):
- *   magicbook.auth.showLogin   唤起登录面板
- *   magicbook.auth.hideLogin   关闭登录面板
+ *   auth.showLogin   唤起登录面板
+ *   auth.hideLogin   关闭登录面板
  * 命令 ID 定义在 core/commands/auth（AUTH_CMD）, 其他拓展通过 CommandService.executeCommand 调用.
  */
 export const AUTH_CMD = AUTH_CMD_CORE;
@@ -70,7 +70,7 @@ export function logout(): void {
 /**
  * 挂全局登录/登出能力 (供内置拓展 / vsix 取用):
  *   window.__APP_AUTH__ = { isLoggedIn, getUsername, logout, showLogin, hideLogin }
- * showLogin/hideLogin 内部走全局命令 (magicbook.auth.*), 不直接派发 CustomEvent.
+ * showLogin/hideLogin 内部走全局命令 (auth.*), 不直接派发 CustomEvent.
  */
 export function installAuthGlobal(): void {
   (window as any).__APP_AUTH__ = {

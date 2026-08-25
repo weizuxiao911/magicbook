@@ -1156,7 +1156,7 @@ const [usable, setUsable] = useState<boolean>(() => {
             <div className="chat__login-desc">登录后即可开始 AI 会话</div>
             <button
               className="chat__login-btn"
-              onClick={() => { void commandService.executeCommand('magicbook.auth.showLogin'); }}
+              onClick={() => { void commandService.executeCommand('auth.showLogin'); }}
             >
               去登录
             </button>

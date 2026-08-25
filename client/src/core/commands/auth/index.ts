@@ -37,6 +37,6 @@ export const AuthToken: symbol = Symbol('IAuth');
 
 /** 登录相关全局命令 ID（跨拓展调用唯一通道） */
 export const AUTH_CMD = {
-  SHOW_LOGIN: 'magicbook.auth.showLogin',
-  HIDE_LOGIN: 'magicbook.auth.hideLogin',
+  SHOW_LOGIN: 'auth.showLogin',
+  HIDE_LOGIN: 'auth.hideLogin',
 } as const;

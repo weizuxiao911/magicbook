@@ -1,6 +1,6 @@
 {
-  "name": "magicbook-paper",
-  "displayName": "Magicbook Paper",
+  "name": "paper",
+  "displayName": "Paper",
   "description": "试卷/题目预览（customEditor + webview 渲染 .paper, 复刻 yunyan-paper-web）",
   "version": "0.1.0",
   "publisher": "weizuxiao911",
@@ -11,15 +11,15 @@
     "Other"
   ],
   "activationEvents": [
-    "onCustomEditor:magicbook.paperEditor",
-    "onCommand:magicbook.paper.saveToLibrary"
+    "onCustomEditor:paperEditor",
+    "onCommand:paper.saveToLibrary"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "customEditors": [
       {
-        "viewType": "magicbook.paperEditor",
-        "displayName": "Magicbook Paper Viewer",
+        "viewType": "paperEditor",
+        "displayName": "Paper Viewer",
         "selector": [
           {
             "filenamePattern": "*.paper"
@@ -30,7 +30,7 @@
     ],
     "commands": [
       {
-        "command": "magicbook.paper.saveToLibrary",
+        "command": "paper.saveToLibrary",
         "title": "存入试卷库",
         "category": "Paper",
         "icon": "$(save)"
@@ -39,8 +39,8 @@
     "menus": {
       "editor/title": [
         {
-          "command": "magicbook.paper.saveToLibrary",
-          "when": "editorLangId == yunyan.paperEditor || resourceExtname == .paper",
+          "command": "paper.saveToLibrary",
+          "when": "editorLangId == paperEditor || resourceExtname == .paper",
           "group": "navigation"
         }
       ]
@@ -78,5 +78,6 @@
     "esbuild": "^0.28.1",
     "typescript": "^5.7.2"
   },
-  "browser": "./dist/extension.js"
+  "browser": "./dist/extension.js",
+  "license": "MIT"
 }

@@ -178,8 +178,8 @@ export const ActionsView: React.FC = () => {
   };
 
   const iconBtnStyle: React.CSSProperties = {
-    width: 40,
-    height: 40,
+    width: 32,
+    height: 32,
     background: 'transparent',
     border: 'none',
     color: 'var(--editor-foreground, var(--vscode-editor-foreground, #e5e7eb))',
@@ -191,25 +191,25 @@ export const ActionsView: React.FC = () => {
   };
 
   const LeftIcon = ({ filled }: { filled: boolean }) => (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5">
       <rect x="3" y="4" width="18" height="16" rx="2" />
       {filled ? <rect x="3" y="4" width="6" height="16" fill="currentColor" stroke="none" /> : <line x1="9" y1="4" x2="9" y2="20" />}
     </svg>
   );
   const BottomIcon = ({ filled }: { filled: boolean }) => (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5">
       <rect x="3" y="4" width="18" height="16" rx="2" />
       {filled ? <rect x="3" y="16" width="18" height="4" fill="currentColor" stroke="none" /> : <line x1="3" y1="16" x2="21" y2="16" />}
     </svg>
   );
   const RightIcon = ({ filled }: { filled: boolean }) => (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5">
       <rect x="3" y="4" width="18" height="16" rx="2" />
       {filled ? <rect x="15" y="4" width="6" height="16" fill="currentColor" stroke="none" /> : <line x1="15" y1="4" x2="15" y2="20" />}
     </svg>
   );
   const SunIcon = () => (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="4" />
       <line x1="12" y1="2" x2="12" y2="4.5" />
       <line x1="12" y1="19.5" x2="12" y2="22" />
@@ -222,12 +222,12 @@ export const ActionsView: React.FC = () => {
     </svg>
   );
   const MoonIcon = () => (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M20 14.5A8 8 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z" />
     </svg>
   );
   const LogoutIcon = () => (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
       <polyline points="16 17 21 12 16 7" />
       <line x1="21" y1="12" x2="9" y2="12" />
@@ -235,17 +235,17 @@ export const ActionsView: React.FC = () => {
   );
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', height: '100%', padding: '0 12px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', height: '100%', padding: '0 12px', fontSize: 13 }}>
       <span style={{
         display: 'inline-flex', alignItems: 'center', gap: 10,
-        fontSize: 17, fontWeight: 700, letterSpacing: 0.2,
+        fontSize: 13, fontWeight: 700, letterSpacing: 0.2,
         color: 'var(--editor-foreground, var(--vscode-editor-foreground, #e5e7eb))',
         paddingLeft: 4, userSelect: 'none',
       }}>
         {brand.logoChar ? (
           <span style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }}>{brand.logoChar}</span>
         ) : (
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M5 6 L12 18 L19 6" />
           </svg>
         )}

@@ -48,10 +48,12 @@ sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keyc
 
 ## 扩展开发与分发
 
-1. **写扩展源码**：`server/extensions/<name>/`（package.json + 入口；**必须声明 `browser` 字段**（浏览器扩展，无 node 依赖））
-   - HTML 预览示例：`server/extensions/html-preview/`（customEditor `*.html` → webview 渲染）
-   - 试卷预览示例：`server/extensions/paper/`（复刻 yunyan-paper-web，customEditor `*.paper`）
+1. **写扩展源码**：`server/extensions/<name>/`（**一律 TypeScript**：`src/extension.ts` 入口 + esbuild 编译到 `dist/`；**必须声明 `browser` 字段**（浏览器扩展，无 node 依赖）；**publisher 统一 `weizuxiao911`**（用户生产的 vsix 统一使用账号名））
+   - **webview 单独维护**：扩展若有 webview UI，放 `webview/` 目录（或 `webview.tsx`），不内联拼 HTML 字符串
+   - HTML 预览示例：`server/extensions/html-preview/`（TS + `src/extension.ts`，customEditor `*.html` → webview 直接运行文件内容，支持 JS 执行）
+   - 试卷预览示例：`server/extensions/paper/`（TS + `webview/` vite 构建，复刻 yunyan-paper-web，customEditor `*.paper`）
 2. **打包**：在扩展目录 `npx @vscode/vsce package --allow-missing-repository`
+   - vsix 文件名规范 `{发布者}.{拓展名称}-{版本}.vsix`（vsce 默认生成，如 `weizuxiao911.magicbook-html-preview-0.1.0.vsix`）
 3. **分发**：把 `.vsix` 放入 `server/registry/vsix/`，然后：
 
 ```bash

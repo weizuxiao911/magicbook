@@ -2,7 +2,7 @@ import * as vscode from 'vscode'
 import { resolvePaperFromContent } from '../services/paperFileService'
 import { PaperWebviewHost } from './PaperWebviewHost'
 
-export const PAPER_CUSTOM_EDITOR_VIEW_TYPE = 'magicbook.paperEditor'
+export const PAPER_CUSTOM_EDITOR_VIEW_TYPE = 'paperEditor'
 
 /**
  * 让 .paper 文件在工作区中直接以插件 Webview 形式打开。
