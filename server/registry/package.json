@@ -6,6 +6,7 @@
   "description": "Magicbook registry — vsix 统一管理与分发: 扫描 vsix/ → 生成 metadata → HTTPS 静态分发（kt-ext 协议）",
   "main": null,
   "scripts": {
+    "dev": "node --experimental-strip-types --watch src/server.ts",
     "build": "node --experimental-strip-types src/build.ts",
     "serve": "node --experimental-strip-types src/server.ts",
     "start": "node --experimental-strip-types src/build.ts && node --experimental-strip-types src/server.ts",
