@@ -8,17 +8,19 @@ interface QuestionModalProps {
   onReply: (sid: string, rid: string, answers: string[][]) => Promise<void>;
   onCancel: (sid: string) => Promise<void>;
   onDismiss: () => void;
+  busy?: boolean;
 }
 
-/** 多问题 modal — OpenCode 风格: 固定在输入框上方, 支持问题 tab / 单选 / 多选 / 自定义输入 */
 export const QuestionModal: React.FC<QuestionModalProps> = ({
-  questions, requestID, sessionID, onReply, onCancel, onDismiss,
+  questions, requestID, sessionID, onReply, onCancel, onDismiss, busy,
 }) => {
   const [activeIdx, setActiveIdx] = useState(0);
   const [selected, setSelected] = useState<Record<number, Set<string>>>({});
   const [custom, setCustom] = useState<Record<number, string>>({});
   const [customActive, setCustomActive] = useState<Record<number, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [open, setOpen] = useState(true);
+  const active = busy;
 
   const q = questions[activeIdx];
   if (!q) return null;
@@ -34,6 +36,7 @@ export const QuestionModal: React.FC<QuestionModalProps> = ({
   const isCustomOn = (qi: number) => !!customActive[qi];
 
   const toggle = (qi: number, label: string, multiple: boolean) => {
+    if (!active) return;
     setSelected((prev) => {
       const cur = new Set(prev[qi] || []);
       if (multiple) {
@@ -65,9 +68,9 @@ export const QuestionModal: React.FC<QuestionModalProps> = ({
 
   return (
     <div className="chat__qmodal">
-      <div className="chat__qmodal-head">
+      <button type="button" className="chat__qmodal-head" onClick={() => setOpen((v) => !v)}>
         <span className="chat__qmodal-count">{activeIdx + 1}/{questions.length} 个问题</span>
-        <div className="chat__qmodal-tabs">
+        <div className="chat__qmodal-tabs" onClick={(e) => e.stopPropagation()}>
           {questions.map((_, i) => (
             <button
               key={i}
@@ -79,96 +82,115 @@ export const QuestionModal: React.FC<QuestionModalProps> = ({
             </button>
           ))}
         </div>
+        <span className="chat__qmodal-caret">{open ? '▾' : '▸'}</span>
         <button
           type="button"
           className="chat__qmodal-min"
-          onClick={onDismiss}
-          title="最小化问题"
+          onClick={(e) => { e.stopPropagation(); onDismiss(); }}
+          title="关闭"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
-      </div>
+      </button>
 
-      <div className="chat__qmodal-body">
-        <div className="chat__qmodal-q">{q.question}</div>
-        <div className="chat__qmodal-hint">选择一个答案</div>
-        <div className="chat__qmodal-opts">
-          {q.options.map((opt, oi) => {
-            const active = (selected[activeIdx] || new Set()).has(opt.label);
-            return (
-              <button
-                key={oi}
-                type="button"
-                className={`chat__qmodal-opt${active ? ' is-active' : ''}`}
-                onClick={() => toggle(activeIdx, opt.label, !!q.multiple)}
-                disabled={submitting}
-              >
-                <span className="chat__qmodal-radio">
-                  <span className="chat__qmodal-radio-dot" />
-                </span>
-                <span className="chat__qmodal-opt-main">
-                  <span className="chat__qmodal-opt-label">{opt.label}</span>
-                  {opt.description && <span className="chat__qmodal-opt-desc">{opt.description}</span>}
-                </span>
-              </button>
-            );
-          })}
+      {open && (
+        <>
+          <div className="chat__qmodal-body">
+            <div className="chat__qmodal-q">{q.question}</div>
+            <div className="chat__qmodal-hint">选择一个答案</div>
+            <div className="chat__qmodal-opts">
+              {q.options.map((opt, oi) => {
+                const activeOpt = (selected[activeIdx] || new Set()).has(opt.label);
+                return (
+                  <button
+                    key={oi}
+                    type="button"
+                    className={`chat__qmodal-opt${activeOpt ? ' is-active' : ''}`}
+                    onClick={() => toggle(activeIdx, opt.label, !!q.multiple)}
+                    disabled={!active || submitting}
+                  >
+                    <span className="chat__qmodal-radio">
+                      <span className="chat__qmodal-radio-dot" />
+                    </span>
+                    <span className="chat__qmodal-opt-main">
+                      <span className="chat__qmodal-opt-label">{opt.label}</span>
+                      {opt.description && <span className="chat__qmodal-opt-desc">{opt.description}</span>}
+                    </span>
+                  </button>
+                );
+              })}
 
-          {q.custom !== false && (
-            <div className={`chat__qmodal-opt is-custom${isCustomOn(activeIdx) ? ' is-active' : ''}`}>
-              <span className="chat__qmodal-radio">
-                <span className="chat__qmodal-radio-dot" />
-              </span>
-              <span className="chat__qmodal-opt-main">
-                <span className="chat__qmodal-opt-label">输入自己的答案</span>
-                <textarea
-                  rows={1}
-                  placeholder="输入你的答案..."
-                  value={custom[activeIdx] || ''}
-                  onFocus={() => setCustomActive((p) => ({ ...p, [activeIdx]: true }))}
-                  onChange={(e) => onCustomChange(activeIdx, e.target.value)}
-                  disabled={submitting}
-                  onInput={(e) => {
-                    const el = e.currentTarget;
-                    el.style.height = 'auto';
-                    el.style.height = el.scrollHeight + 'px';
-                  }}
-                />
-              </span>
+              {q.custom !== false && (
+                <div className={`chat__qmodal-opt is-custom${isCustomOn(activeIdx) ? ' is-active' : ''}`}>
+                  <span className="chat__qmodal-radio">
+                    <span className="chat__qmodal-radio-dot" />
+                  </span>
+                  <span className="chat__qmodal-opt-main">
+                    <span className="chat__qmodal-opt-label">输入自己的答案</span>
+                    <textarea
+                      rows={1}
+                      placeholder="输入你的答案..."
+                      value={custom[activeIdx] || ''}
+                      onFocus={() => { if (active) setCustomActive((p) => ({ ...p, [activeIdx]: true })); }}
+                      onChange={(e) => onCustomChange(activeIdx, e.target.value)}
+                      disabled={!active || submitting}
+                      onInput={(e) => {
+                        const el = e.currentTarget;
+                        el.style.height = 'auto';
+                        el.style.height = el.scrollHeight + 'px';
+                      }}
+                    />
+                  </span>
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      </div>
+          </div>
 
-      <div className="chat__qmodal-foot">
-        <button
-          type="button"
-          className="chat__qmodal-btn"
-          onClick={() => { void onCancel(requestID); onDismiss(); }}
-          disabled={submitting}
-        >
-          取消
-        </button>
-        {activeIdx < questions.length - 1 ? (
-          <button
-            type="button"
-            className="chat__qmodal-btn chat__qmodal-btn--primary"
-            onClick={() => setActiveIdx((i) => i + 1)}
-            disabled={submitting}
-          >
-            下一步
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="chat__qmodal-btn chat__qmodal-btn--primary"
-            onClick={submit}
-            disabled={submitting}
-          >
-            {submitting ? '提交中...' : '确认'}
-          </button>
-        )}
-      </div>
+          <div className="chat__qmodal-foot">
+            <div className="chat__qmodal-foot-start">
+              {activeIdx > 0 && (
+                <button
+                  type="button"
+                  className="chat__qmodal-btn"
+                  onClick={() => setActiveIdx((i) => i - 1)}
+                >
+                  上一个
+                </button>
+              )}
+            </div>
+            <div className="chat__qmodal-foot-end">
+              {activeIdx > 0 && (
+                <button
+                  type="button"
+                  className="chat__qmodal-btn"
+                  onClick={() => { void onCancel(requestID); onDismiss(); }}
+                  disabled={submitting}
+                >
+                  取消
+                </button>
+              )}
+              {activeIdx < questions.length - 1 ? (
+                <button
+                  type="button"
+                  className="chat__qmodal-btn chat__qmodal-btn--primary"
+                  onClick={() => setActiveIdx((i) => i + 1)}
+                >
+                  下一个
+                </button>
+              ) : active && (
+                <button
+                  type="button"
+                  className="chat__qmodal-btn chat__qmodal-btn--primary"
+                  onClick={submit}
+                  disabled={submitting}
+                >
+                  {submitting ? '提交中...' : '确认'}
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };

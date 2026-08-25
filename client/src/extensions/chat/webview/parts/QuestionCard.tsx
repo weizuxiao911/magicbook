@@ -9,7 +9,7 @@ export interface QuestionInfo {
   header?: string;
   options: QuestionOption[];
   multiple?: boolean;
-  custom?: boolean;  // 是否允许自定义输入
+  custom?: boolean;
 }
 
 function parseMaybeJson(v: any): any {
@@ -35,7 +35,7 @@ export function extractQuestions(part: any): QuestionInfo[] | null {
         question: q.question,
         header: q.header,
         multiple: q.multiple === true || q.type === 'multiple',
-        custom: q.custom !== false, // 默认允许自定义输入
+        custom: q.custom !== false,
         options: q.options.map((o: any) => ({
           label: typeof o === 'string' ? o : (o.label ?? String(o)),
           description: typeof o === 'object' ? (o.description ?? '') : '',
@@ -60,9 +60,7 @@ export const QuestionCard: React.FC<{
   part: any;
   sessionID: string;
   onReply: (sid: string, rid: string, answers: string[][]) => Promise<void>;
-  /** 优先使用的 requestID (来自 question.v2.asked 事件的 id, 格式 que_xxx) */
   preferredRequestID?: string;
-  /** 对话是否正忙 (AI 生成中): 仅 busy 时显示提交按钮 */
   busy?: boolean;
 }> = ({ part, sessionID, onReply, preferredRequestID, busy }) => {
   const questions = useMemo(() => extractQuestions(part), [part]);
@@ -70,33 +68,29 @@ export const QuestionCard: React.FC<{
   const requestId = preferredRequestID || localRid;
   const status: string = part?.state?.status || 'pending';
   const answered: boolean = status === 'completed' || !!(part?.state?.metadata?.answers);
+  const active = busy && !answered;
 
-  // selected: questionIndex → Set<optionLabel>
   const [selected, setSelected] = useState<Record<number, Set<string>>>({});
-  // custom: questionIndex → string
   const [custom, setCustom] = useState<Record<number, string>>({});
-  // customActive: questionIndex → boolean (用户是否在自定义输入框里输入了内容)
   const [customActive, setCustomActive] = useState<Record<number, boolean>>({});
-  // 多问题 tab: 只记当前激活问题索引（不额外持久化/折叠状态）
   const [activeIdx, setActiveIdx] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [open, setOpen] = useState(true);
 
   if (!questions) return null;
-  // 问题数变化时钳制, 避免越界
   const qi = Math.min(activeIdx, questions.length - 1);
   const q = questions[qi];
 
   const isCustomOn = (index: number) => !!customActive[index];
 
   const toggle = (index: number, label: string, multiple: boolean) => {
-    if (answered || submitting) return;
+    if (!active || submitting) return;
     setSelected((prev) => {
       const cur = new Set(prev[index] || []);
       if (multiple) {
         if (cur.has(label)) cur.delete(label);
         else cur.add(label);
       } else {
-        // 单选: 切换 — 已选则清空, 否则替换
         if (cur.has(label) && cur.size === 1) cur.clear();
         else { cur.clear(); cur.add(label); }
       }
@@ -110,12 +104,11 @@ export const QuestionCard: React.FC<{
   };
 
   const submit = async () => {
-    if (answered || submitting) return;
+    if (!active || submitting) return;
     setSubmitting(true);
     try {
       const answers = questions.map((item, index) => {
         const sel = Array.from(selected[index] || []);
-        // 自定义答案作为独立一项 (不与已选合并)
         if (isCustomOn(index) && custom[index]?.trim()) {
           sel.push(`__custom__:${custom[index].trim()}`);
         }
@@ -128,7 +121,6 @@ export const QuestionCard: React.FC<{
   };
 
   const summary = (item: QuestionInfo, index: number) => {
-    // 已答: 优先用 part 里的 answers
     const metaAnswers = part?.state?.metadata?.answers;
     if (answered && Array.isArray(metaAnswers) && metaAnswers[index]) {
       const arr = metaAnswers[index];
@@ -144,13 +136,13 @@ export const QuestionCard: React.FC<{
 
   return (
     <div className={`q${answered ? ' is-done' : ''}`}>
-      <div className="q__head">
+      <button type="button" className="q__head" onClick={() => setOpen((v) => !v)}>
         <span className="q__badge">?</span>
         <span className="q__head-title">
           问题 {questions.length > 1 ? `${qi + 1}/${questions.length}` : ''}{answered ? ' 已回答' : ' 待回答'}
         </span>
         {questions.length > 1 && (
-          <div className="q__tabs">
+          <div className="q__tabs" onClick={(e) => e.stopPropagation()}>
             {questions.map((_, i) => (
               <button
                 key={i}
@@ -163,8 +155,9 @@ export const QuestionCard: React.FC<{
             ))}
           </div>
         )}
-      </div>
-      {answered ? (
+        <span className="q__caret">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (answered ? (
         <div className="q__summary">{summary(q, qi)}</div>
       ) : (
         <>
@@ -173,16 +166,16 @@ export const QuestionCard: React.FC<{
             <div className="q__q">{q.question}</div>
             <div className="q__opts">
               {q.options.map((opt, oi) => {
-                const active = (selected[qi] || new Set()).has(opt.label);
+                const activeOpt = (selected[qi] || new Set()).has(opt.label);
                 return (
                   <button
                     key={oi}
                     type="button"
-                    className={`q__opt${active ? ' is-active' : ''}`}
+                    className={`q__opt${activeOpt ? ' is-active' : ''}`}
                     onClick={() => toggle(qi, opt.label, !!q.multiple)}
-                    disabled={answered || submitting}
+                    disabled={!active || submitting}
                   >
-                    <span className="q__opt-mark">{q.multiple ? (active ? '☑' : '☐') : (active ? '◉' : '○')}</span>
+                    <span className="q__opt-mark">{q.multiple ? (activeOpt ? '☑' : '☐') : (activeOpt ? '◉' : '○')}</span>
                     <span className="q__opt-body">
                       <span className="q__opt-label">{opt.label}</span>
                       {opt.description && <span className="q__opt-desc">{opt.description}</span>}
@@ -194,7 +187,7 @@ export const QuestionCard: React.FC<{
                 <div className={`q__opt q__custom-opt${isCustomOn(qi) ? ' is-active' : ''}`}>
                   <span className="q__opt-mark">{q.multiple ? (isCustomOn(qi) ? '☑' : '☐') : (isCustomOn(qi) ? '◉' : '○')}</span>
                   <span className="q__opt-body">
-                    <span className="q__opt-label" onClick={() => { if (!isCustomOn(qi)) { setCustomActive(p => ({ ...p, [qi]: true })); } }}>
+                    <span className="q__opt-label" onClick={() => { if (active && !isCustomOn(qi)) { setCustomActive(p => ({ ...p, [qi]: true })); } }}>
                       输入自己的答案
                     </span>
                     <textarea
@@ -202,9 +195,9 @@ export const QuestionCard: React.FC<{
                       rows={1}
                       placeholder="输入你的答案..."
                       value={custom[qi] || ''}
-                      onFocus={() => setCustomActive(p => ({ ...p, [qi]: true }))}
+                      onFocus={() => { if (active) setCustomActive(p => ({ ...p, [qi]: true })); }}
                       onChange={(e) => onCustomChange(qi, e.target.value)}
-                      disabled={answered || submitting}
+                      disabled={!active || submitting}
                       onInput={(e) => {
                         const el = e.currentTarget;
                         el.style.height = 'auto';
@@ -216,15 +209,38 @@ export const QuestionCard: React.FC<{
               )}
             </div>
           </div>
-          {busy && (
+          {questions.length > 1 ? (
             <div className="q__foot">
-              <button className="q__submit" onClick={submit} disabled={submitting}>
-                {submitting ? '提交中...' : '提交'}
-              </button>
+              <div className="q__foot-start">
+                {qi > 0 && (
+                  <button className="q__nav" onClick={() => setActiveIdx(qi - 1)}>
+                    上一个
+                  </button>
+                )}
+              </div>
+              <div className="q__foot-end">
+                {qi < questions.length - 1 ? (
+                  <button className="q__nav" onClick={() => setActiveIdx(qi + 1)}>
+                    下一个
+                  </button>
+                ) : busy && (
+                  <button className="q__submit" onClick={submit} disabled={submitting}>
+                    {submitting ? '提交中...' : '提交'}
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : busy && (
+            <div className="q__foot">
+              <div className="q__foot-end">
+                <button className="q__submit" onClick={submit} disabled={submitting}>
+                  {submitting ? '提交中...' : '提交'}
+                </button>
+              </div>
             </div>
           )}
         </>
-      )}
+      ))}
     </div>
   );
 };

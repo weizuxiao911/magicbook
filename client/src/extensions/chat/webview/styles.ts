@@ -979,9 +979,14 @@ export const styles = `
 .q__head {
   display: flex; align-items: center; gap: 8px;
   width: 100%; padding: 8px 10px;
-  background: transparent; border: none; cursor: default;
+  background: transparent; border: none; cursor: pointer;
   user-select: none; font-family: inherit;
   font-size: 12.5px; text-align: left;
+}
+.q__head:hover { background: var(--ai-hover); }
+.q__caret {
+  font-size: 10px; color: var(--ai-fg-muted); flex-shrink: 0;
+  margin-left: auto;
 }
 .q__badge {
   font-size: 11px; color: var(--ai-fg-muted);
@@ -1005,6 +1010,7 @@ export const styles = `
   font-size: 12.5px; color: var(--ai-fg);
   line-height: 1.5;
 }
+.q.is-cancelled .q__summary { color: var(--ai-fg-muted); font-style: italic; }
 .q__item { padding: 4px 10px 8px; }
 .q__q {
   font-size: 13px; line-height: 1.5;
@@ -1038,9 +1044,19 @@ export const styles = `
 .q__custom::placeholder { color: var(--ai-fg-muted); }
 .q__custom-opt { cursor: text; }
 .q__foot {
-  display: flex; justify-content: flex-end; gap: 8px;
+  display: flex; justify-content: space-between; gap: 8px;
   padding: 0 10px 10px;
 }
+.q__foot-start { display: flex; gap: 8px; }
+.q__foot-end { display: flex; gap: 8px; }
+.q__nav {
+  padding: 5px 14px; border-radius: 6px; cursor: pointer;
+  background: transparent;
+  color: var(--ai-fg);
+  border: 1px solid var(--ai-border);
+  font-size: 12px; font-weight: 500;
+}
+.q__nav:hover { background: var(--ai-hover); }
 .q__submit {
   padding: 5px 14px; border-radius: 6px; cursor: pointer;
   background: var(--ai-hover);
@@ -1070,6 +1086,12 @@ export const styles = `
   display: flex; align-items: center; gap: 10px;
   padding: 8px 12px;
   box-shadow: 0 1px 0 var(--ai-divider);
+  cursor: pointer; user-select: none;
+  background: transparent; border: none; width: 100%; font-family: inherit; text-align: left;
+}
+.chat__qmodal-head:hover { background: var(--ai-hover); }
+.chat__qmodal-caret {
+  font-size: 10px; color: var(--ai-fg-muted); flex-shrink: 0;
 }
 .chat__qmodal-count { font-size: 12px; font-weight: 500; }
 .chat__qmodal-tabs { display: flex; gap: 4px; flex: 1; }
@@ -1133,6 +1155,8 @@ export const styles = `
   padding: 4px 12px 10px;
   border-top: none;
 }
+.chat__qmodal-foot-start { display: flex; gap: 8px; }
+.chat__qmodal-foot-end { display: flex; gap: 8px; margin-left: auto; }
 .chat__qmodal-btn {
   padding: 4px 10px; border-radius: 5px; cursor: pointer;
   background: transparent; border: none;

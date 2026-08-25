@@ -517,11 +517,12 @@ export const Chat: React.FC = () => {
               break;
             }
             case 'question.asked': {
-              // A2UI 提问: 存 que_xxx (持久化, QuestionCard 用它取 requestID); 卡片在消息流内直接交互, 无弹窗
+              // A2UI 提问: 存 que_xxx (持久化, QuestionCard 用它取 requestID); 同时挂到 interactions 显示弹窗
               const qid = properties.id;
               const qsid = properties.sessionID;
               if (qid && qsid) {
                 setQuestion(qsid, { requestID: qid, questions: properties.questions || [] });
+                setInteractions((prev) => ({ ...prev, [qsid]: { ...prev[qsid], question: { requestID: qid, questions: properties.questions || [] } } }));
               }
               break;
             }
@@ -547,6 +548,20 @@ export const Chat: React.FC = () => {
                   if (!cur?.permission || cur.permission.id !== pid) return prev;
                   const next = { ...cur }; delete next.permission;
                   return { ...prev, [psid]: next };
+                });
+              }
+              break;
+            }
+            case 'question.replied': {
+              // 问题已回复 → 收起弹窗
+              const qrid = properties?.id;
+              const qrsid = properties.sessionID || sessionIDRef.current;
+              if (qrid) {
+                setInteractions((prev) => {
+                  const cur = prev[qrsid];
+                  if (!cur?.question || cur.question.requestID !== qrid) return prev;
+                  const next = { ...cur }; delete next.question;
+                  return { ...prev, [qrsid]: next };
                 });
               }
               break;
@@ -742,7 +757,6 @@ export const Chat: React.FC = () => {
     try { await client.session.abort({ sessionID: target }); }
     catch (e) { console.warn('[ai] abort:', e); }
     setBusyBySession((prev) => ({ ...prev, [target]: false }));
-    // 只关闭目标会话的权限卡片 (question 是消息流卡片, 由 opencode 消息决定, 无需处理)
     setInteractions((prev) => {
       const cur = prev[target];
       if (!cur) return prev;
@@ -1280,10 +1294,27 @@ export const Chat: React.FC = () => {
       {ready && (
         <div className="chat__composer">
           {(() => {
-            // 权限卡片 (question 是消息流内卡片, 由 opencode 消息渲染, 无弹窗)
             const cur = interactions[sessionID] || {};
             return (
               <>
+                {cur.question && (
+                  <QuestionModal
+                    questions={cur.question.questions}
+                    requestID={cur.question.requestID}
+                    sessionID={sessionID}
+                    onReply={onReplyQuestion}
+                    onCancel={onIgnoreQuestion}
+                    onDismiss={() => {
+                      setInteractions((prev) => {
+                        const c = prev[sessionID];
+                        if (!c) return prev;
+                        const next = { ...c }; delete next.question;
+                        return { ...prev, [sessionID]: next };
+                      });
+                    }}
+                    busy={busy}
+                  />
+                )}
                 {cur.permission && (
                   <PermissionModal
                     permission={cur.permission}
