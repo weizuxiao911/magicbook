@@ -101,8 +101,10 @@ export class RemoteTerminalService implements ITerminalNodeService {
   private async createPty(launchConfig: IShellLaunchConfig, cwd: string): Promise<{ id: string; pid: number; command: string }> {
     const base = opencodeBaseUrl();
     if (!base) throw new Error('opencode url not ready (sandbox runtime 未应用)');
-    // 用户显式指定的 executable 优先; 否则默认 shell（server /platform 宿主事实, 跨平台通用兜底 bash）
-    const command = launchConfig.executable || defaultShell() || '/bin/bash';
+    // 默认 shell（server /sandbox 宿主事实, macOS zsh）优先: 前端可能在注入前就把 executable
+    // 定为 bash（getDefaultSystemShell 早期调用）, 尊重它会导致刷新后 shell 变成 bash;
+    // detectAvailableProfiles 只暴露 defaultShell 一个 profile, 用户显式选择不会冲突
+    const command = defaultShell() || launchConfig.executable || '/bin/bash';
     const res = await fetch(`${base}/pty`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
