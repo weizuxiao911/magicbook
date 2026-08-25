@@ -5,6 +5,13 @@ import os from 'node:os';
 import { ensureOpencode, restartOpencode } from '../service/opencode.js';
 import { watchWorkspace } from '../service/fswatch.js';
 
+/** 宿主机默认 shell（sandbox 与 opencode 同宿主, process.platform 为事实源） */
+export function hostDefaultShell(): string {
+  if (process.platform === 'darwin') return '/bin/zsh';
+  if (process.platform === 'win32') return 'powershell.exe';
+  return '/bin/bash';
+}
+
 export function workspaceRoutes(app: Express, getRoot: () => string, setRoot: (v: string) => void, setAiTarget: (v: string) => void) {
   app.get('/workspace/browse', (req, res) => {
     try {
@@ -31,7 +38,7 @@ export function workspaceRoutes(app: Express, getRoot: () => string, setRoot: (v
       watchWorkspace(getRoot());
       const opencodeUrl = await ensureOpencode(getRoot());
       setAiTarget(opencodeUrl);
-      res.json({ ok: true, cwd: getRoot(), ai_base_url: '/ai', fs_base_url: '/fs' });
+      res.json({ ok: true, cwd: getRoot(), ai_base_url: '/ai', fs_base_url: '/fs', default_shell: hostDefaultShell() });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
@@ -48,7 +55,7 @@ export function workspaceRoutes(app: Express, getRoot: () => string, setRoot: (v
       const opencodeUrl = await restartOpencode(getRoot());
       watchWorkspace(getRoot());
       setAiTarget(opencodeUrl);
-      res.json({ ok: true, cwd: getRoot(), ai_base_url: '/ai', fs_base_url: '/fs' });
+      res.json({ ok: true, cwd: getRoot(), ai_base_url: '/ai', fs_base_url: '/fs', default_shell: hostDefaultShell() });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 }

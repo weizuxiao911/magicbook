@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { exec } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import http from 'node:http';
 
 const OPENCODE_PORT = parseInt(process.env.OPENCODE_PORT || '24096');
@@ -54,22 +54,22 @@ export async function ensureOpencode(cwd: string): Promise<string> {
   return restartOpencode(cwd);
 }
 
-/** 精确杀掉 opencode 进程（按命令匹配, 不误杀 sandbox 自己）; 返回 promise 等 pkill 完成 */
-function killOpencodeProcesses(): Promise<void> {
+/** 精确杀掉 opencode 进程: 整进程组 SIGKILL（detached 子进程 pgid=pid）+ 按命令匹配兜底.
+ *  同步执行, 保证在 exit/信号清理时可靠生效（异步 exec 在进程退出前可能没跑完）. */
+function killOpencodeProcesses(): void {
   if (opencodeProc) {
-    opencodeProc.kill('SIGKILL');
+    // detached spawn 的 opencode 是新进程组组长（pgid = pid）, kill 负 pid 整组清理（含其子 shell）
+    try { process.kill(-opencodeProc.pid, 'SIGKILL'); } catch { /* 进程组可能已退出 */ }
+    try { opencodeProc.kill('SIGKILL'); } catch { /* ignore */ }
     opencodeProc = null;
   }
-  const cmd = `pkill -9 -f "opencode serve --port ${OPENCODE_PORT}" 2>/dev/null || true`;
-  return new Promise((resolve) => {
-    exec(cmd, { timeout: 3000 }, () => resolve());
-  });
+  try { execSync(`pkill -9 -f "opencode serve --port ${OPENCODE_PORT}"`, { stdio: 'ignore' }); } catch { /* 无匹配 */ }
 }
 
 /** 杀掉 opencode 进程, 并等待端口释放 */
 async function killAndWait(port: number): Promise<void> {
   expectAlive = false;
-  await killOpencodeProcesses();
+  killOpencodeProcesses();
   // 等待端口完全释放（最多 8s）
   for (let i = 0; i < 16; i++) {
     if (!(await isAlive(port, 300))) return;
@@ -84,7 +84,7 @@ export async function restartOpencode(cwd: string): Promise<string> {
   return spawnOpencode(cwd);
 }
 
-/** 启动 opencode 子进程（独立进程组, sandbox 退出时杀进程组, 不逃逸） */
+/** 启动 opencode 子进程（独立进程组, sandbox 退出时整组清理, 不逃逸） */
 function spawnOpencode(cwd: string): Promise<string> {
   const env = { ...process.env };
   for (const k of Object.keys(env)) {
@@ -141,7 +141,14 @@ export function stopOpencode(): void {
   killOpencodeProcesses();
 }
 
-/** 注册 sandbox 退出清理: opencode 不逃逸 */
+/** 启动兜底: 清理上次逃逸的 opencode 孤儿（按命令匹配; opencode 由 sandbox 独家调度, 不默认启动） */
+export function cleanupOrphanOpencode(): void {
+  expectAlive = false;
+  opencodeProc = null;
+  try { execSync(`pkill -9 -f "opencode serve --port ${OPENCODE_PORT}"`, { stdio: 'ignore' }); } catch { /* 无残留 */ }
+}
+
+/** 注册 sandbox 退出清理: opencode 不逃逸（同步杀进程组, exit/信号时可靠生效） */
 export function registerExitCleanup(): void {
   const cleanup = () => {
     expectAlive = false;
