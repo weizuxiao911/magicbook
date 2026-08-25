@@ -1044,10 +1044,10 @@ export const styles = `
 .q__custom::placeholder { color: var(--ai-fg-muted); }
 .q__custom-opt { cursor: text; }
 .q__foot {
-  display: flex; justify-content: space-between; gap: 8px;
+  display: flex; justify-content: flex-end; gap: 8px;
   padding: 0 10px 10px;
 }
-.q__foot-start { display: flex; gap: 8px; }
+.q__foot-start { display: flex; gap: 8px; margin-right: auto; }
 .q__foot-end { display: flex; gap: 8px; }
 .q__nav {
   padding: 5px 14px; border-radius: 6px; cursor: pointer;
