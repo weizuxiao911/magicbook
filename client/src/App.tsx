@@ -20,7 +20,20 @@ import type { ExtensionMetadata } from './core/commands/registry';
 import './core/styles/overrides.css';
 import './core/styles/slots.css';
 
+/** 渲染前暂存上次打开的编辑器 uris（容器初始化恢复失败会清空 storage, 登录后按暂存恢复） */
+function stashSavedEditorUris(): void {
+  try {
+    const raw = localStorage.getItem('scoped:/workspace/:/workbench');
+    if (!raw) return;
+    const state = JSON.parse(raw) as { grid?: string };
+    const grid = JSON.parse(state.grid || '{}') as { editorGroup?: { uris?: string[] } };
+    const uris = grid?.editorGroup?.uris || [];
+    if (uris.length) (window as any).__SAVED_EDITOR_URIS__ = uris;
+  } catch { /* ignore */ }
+}
+
 export const App: React.FC = () => {
+  stashSavedEditorUris();
   const defaultModules = getDefaultAppConfig().modules || [];
   const [extensionMetadata, setExtensionMetadata] = useState<ExtensionMetadata[]>([]);
   const [ready, setReady] = useState(false);

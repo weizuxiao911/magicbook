@@ -12,7 +12,8 @@
 
 import { Injectable, Autowired } from '@opensumi/di';
 import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser';
-import { Domain, CommandService, FileChangeType } from '@opensumi/ide-core-common';
+import { Domain, CommandService, FileChangeType, URI } from '@opensumi/ide-core-common';
+import { EDITOR_COMMANDS } from '@opensumi/ide-core-browser';
 import { IFileServiceClient } from '@opensumi/ide-file-service/lib/common';
 import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 
@@ -67,6 +68,7 @@ export class FileSystemServiceImpl implements IFileSystem {
       this.connectEvents();
       void this.verifyOpensumiLink();
       void this.refreshExplorer();
+      this.restoreOpenedEditors();
     });
     if (fsBaseUrl()) this.connectEvents();
   }
@@ -82,6 +84,41 @@ export class FileSystemServiceImpl implements IFileSystem {
     } catch (e) {
       console.warn('[filesystem] opensumi 链路验证失败:', e);
     }
+  }
+
+  /**
+   * 恢复上次打开的编辑器 tab.
+   * 容器初始化时 fsUrl 未就绪（登录前）恢复打开失败; 登录后（runtime-ready）按文件系统
+   * 校验保存的 workbench grid uris（存在才打开）.
+   */
+  private restoreOpenedEditors(): void {
+    try {
+      // 优先用渲染前暂存（容器初始化失败会清空 storage）; 兜底读 storage
+      const uris: string[] =
+        (window as any).__SAVED_EDITOR_URIS__ ||
+        (() => {
+          const raw = localStorage.getItem('scoped:/workspace/:/workbench');
+          if (!raw) return [];
+          const state = JSON.parse(raw) as { grid?: string };
+          const grid = JSON.parse(state.grid || '{}') as { editorGroup?: { uris?: string[] } };
+          return grid?.editorGroup?.uris || [];
+        })();
+      if (uris.length) console.log('[filesystem] 恢复编辑器 tab:', uris.length, uris);
+      uris.forEach((uri) => {
+        void this.fileService
+          .getFileStat(uri)
+          .then((stat) => {
+            if (stat && !stat.isDirectory) {
+              // 编辑器 API 命令（主线程直接打开, 比扩展命令 delegate 更可靠）
+              void this.commandService
+                .executeCommand(EDITOR_COMMANDS.API_OPEN_EDITOR_COMMAND_ID, URI.parse(uri))
+                .then(() => console.log('[filesystem] 恢复打开成功:', uri))
+                .catch((e) => console.warn('[filesystem] 恢复打开失败:', uri, e));
+            }
+          })
+          .catch(() => {});
+      });
+    } catch { /* ignore */ }
   }
 
   /** 刷新 explorer 文件树（runtime 就绪后触发 OverlayFS 重读: fireFilesChange 让 file-tree 重载） */
