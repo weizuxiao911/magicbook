@@ -107,49 +107,77 @@ export class FileSystemServiceImpl implements IFileSystem {
           const arr = JSON.parse(raw);
           return Array.isArray(arr) ? arr : [];
         })();
+      // 上次激活的 tab（刷新后定位回到它）; 排除非文件（welcome 等）
+      const activeUri: string =
+        (window as any).__SAVED_EDITOR_ACTIVE_URI__ ||
+        localStorage.getItem('magicbook.editorActiveUri') ||
+        '';
       if (!uris.length) return;
-      console.log('[filesystem] 恢复编辑器 tab:', uris.length, uris);
+      console.log('[filesystem] 恢复编辑器 tab:', uris.length, uris, 'active:', activeUri);
       setTimeout(() => {
-        const alive: string[] = [];
-        void Promise.all(
-          uris.map((uri) =>
-            this.fileService
-              .getFileStat(uri)
-              .then((stat) => {
-                if (!stat || stat.isDirectory) return;
-                alive.push(uri);
-                return this.commandService
-                  .executeCommand('editor.openUri', URI.parse(uri), { preview: false })
-                  .then(() => console.log('[filesystem] 恢复打开成功:', uri))
-                  .catch((e) => console.warn('[filesystem] 恢复打开失败:', uri, e));
-              })
-              .catch(() => {}),
-          ),
-        ).then(() => {
-          if (alive.length !== uris.length) {
-            localStorage.setItem('magicbook.editorUris', JSON.stringify(alive));
-            console.log('[filesystem] 恢复状态自愈:', uris.filter((u) => !alive.includes(u)), '已从持久化移除');
-          }
-        });
+      const alive: string[] = [];
+      // 模仿 opensumi restoreState: backend 先建 tab（只建容器不加载内容, 无竞态）→
+      // 再 open(activeUri) 激活加载渲染（直接完整打开会因懒加载空 tab + 二次 open 不重载而不渲染）
+      void Promise.all(
+        uris.map((uri) =>
+          this.fileService
+            .getFileStat(uri)
+            .then((stat) => {
+              if (!stat || stat.isDirectory) return;
+              alive.push(uri);
+              return this.editorService
+                .open(URI.parse(uri), { backend: true, preview: false, deletedPolicy: 'skip' })
+                .then(() => console.log('[filesystem] 恢复建 tab:', uri))
+                .catch((e) => console.warn('[filesystem] 恢复建 tab 失败:', uri, e));
+            })
+            .catch(() => {}),
+        ),
+      ).then(() => {
+        if (alive.length !== uris.length) {
+          localStorage.setItem('magicbook.editorUris', JSON.stringify(alive));
+          console.log('[filesystem] 恢复状态自愈:', uris.filter((u) => !alive.includes(u)), '已从持久化移除');
+        }
+        // 激活上次的 tab（backend 只建容器, 这里 open 触发内容加载渲染）
+        const target =
+          activeUri && alive.includes(activeUri) && !activeUri.startsWith('welcome:')
+            ? activeUri
+            : alive[alive.length - 1];
+        if (target) {
+          void this.editorService
+            .open(URI.parse(target), { focus: true, preview: false })
+            .then(() => console.log('[filesystem] 恢复激活当前 tab:', target))
+            .catch((e) => console.warn('[filesystem] 恢复激活失败:', target, e));
+        }
+      });
       }, 500);
     } catch { /* ignore */ }
   }
-
   /**
    * 监听编辑器 tab 变化（打开/关闭/切换）→ 把当前打开的 uris 持久化.
    * 打开自动加入 state, 关闭自动从 state 移除（读当前真实状态写入, 不残留已关闭 tab）.
    */
   private watchEditorState(): void {
     try {
-      // tab 变化事件在实现类上（token 接口未暴露）, 运行时一定存在
+      // tab 变化事件（实现类上）在 _restoringState 等场景会跳过, 不可靠;
+      // 组合: 资源/组变化事件即时同步 + 定时轮询兜底（任何打开/关闭/切换都记录, 不遗漏）
+      this.editorService.onActiveResourceChange(() => this.syncPersistedUris());
+      this.editorService.onDidEditorGroupsChanged(() => this.syncPersistedUris());
       (this.editorService as any).onDidEditorGroupTabChanged?.(() => this.syncPersistedUris());
+      setInterval(() => this.syncPersistedUris(), 2000);
     } catch { /* ignore */ }
   }
 
   private syncPersistedUris(): void {
     try {
       const uris = this.editorService.getAllOpenedUris().map((u) => u.toString());
-      localStorage.setItem('magicbook.editorUris', JSON.stringify(uris));
+      const next = JSON.stringify(uris);
+      const active = this.editorService.currentEditorGroup?.currentResource?.uri.toString() || '';
+      // 变化才写（uris 或当前激活 tab 任一变化）
+      if (next === localStorage.getItem('magicbook.editorUris') && active === localStorage.getItem('magicbook.editorActiveUri')) {
+        return;
+      }
+      localStorage.setItem('magicbook.editorUris', next);
+      if (active) localStorage.setItem('magicbook.editorActiveUri', active);
     } catch { /* ignore */ }
   }
 

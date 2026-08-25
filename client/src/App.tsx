@@ -25,6 +25,8 @@ function stashSavedEditorUris(): void {
   try {
     // 自建持久化 key（watchEditorState 维护）; 兜底旧 opensumi workbench storage
     const raw = localStorage.getItem('magicbook.editorUris');
+    const activeUri = localStorage.getItem('magicbook.editorActiveUri');
+    if (activeUri) (window as any).__SAVED_EDITOR_ACTIVE_URI__ = activeUri;
     if (raw) {
       const arr = JSON.parse(raw) as string[];
       if (Array.isArray(arr) && arr.length) { (window as any).__SAVED_EDITOR_URIS__ = arr; return; }
