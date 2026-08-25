@@ -1257,6 +1257,7 @@ export const Chat: React.FC = () => {
               done={!busy}
               sessionID={sessionID}
               onReplyQuestion={onReplyQuestion}
+              busy={busy}
             />
           ))
         )}

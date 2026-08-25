@@ -8,7 +8,8 @@ export const MessageRow: React.FC<{
   done?: boolean;
   sessionID: string;
   onReplyQuestion: (sid: string, rid: string, answers: string[][]) => Promise<void>;
-}> = ({ row, streaming, done, sessionID, onReplyQuestion }) => {
+  busy?: boolean;
+}> = ({ row, streaming, done, sessionID, onReplyQuestion, busy }) => {
   if (row.role === 'user') {
     const text = extractText(row.parts);
     const copy = () => navigator.clipboard?.writeText(text);
@@ -73,6 +74,7 @@ export const MessageRow: React.FC<{
               sessionID={sessionID}
               onReply={onReplyQuestion}
               preferredQuestionRequestID={questionMeta?.requestID}
+              busy={busy}
             />
           );
         })}
