@@ -111,6 +111,15 @@ export function getQuestionStore(): Map<string, { requestID: string; questions: 
   return questionStore;
 }
 
+/** 清除某会话的待答问题 (回答/忽略后调用, 避免切回重复弹窗) */
+export function clearQuestion(sessionID: string): void {
+  questionStore.delete(sessionID);
+  try {
+    sessionStorage.setItem(QUESTION_STORAGE, JSON.stringify(Object.fromEntries(questionStore)));
+  } catch { /* ignore */ }
+  notifyQuestionChange();
+}
+
 export function subscribeQuestionChange(fn: () => void): () => void {
   questionSubscribers.add(fn);
   return () => { questionSubscribers.delete(fn); };

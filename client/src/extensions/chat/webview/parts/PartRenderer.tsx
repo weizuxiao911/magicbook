@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Markdown } from './Markdown';
 import { ReasoningView } from './Reasoning';
 import { TodoCard } from './TodoCard';
-import { extractQuestions } from './QuestionCard';
+import { QuestionCard, extractQuestions } from './QuestionCard';
 import { SubAgentCard } from './SubAgentCard';
 import { ToolView } from './ToolView';
 
@@ -64,14 +64,14 @@ export const PartRenderer: React.FC<{
       const kind = getToolKind(String(part.tool || ''));
       switch (kind) {
         case 'question': {
-          // 消息流内显示问题记录 (紧凑, 可折叠); 实际作答走 QuestionModal
-          const qs = extractQuestions(part);
-          const meta = part?.state?.metadata;
-          const answered = part?.state?.status === 'completed' || !!meta?.answers;
-          const answers: any[] = Array.isArray(meta?.answers) ? meta.answers : [];
-          if (!qs || qs.length === 0) return null;
+          // 卡片式交互: 消息流内直接作答 (选项/自定义/提交), 不依赖弹窗
           return (
-            <QRecord qs={qs} answered={answered} answers={answers} done={done} />
+            <QuestionCard
+              part={part}
+              sessionID={sessionID}
+              onReply={onReply}
+              preferredRequestID={preferredQuestionRequestID}
+            />
           );
         }
         case 'todowrite':
@@ -93,39 +93,4 @@ export const PartRenderer: React.FC<{
     default:
       return null;
   }
-};
-
-/** 问题记录卡 (消息流内, 可折叠) — 展示问题与回答, 实际作答走 QuestionModal */
-const QRecord: React.FC<{
-  qs: Array<{ question: string; header?: string; options?: any[] }>;
-  answered: boolean;
-  answers: any[];
-  done?: boolean;
-}> = ({ qs, answered, answers, done }) => {
-  const [open, setOpen] = useState(true);
-  // 对话完成后自动折叠
-  useEffect(() => { if (done) setOpen(false); }, [done]);
-  return (
-    <div className={`q is-done${open ? ' is-open' : ''}${answered ? ' is-answered' : ''}`}>
-      <button type="button" className="q__head" onClick={() => setOpen((v) => !v)}>
-        <span className="q__badge">?</span>
-        <span className="q__head-title">
-          问题 {qs.length}{answered ? ' 已回答' : ' 待回答'}
-        </span>
-        <span className="q__caret">{open ? '▾' : '▸'}</span>
-      </button>
-      {open && qs.map((q, qi) => (
-        <div className="q__summary" key={qi}>
-          <div className="q__q">{q.question}</div>
-          {answered && answers[qi] && (
-            <div className="q__opt-desc">
-              回答：{Array.isArray(answers[qi])
-                ? answers[qi].map((a: string) => String(a).replace(/^__custom__:/, '')).join('、')
-                : String(answers[qi])}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
 };

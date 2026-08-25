@@ -28,7 +28,7 @@ import { QuestionModal } from './parts/QuestionModal';
 import {
   Row, HIDDEN_AGENTS, AGENT_ICONS, AGENT_DESC, CLIENT_COMMANDS,
   extractText, formatDuration, bytesToBase64,
-  getQuestionStore, subscribeQuestionChange, setQuestion,
+  getQuestionStore, subscribeQuestionChange, setQuestion, clearQuestion,
 } from './helpers';
 import { getBrand } from '../scheme';
 import { styles } from './styles';
@@ -87,7 +87,9 @@ export const Chat: React.FC = () => {
   const [sessions, setSessions] = useState<any[]>([]);
   const [rows, setRows] = useState<Row[]>([]);
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
+  // busy 按会话管理: sid → 是否生成中; 渲染/发送时取当前会话
+  const [busyBySession, setBusyBySession] = useState<Record<string, boolean>>({});
+  const busy = !!busyBySession[sessionID];
   const [agents, setAgents] = useState<any[]>([]);
   const [currentAgent, setCurrentAgent] = useState<string>('build');
   const [models, setModels] = useState<any[]>([]);
@@ -106,8 +108,8 @@ export const Chat: React.FC = () => {
   const [showSkills, setShowSkills] = useState(false);
   const [skills, setSkills] = useState<Array<{ name: string; description?: string; location?: string }>>([]);
   const [, setQuestionRev] = useState(0);
-  const [activeQuestion, setActiveQuestion] = useState<{ requestID: string; questions: any[] } | null>(null);
-  const [pendingPermission, setPendingPermission] = useState<any>(null);
+  // 交互状态按会话管理: sid → { question?, permission? }; 渲染时取当前会话, 切换天然跟随
+  const [interactions, setInteractions] = useState<Record<string, { question?: { requestID: string; questions: any[] }; permission?: any }>>({});
   useEffect(() => {
     const sub = () => setQuestionRev((n) => n + 1);
     const unsub = subscribeQuestionChange(sub);
@@ -143,27 +145,12 @@ export const Chat: React.FC = () => {
     else setError(text);
   }, [showNotice]);
   const [ready, setReady] = useState<boolean>(false);
-  // 可用态: Local 模式（runtime 就绪）直接可用; cluster 模式需已登录.
-// mode 从 ISandbox 获取（server 返回）, 登录态从 __APP_AUTH__ 读取.
-const [usable, setUsable] = useState<boolean>(() => {
-    const mode = (window as any).__APP_SANDBOX__?.getMode?.();
-    if (mode === 'local') return true;
-    return !!(window as any).__APP_AUTH__?.isLoggedIn?.();
-  });
+  // 可用态: 有 APP_CWD 才可用, 否则提示先选择工作目录
+  const [usable, setUsable] = useState<boolean>(() => !!localStorage.getItem('APP_CWD'));
   useEffect(() => {
-    const refresh = () => {
-      const mode = (window as any).__APP_SANDBOX__?.getMode?.();
-      if (mode === 'local') { setUsable(true); return; }
-      setUsable(!!(window as any).__APP_AUTH__?.isLoggedIn?.());
-    };
-    window.addEventListener('app.logined', refresh);
+    const refresh = () => setUsable(!!localStorage.getItem('APP_CWD'));
     window.addEventListener('runtime-ready', refresh);
-    window.addEventListener('auth:hide-login', refresh);
-    return () => {
-      window.removeEventListener('app.logined', refresh);
-      window.removeEventListener('runtime-ready', refresh);
-      window.removeEventListener('auth:hide-login', refresh);
-    };
+    return () => window.removeEventListener('runtime-ready', refresh);
   }, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -179,11 +166,13 @@ const [usable, setUsable] = useState<boolean>(() => {
   // 不强制创建 SDK client（opencode 服务未起时面板仍可用, 请求时再失败提示）.
   const client = (window as any).__APP_OPENCODE__;
   const isReady = () => {
-    const url = (window as any).__APP_CONFIG__?.agentUrl;
-    if (url) {
+    // 必须有 APP_CWD（已选工作目录）才可用
+    const hasCwd = !!localStorage.getItem('APP_CWD');
+    const base = (window as any).__APP_CONFIG__?.appBaseUrl;
+    if (base && hasCwd) {
       try { getAiClient(); } catch { /* client 创建失败不阻塞面板 */ }
     }
-    return !!url;
+    return !!base && hasCwd;
   };
   useEffect(() => {
     const check = () => setReady(isReady());
@@ -360,8 +349,8 @@ const [usable, setUsable] = useState<boolean>(() => {
     else setRows([]);
   }, [sessionID, loadMessages]);
 
-  // sessionID 持久化到 sessionStorage (前端状态, 不向 server 查"最近会话")
-  const SESSION_KEY = 'chat.sessionID';
+  // sessionID 持久化到 sessionStorage (绑定 cwd: 切换工作目录后不复用旧 session)
+  const SESSION_KEY = 'chat.sessionID.' + (localStorage.getItem('APP_CWD') || 'default').replace(/[^a-zA-Z0-9]/g, '_');
   // 仅启动时恢复一次上次会话. 注意: 不能依赖 sessionID 重跑 (restore 读 storage + write 写
   // storage 会形成 A↔B 乒乓 → applySessionToUI 反复 session.get → 请求洪流).
   useEffect(() => {
@@ -378,12 +367,29 @@ const [usable, setUsable] = useState<boolean>(() => {
   // --- opencode SSE 事件流: 打字机式流式响应 (替代 500ms 轮询) ---
   // client.event.subscribe() → /global/event, 每个事件 { type, properties }.
   // 注意: 事件频发时严禁触发 HTTP (loadMessages), 否则请求洪流 → ERR_INSUFFICIENT_RESOURCES.
+  // busy 状态对账: 用 GET /session/status 全量刷新 (事件流丢事件/切会话后校正)
+  const refreshSessionStatuses = useCallback(async () => {
+    const c = (window as any).__APP_OPENCODE__;
+    if (!c) return;
+    try {
+      const res = await c.session.status();
+      const map: Record<string, boolean> = {};
+      const data = res?.data || {};
+      for (const [sid, st] of Object.entries(data)) {
+        map[sid] = (st as any)?.type === 'busy';
+      }
+      setBusyBySession(map);
+    } catch { /* ignore */ }
+  }, []);
+
   // 全部从事件数据直接更新 rows; 只有 session idle 时才做一次最终同步.
   // 依赖 ready（agentUrl 就绪后为 true）: 首次渲染 client 可能未创建, ready 翻转时重跑订阅
   useEffect(() => {
     if (!ready) return;
     const c = (window as any).__APP_OPENCODE__;
     if (!c) return;
+    // 订阅前先对账一次
+    void refreshSessionStatuses();
     let stopped = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     const upsertRow = (id: string, role: Row['role'], parts: any[], time?: { created?: number; completed?: number }) => {
@@ -402,6 +408,25 @@ const [usable, setUsable] = useState<boolean>(() => {
           if (stopped) break;
           const { type, properties } = ev || {};
           if (!type || !properties) continue;
+          // busy 状态全局维护: status/idle 事件总是处理 (带 sessionID), 不参与当前会话过滤,
+          // 否则切走期间到达的 idle 事件被丢弃 → 旧会话 busy 悬挂
+          if (type === 'session.status') {
+            const st = properties.status?.type;
+            const ssid = properties.sessionID;
+            if (ssid) {
+              if (st === 'busy') setBusyBySession((prev) => ({ ...prev, [ssid]: true }));
+              else if (st === 'idle') {
+                setBusyBySession((prev) => ({ ...prev, [ssid]: false }));
+                if (ssid === sessionIDRef.current) void loadMessages(ssid);
+              }
+            }
+            continue;
+          }
+          if (type === 'session.idle') {
+            const ssid = properties.sessionID;
+            if (ssid) setBusyBySession((prev) => ({ ...prev, [ssid]: false }));
+            continue;
+          }
           // 只处理当前会话的事件
           if (properties.sessionID && properties.sessionID !== sessionIDRef.current) continue;
           switch (type) {
@@ -425,6 +450,32 @@ const [usable, setUsable] = useState<boolean>(() => {
                 row.parts = replaceIdx >= 0
                   ? parts.map((p: any, i: number) => (i === replaceIdx ? part : p))
                   : [...parts, part];
+                next[idx] = row;
+                return next;
+              });
+              break;
+            }
+            case 'message.part.delta': {
+              // 流式增量: 把 delta 追加到对应 part 的文本, 实现逐字打字机效果
+              const { messageID, partID, delta, field } = properties || {};
+              if (!messageID || !partID || typeof delta !== 'string') break;
+              setRows((prev) => {
+                const idx = prev.findIndex((r) => r.id === messageID);
+                if (idx < 0) return prev;
+                const next = [...prev];
+                const row = { ...next[idx] };
+                const parts = row.parts || [];
+                const partIdx = parts.findIndex((p: any) => p?.id === partID);
+                if (partIdx < 0) {
+                  // 没有对应 part, 创建一个 text part 用 delta 开始
+                  row.parts = [...parts, { id: partID, type: 'text', text: delta }];
+                } else {
+                  const p = { ...parts[partIdx] };
+                  if (field === 'text') {
+                    p.text = (p.text || '') + delta;
+                  }
+                  row.parts = parts.map((x: any, i: number) => (i === partIdx ? p : x));
+                }
                 next[idx] = row;
                 return next;
               });
@@ -456,16 +507,6 @@ const [usable, setUsable] = useState<boolean>(() => {
               if (mid) setRows((prev) => prev.filter((r) => r.id !== mid));
               break;
             }
-            case 'session.status': {
-              const st = properties.status?.type;
-              if (st === 'busy') setBusy(true);
-              else if (st === 'idle') {
-                setBusy(false);
-                // 最终同步一次 (合并事件里可能漏掉的部分)
-                void loadMessages(sessionIDRef.current);
-              }
-              break;
-            }
             case 'session.updated': {
               // AI 生成真实标题后同步更新 banner (占位标题仍显示"新会话")
               const info = properties.info;
@@ -476,14 +517,11 @@ const [usable, setUsable] = useState<boolean>(() => {
               break;
             }
             case 'question.asked': {
-              // A2UI 提问: 存 que_xxx (持久化) + 弹出 QuestionModal (tab 式)
+              // A2UI 提问: 存 que_xxx (持久化, QuestionCard 用它取 requestID); 卡片在消息流内直接交互, 无弹窗
               const qid = properties.id;
               const qsid = properties.sessionID;
               if (qid && qsid) {
                 setQuestion(qsid, { requestID: qid, questions: properties.questions || [] });
-                if (qsid === sessionIDRef.current) {
-                  setActiveQuestion({ requestID: qid, questions: properties.questions || [] });
-                }
               }
               break;
             }
@@ -492,14 +530,25 @@ const [usable, setUsable] = useState<boolean>(() => {
               break;
             }
             case 'permission.updated': {
-              // 工具权限请求: 弹权限卡片 (once/always/reject)
-              if (properties?.id) setPendingPermission(properties);
+              // 工具权限请求: 弹权限卡片 (once/always/reject) — 挂到对应会话
+              if (properties?.id) {
+                const psid = properties.sessionID || sessionIDRef.current;
+                setInteractions((prev) => ({ ...prev, [psid]: { ...prev[psid], permission: properties } }));
+              }
               break;
             }
             case 'permission.replied': {
               // 权限已回复 → 收起卡片
               const pid = properties?.permissionID;
-              if (pid) setPendingPermission((prev: any) => (prev?.id === pid ? null : prev));
+              if (pid) {
+                const psid = properties.sessionID || sessionIDRef.current;
+                setInteractions((prev) => {
+                  const cur = prev[psid];
+                  if (!cur?.permission || cur.permission.id !== pid) return prev;
+                  const next = { ...cur }; delete next.permission;
+                  return { ...prev, [psid]: next };
+                });
+              }
               break;
             }
           }
@@ -508,21 +557,33 @@ const [usable, setUsable] = useState<boolean>(() => {
         // SSE 断开: 退化为慢轮询兜底
         console.warn('[chat] event stream closed, fallback poll:', e);
       }
-      if (!stopped) reconnectTimer = setTimeout(() => { void run(); }, 3000);
+      if (!stopped) {
+        // 重连后对账 busy 状态 (事件可能丢失)
+        void refreshSessionStatuses();
+        reconnectTimer = setTimeout(() => { void run(); }, 3000);
+      }
     };
     void run();
     return () => {
       stopped = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
     };
-  }, [ready, loadMessages]);
+  }, [ready, loadMessages, refreshSessionStatuses]);
 
-  // busy 兜底看门狗: 事件流异常时防止 busy 卡死
+  // busy 兜底看门狗: 事件流异常时防止 busy 卡死 (仅当前会话)
   useEffect(() => {
     if (!busy) return;
-    const t = setTimeout(() => setBusy(false), 120000);
+    const t = setTimeout(() => {
+      setBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
+    }, 120000);
     return () => clearTimeout(t);
-  }, [busy]);
+  }, [busy, sessionID]);
+
+  // busy 定时对账: 每 15s 校准一次, 覆盖事件丢失/连接抖动
+  useEffect(() => {
+    const t = setInterval(() => { void refreshSessionStatuses(); }, 15000);
+    return () => clearInterval(t);
+  }, [refreshSessionStatuses]);
 
   useEffect(() => {
     if (!scrollRef.current) return;
@@ -561,19 +622,22 @@ const [usable, setUsable] = useState<boolean>(() => {
 
   const onNewSession = useCallback(async () => {
     if (!ready || !client) return;
-    if (rows.length === 0) return;
+    // 不 abort 当前会话: 允许多会话并行生成, 切回后事件流自动续播
     cleanupDraft();
     try {
       const res = await createSessionInWorkspace(client);
       const sid = res?.data?.id;
       if (sid) {
+        sessionIDRef.current = sid;
         setSessionID(sid);
         setRows([]);
+        setBusyBySession((prev) => ({ ...prev, [sid]: false }));
+        setError('');
+        setCurrentTitle('新会话');
         setShowSessions(false);
-        setCurrentTitle('新会话'); // 默认标题, AI 生成真实标题后由 applySessionToUI 覆盖
       }
     } catch (e) { setApiError(e); }
-  }, [ready, client, rows.length, cleanupDraft, setApiError]);
+  }, [ready, client, cleanupDraft, setApiError]);
 
   const selectedModel = useMemo(() => {
     if (!currentModel) return null;
@@ -618,7 +682,7 @@ const [usable, setUsable] = useState<boolean>(() => {
     }
     setRows((prev) => [...prev, { id: localId, role: 'user', parts: localParts }]);
     try {
-      let sid = sessionID;
+      let sid = sessionIDRef.current;
       if (!sid) {
         const res = await createSessionInWorkspace(client);
         sid = res?.data?.id;
@@ -638,7 +702,7 @@ const [usable, setUsable] = useState<boolean>(() => {
               : { modelID: currentModel, ...(currentProvider ? { providerID: currentProvider } : {}) };
           })()
         : undefined;
-      setBusy(true);
+      if (sid) setBusyBySession((prev) => ({ ...prev, [sid]: true }));
       // promptAsync: fire-and-forget, 回复由 SSE 事件流 (message.part.updated) 打字机式渲染
       const parts: any[] = [{ type: 'text', text: fullText }];
       if (images.length) {
@@ -656,7 +720,7 @@ const [usable, setUsable] = useState<boolean>(() => {
         ...(model ? { model } : {}),
       });
     } catch (e) {
-      setBusy(false);
+      setBusyBySession((prev) => ({ ...prev, [sessionIDRef.current]: false }));
       setRows((prev) => prev.filter((r) => r.id !== localId));
       setInput(t);
       setApiError(e);
@@ -675,16 +739,27 @@ const [usable, setUsable] = useState<boolean>(() => {
   const onAbort = useCallback(async (sid?: string) => {
     const target = sid || sessionID;
     if (!target || !client) return;
-    try { await client.session.abort({ sessionID: target }); setBusy(false); }
-    catch (e) { console.warn('[ai] abort:', e); setBusy(false); }
+    try { await client.session.abort({ sessionID: target }); }
+    catch (e) { console.warn('[ai] abort:', e); }
+    setBusyBySession((prev) => ({ ...prev, [target]: false }));
+    // 只关闭目标会话的权限卡片 (question 是消息流卡片, 由 opencode 消息决定, 无需处理)
+    setInteractions((prev) => {
+      const cur = prev[target];
+      if (!cur) return prev;
+      const next = { ...cur }; delete next.permission;
+      return { ...prev, [target]: next };
+    });
   }, [sessionID, client]);
 
   const onSwitchSession = useCallback((sid: string) => {
     if (draftRef.current?.sid !== sid) cleanupDraft();
     setSessionID(sid);
+    sessionIDRef.current = sid;
     setShowSessions(false);
     setRows([]);
-  }, [cleanupDraft]);
+    // 切换后对账 busy (事件流可能有遗漏)
+    void refreshSessionStatuses();
+  }, [cleanupDraft, refreshSessionStatuses]);
 
   const onDeleteSession = useCallback(async (sid: string) => {
     if (!client) return;
@@ -938,13 +1013,23 @@ const [usable, setUsable] = useState<boolean>(() => {
 
   const onReplyQuestion = useCallback(async (sid: string, rid: string, answers: string[][]) => {
     await aiReplyQuestion(sid, rid, answers);
-    if (sid) { try { await loadMessages(sid); } catch { /* ignore */ } }
+    if (sid) {
+      try { await loadMessages(sid); } catch { /* ignore */ }
+      // 已回答: 清 store, 避免 QRecord 重复提示待回答
+      clearQuestion(sid);
+    }
   }, [loadMessages]);
 
   const onReplyPermission = useCallback(async (permissionID: string, response: 'once' | 'always' | 'reject') => {
     try {
       await aiReplyPermission(sessionID, permissionID, response);
-      setPendingPermission((prev: any) => (prev?.id === permissionID ? null : prev));
+      const psid = sessionID;
+      setInteractions((prev) => {
+        const cur = prev[psid];
+        if (!cur?.permission || cur.permission.id !== permissionID) return prev;
+        const next = { ...cur }; delete next.permission;
+        return { ...prev, [psid]: next };
+      });
     } catch (e) { console.warn('[ai] reply permission:', e); }
   }, [sessionID]);
 
@@ -952,6 +1037,8 @@ const [usable, setUsable] = useState<boolean>(() => {
     try {
       await aiRejectQuestion(sessionID, rid);
       if (sessionID) { try { await loadMessages(sessionID); } catch { /* ignore */ } }
+      // 忽略: 清 store 避免重复提示待回答
+      clearQuestion(sessionID);
     } catch (e) { console.warn('[ai] reject question:', e); }
   }, [sessionID, loadMessages]);
 
@@ -1153,13 +1240,7 @@ const [usable, setUsable] = useState<boolean>(() => {
         {!usable ? (
           <div className="chat__login-gate">
             <div className="chat__login-title">{getBrand()?.nameZh || 'AI 助手'}</div>
-            <div className="chat__login-desc">登录后即可开始 AI 会话</div>
-            <button
-              className="chat__login-btn"
-              onClick={() => { void commandService.executeCommand('auth.showLogin'); }}
-            >
-              去登录
-            </button>
+            <div className="chat__login-desc">请先在工作目录面板选择工作目录</div>
           </div>
         ) : !ready ? (
           <ConnectingView user={globalUser} />
@@ -1197,23 +1278,28 @@ const [usable, setUsable] = useState<boolean>(() => {
 
       {ready && (
         <div className="chat__composer">
-          {pendingPermission && (
-            <PermissionModal
-              permission={pendingPermission}
-              onReply={onReplyPermission}
-              onDismiss={() => setPendingPermission(null)}
-            />
-          )}
-          {activeQuestion && (
-            <QuestionModal
-              questions={activeQuestion.questions}
-              requestID={activeQuestion.requestID}
-              sessionID={sessionID}
-              onReply={onReplyQuestion}
-              onCancel={(rid) => onIgnoreQuestion(rid)}
-              onDismiss={() => setActiveQuestion(null)}
-            />
-          )}
+          {(() => {
+            // 权限卡片 (question 是消息流内卡片, 由 opencode 消息渲染, 无弹窗)
+            const cur = interactions[sessionID] || {};
+            return (
+              <>
+                {cur.permission && (
+                  <PermissionModal
+                    permission={cur.permission}
+                    onReply={onReplyPermission}
+                    onDismiss={() => {
+                      setInteractions((prev) => {
+                        const c = prev[sessionID];
+                        if (!c) return prev;
+                        const next = { ...c }; delete next.permission;
+                        return { ...prev, [sessionID]: next };
+                      });
+                    }}
+                  />
+                )}
+              </>
+            );
+          })()}
           {showCommands && (
             <div className="chat__cmd-pop" ref={cmdPopRef}>
               <div className="chat__cmd-list">
