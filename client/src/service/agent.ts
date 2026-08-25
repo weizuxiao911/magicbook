@@ -4,7 +4,7 @@
  * implements core/commands/agent 的 IAgent: 对接 server /opencode/*.
  * AI SDK 客户端单例, 供全局使用（chat 等拓展经 AgentToken 注入）.
  *
- * baseUrl: 来自 sandbox applyRuntime 写入的 __APP_CONFIG__.agentUrl（server 返回完整地址）.
+ * baseUrl: 唯一配置入口 app_base_url → opencode 地址 = app_base_url/ai（sandbox 反向代理透传）.
  * 纯浏览器: 不依赖 process/node.
  */
 
@@ -58,14 +58,11 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
     if (_client) return _client;
     const base = agentUrl();
     if (!base) return null;
-    // 预热: 带 x-current-cwd header 触发 sandbox 确保 opencode 就绪 (幂等, 不阻塞)
+    // 所有 SDK 请求带 X-Current-Cwd → sandbox 中间件幂等 ensure opencode 就绪
+    // （活且 cwd 匹配则几 ms 放行; opencode 挂了会由 sandbox 拉起, 避免 chat 请求 502）
     const cwd = localStorage.getItem('APP_CWD');
-    if (cwd) {
-      void fetch(`${base.replace(/\/ai$/, '')}/ai/path`, {
-        headers: { 'X-Current-Cwd': btoa(unescape(encodeURIComponent(cwd))) },
-      }).catch(() => { /* 预热失败忽略, SDK 请求时再触发 */ });
-    }
-    _client = createOpencodeClient({ baseUrl: base, responseStyle: 'fields', throwOnError: true });
+    const headers = cwd ? { 'X-Current-Cwd': btoa(unescape(encodeURIComponent(cwd))) } : {};
+    _client = createOpencodeClient({ baseUrl: base, headers, responseStyle: 'fields', throwOnError: true });
     (window as any).__APP_OPENCODE__ = _client;
     (window as any).__APP_OPENCODE_RUNTIME__ = { baseUrl: base };
     return _client;

@@ -3,8 +3,9 @@
  *
  * 注册为 opensumi 的 ITerminalServicePath（后端服务）:
  *   - NodePtyTerminalService（opensumi 终端前端）经 DI 注入本实现
- *   - pty_base_url 由 /sandbox 返回（登录后 applyRuntime 注入）; client 只消费 pty 服务的通用契约:
- *     POST {pty_base_url}/pty 创建会话, WebSocket {pty_base_url}/pty/{id}/connect 数据通道
+ *   - 不再有独立 pty_base_url: opencode 地址 = app_base_url/ai（sandbox 反向代理透传, 含 ws upgrade）,
+ *     client 只消费通用契约:
+ *     POST {opencode}/pty 创建会话, WebSocket {opencode}/pty/{id}/connect 数据通道
  *   - 输出含服务端控制帧（\u0000{json}, 如 cursor 同步）→ 过滤后为 pty 数据; 输入为纯文本
  */
 
@@ -20,9 +21,15 @@ import {
   type ITerminalServiceClient,
 } from '@opensumi/ide-terminal-next/lib/common';
 
-/** pty_base_url（/sandbox 返回, 登录后 applyRuntime 注入） */
-function ptyBaseUrl(): string {
-  return ((window as any).__APP_CONFIG__?.ptyUrl || '').replace(/\/+$/, '');
+/** opencode 地址 = app_base_url/ai（唯一配置入口, 由 appBaseUrl 派生） */
+function opencodeBaseUrl(): string {
+  const app = ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
+  return app ? `${app}/ai` : '';
+}
+
+/** 默认 shell: 优先 applyRuntime 注入（宿主事实）; 未注入时先取默认值, ensureDefaultShell() 会从 server /platform 懒加载覆盖 */
+function defaultShell(): string {
+  return ((window as any).__APP_CONFIG__?.defaultShell as string) || '';
 }
 
 interface Channel {
@@ -48,12 +55,12 @@ export class RemoteTerminalService implements ITerminalNodeService {
     (window as any).__APP_TERMINAL__ = this;
   }
 
-  /** 等 pty_base_url 就绪（登录后 applyRuntime 注入; 终端可能在登录前被创建） */
+  /** 等 opencode 地址就绪（app_base_url 注入即就绪; 终端可能在登录前被创建） */
   private async waitPtyReady(): Promise<void> {
-    if (ptyBaseUrl()) return;
+    if (opencodeBaseUrl()) return;
     await new Promise<void>((resolve) => {
       const onReady = () => {
-        if (ptyBaseUrl()) {
+        if (opencodeBaseUrl()) {
           window.removeEventListener('runtime-ready', onReady);
           resolve();
         }
@@ -66,9 +73,23 @@ export class RemoteTerminalService implements ITerminalNodeService {
     });
   }
 
-  /** GET {pty_base_url}/path 取宿主机绝对 cwd（pty 会话工作目录） */
+  /** 确保默认 shell 就绪: 未注入时从 server /sandbox 取宿主默认（多平台由宿主机判定, 不猜浏览器 UA） */
+  private async ensureDefaultShell(): Promise<void> {
+    if ((window as any).__APP_CONFIG__?.defaultShell) return;
+    try {
+      const app = ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
+      if (!app) return;
+      const res = await fetch(`${app}/sandbox`, { headers: { Accept: 'application/json' } });
+      if (res.ok) {
+        const j = await res.json();
+        if (j?.default_shell) (window as any).__APP_CONFIG__.defaultShell = j.default_shell;
+      }
+    } catch { /* 忽略, 交给默认兜底 */ }
+  }
+
+  /** GET {opencode}/path 取宿主机绝对 cwd（pty 会话工作目录） */
   private async getPtyCwd(): Promise<string> {
-    const base = ptyBaseUrl();
+    const base = opencodeBaseUrl();
     const res = await fetch(`${base}/path`, { headers: { Accept: 'application/json' } });
     if (!res.ok) throw new Error(`pty /path ${res.status}`);
     const json = await res.json();
@@ -76,14 +97,12 @@ export class RemoteTerminalService implements ITerminalNodeService {
     return (dir || '/workspace').replace(/\/+$/, '');
   }
 
-  /** POST {pty_base_url}/pty 创建会话（spawn shell, cwd=宿主机绝对 workspace; 默认 shell 由 sandbox 返回） */
+  /** POST {opencode}/pty 创建会话（spawn shell, cwd=宿主机绝对 workspace; 默认 shell 按 macOS 事实） */
   private async createPty(launchConfig: IShellLaunchConfig, cwd: string): Promise<{ id: string; pid: number; command: string }> {
-    const base = ptyBaseUrl();
-    if (!base) throw new Error('pty base url not ready (sandbox runtime 未应用)');
-    // 默认 shell 以 sandbox 返回为准（前端 executable 可能在 runtime 就绪前被设为 fallback）;
-    // 用户显式指定的 executable 仍优先
-    const defaultShell = (window as any).__APP_CONFIG__?.defaultShell as string | undefined;
-    const command = defaultShell || launchConfig.executable || '/bin/bash';
+    const base = opencodeBaseUrl();
+    if (!base) throw new Error('opencode url not ready (sandbox runtime 未应用)');
+    // 用户显式指定的 executable 优先; 否则默认 shell（server /platform 宿主事实, 跨平台通用兜底 bash）
+    const command = launchConfig.executable || defaultShell() || '/bin/bash';
     const res = await fetch(`${base}/pty`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -99,16 +118,25 @@ export class RemoteTerminalService implements ITerminalNodeService {
   }
 
   private wsUrl(ptyId: string, cwd: string): string {
-    return `${ptyBaseUrl().replace(/^http/, 'ws')}/pty/${ptyId}/connect?directory=${encodeURIComponent(cwd)}`;
+    return `${opencodeBaseUrl().replace(/^http/, 'ws')}/pty/${ptyId}/connect?directory=${encodeURIComponent(cwd)}`;
   }
 
   /** 创建终端会话（前端 sessionId = id） */
   async create2(id: string, _cols: number, _rows: number, launchConfig: IShellLaunchConfig): Promise<IPtyProcessProxy | undefined> {
     try {
       await this.waitPtyReady();
+      await this.ensureDefaultShell();
       const cwd = await this.getPtyCwd();
       const info = await this.createPty(launchConfig, cwd);
       const ws = new WebSocket(this.wsUrl(info.id, cwd));
+      // 等 ws 握手完成再返回（否则前端立即可输入, 触发 CONNECTING 态 send 报错）
+      if (ws.readyState !== WebSocket.OPEN) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(() => { ws.removeEventListener('open', onOpen); resolve(); }, 3000);
+          const onOpen = () => { clearTimeout(timer); resolve(); };
+          ws.addEventListener('open', onOpen);
+        });
+      }
       const client = this.terminalClient as any;
       ws.onmessage = (e) => {
         const data = typeof e.data === 'string' ? e.data : '';
@@ -151,16 +179,19 @@ export class RemoteTerminalService implements ITerminalNodeService {
 
   /** 前端输入 → ws: 只转发 {data} 文本（resize 等控制帧忽略, 不发给 shell） */
   onMessage(id: string, msg: string): void {
+    const ws = this.channels.get(id)?.ws;
+    // 连接未就绪/已断, 丢弃输入（避免 CONNECTING 态 send 抛 InvalidStateError）
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     try {
       const json = JSON.parse(msg) as { data?: string };
       if (typeof json.data === 'string') {
-        this.channels.get(id)?.ws?.send(json.data);
+        ws.send(json.data);
       }
       return;
     } catch {
       /* 非 JSON: 原始文本输入 */
     }
-    this.channels.get(id)?.ws?.send(msg);
+    ws.send(msg);
   }
 
   resize(id: string, _rows: number, _cols: number): void {
@@ -212,12 +243,13 @@ export class RemoteTerminalService implements ITerminalNodeService {
   }
 
   async detectAvailableProfiles(): Promise<{ profileName: string; path: string }[]> {
-    return [{ profileName: 'bash', path: '/bin/bash' }];
+    const shell = defaultShell() || '/bin/bash';
+    return [{ profileName: shell.split('/').pop() || shell, path: shell }];
   }
 
-  /** 默认 shell: /sandbox 返回（宿主机事实, applyRuntime 注入） */
+  /** 默认 shell: server /platform 宿主事实（applyRuntime 注入优先） */
   async getDefaultSystemShell(_os: OperatingSystem): Promise<string> {
-    return ((window as any).__APP_CONFIG__?.defaultShell as string) || '/bin/bash';
+    return defaultShell() || '/bin/bash';
   }
 }
 

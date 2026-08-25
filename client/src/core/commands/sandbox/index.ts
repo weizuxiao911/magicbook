@@ -19,6 +19,11 @@ export interface SandboxRuntime {
   default_shell: string;
   /** 运行模式: local（免登录直连）| cluster（需登录） */
   mode: 'local' | 'cluster';
+  /** 连接状态（server /sandbox 探活: opencode/fs 是否就绪） */
+  status?: {
+    opencode: { connected: boolean; cwd?: string };
+    fs: { connected: boolean; root?: string };
+  };
 }
 
 /** 沙箱事件（SSE 推流） */
