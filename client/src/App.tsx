@@ -24,8 +24,8 @@ import './core/styles/slots.css';
 function stashSavedEditorUris(): void {
   try {
     // 自建持久化 key（watchEditorState 维护）; 兜底旧 opensumi workbench storage
-    const raw = localStorage.getItem('magicbook.editorUris');
-    const activeUri = localStorage.getItem('magicbook.editorActiveUri');
+    const raw = localStorage.getItem('editor.restore.uris');
+    const activeUri = localStorage.getItem('editor.restore.activeUri');
     if (activeUri) (window as any).__SAVED_EDITOR_ACTIVE_URI__ = activeUri;
     if (raw) {
       const arr = JSON.parse(raw) as string[];

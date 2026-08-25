@@ -119,4 +119,15 @@ cd magicbook
 - 沙箱相关：/sandbox 只返回地址（fs/pty/opencode/base_shell）+ 管理生命周期（opencode/fs 探活自启）；registry 由 client 编译期配置（.env REGISTRY_BASE_URL）
 - 独立服务：fs :24097 / opencode :24096 / registry :7781；未来容器化一体（+registry :24098），ingress subdomain 路由
 - 扩展源码：`server/extensions/<name>/`（入库）；产物（vsix/dist/uploads）归 registry（gitignore）
+- vsix 开发规范（用户约定）: **一律 TypeScript**（`src/extension.ts` + esbuild → `dist/extension.js`）;
+  **webview 单独维护**（`webview/` 目录或 `webview.tsx`, 不内联拼 HTML 字符串）;
+  **publisher 统一 `weizuxiao911`**（用户生产的 vsix 统一使用账号名）;
+  **vsix 文件名规范 `{发布者}.{拓展名称}-{版本}.vsix`**（如 `weizuxiao911.magicbook-html-preview-0.1.0.vsix`, 由 vsce 打包默认生成）;
+  项目统一 MIT 开源协议（根 LICENSE）
 - 扩展加载机制：metadata 注入 → customEditor 打开触发 onCustomEditor 激活 → 拉 browser 入口 → provider 注册 → resolve
+
+### 待优化交互体验问题（登记）
+
+| 问题 | 现象 | 期望 | 备注 |
+| --- | --- | --- | --- |
+| 编辑器拆分布局刷新后空分组无法关闭 | 拆分 2 个区域后刷新，新增分组（右 group）无 tab 且无法关闭；空分组不自动让出宽度 | 分组为空时自动关闭/让出宽度，其他分组铺满 main 区域 | 根因在 opensumi 恢复的 group 状态（backend 建 tab 未加载、close 被卡）；曾尝试 client 恢复拆分结构（fs.ts），方向复杂已放弃；后续可从「检测空/异常 group 自动 dispose」或「恢复后清理无渲染 group」入手 |

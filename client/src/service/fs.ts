@@ -102,7 +102,7 @@ export class FileSystemServiceImpl implements IFileSystem {
       const uris: string[] =
         (window as any).__SAVED_EDITOR_URIS__ ||
         (() => {
-          const raw = localStorage.getItem('magicbook.editorUris');
+          const raw = localStorage.getItem('editor.restore.uris');
           if (!raw) return [];
           const arr = JSON.parse(raw);
           return Array.isArray(arr) ? arr : [];
@@ -110,7 +110,7 @@ export class FileSystemServiceImpl implements IFileSystem {
       // 上次激活的 tab（刷新后定位回到它）; 排除非文件（welcome 等）
       const activeUri: string =
         (window as any).__SAVED_EDITOR_ACTIVE_URI__ ||
-        localStorage.getItem('magicbook.editorActiveUri') ||
+        localStorage.getItem('editor.restore.activeUri') ||
         '';
       if (!uris.length) return;
       console.log('[filesystem] 恢复编辑器 tab:', uris.length, uris, 'active:', activeUri);
@@ -134,7 +134,7 @@ export class FileSystemServiceImpl implements IFileSystem {
         ),
       ).then(() => {
         if (alive.length !== uris.length) {
-          localStorage.setItem('magicbook.editorUris', JSON.stringify(alive));
+          localStorage.setItem('editor.restore.uris', JSON.stringify(alive));
           console.log('[filesystem] 恢复状态自愈:', uris.filter((u) => !alive.includes(u)), '已从持久化移除');
         }
         // 激活上次的 tab（backend 只建容器, 这里 open 触发内容加载渲染）
@@ -173,11 +173,11 @@ export class FileSystemServiceImpl implements IFileSystem {
       const next = JSON.stringify(uris);
       const active = this.editorService.currentEditorGroup?.currentResource?.uri.toString() || '';
       // 变化才写（uris 或当前激活 tab 任一变化）
-      if (next === localStorage.getItem('magicbook.editorUris') && active === localStorage.getItem('magicbook.editorActiveUri')) {
+      if (next === localStorage.getItem('editor.restore.uris') && active === localStorage.getItem('editor.restore.activeUri')) {
         return;
       }
-      localStorage.setItem('magicbook.editorUris', next);
-      if (active) localStorage.setItem('magicbook.editorActiveUri', active);
+      localStorage.setItem('editor.restore.uris', next);
+      if (active) localStorage.setItem('editor.restore.activeUri', active);
     } catch { /* ignore */ }
   }
 
