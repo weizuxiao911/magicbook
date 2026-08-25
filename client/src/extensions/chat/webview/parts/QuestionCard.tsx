@@ -62,7 +62,9 @@ export const QuestionCard: React.FC<{
   onReply: (sid: string, rid: string, answers: string[][]) => Promise<void>;
   /** 优先使用的 requestID (来自 question.v2.asked 事件的 id, 格式 que_xxx) */
   preferredRequestID?: string;
-}> = ({ part, sessionID, onReply, preferredRequestID }) => {
+  /** 对话是否正忙 (AI 生成中): 仅 busy 时显示提交按钮 */
+  busy?: boolean;
+}> = ({ part, sessionID, onReply, preferredRequestID, busy }) => {
   const questions = useMemo(() => extractQuestions(part), [part]);
   const localRid = useMemo(() => extractRequestId(part), [part]);
   const requestId = preferredRequestID || localRid;
@@ -155,7 +157,6 @@ export const QuestionCard: React.FC<{
                 type="button"
                 className={`q__tab${i === qi ? ' is-active' : ''}`}
                 onClick={() => setActiveIdx(i)}
-                disabled={submitting}
               >
                 {i + 1}
               </button>
@@ -215,11 +216,13 @@ export const QuestionCard: React.FC<{
               )}
             </div>
           </div>
-          <div className="q__foot">
-            <button className="q__submit" onClick={submit} disabled={submitting}>
-              {submitting ? '提交中...' : '提交'}
-            </button>
-          </div>
+          {busy && (
+            <div className="q__foot">
+              <button className="q__submit" onClick={submit} disabled={submitting}>
+                {submitting ? '提交中...' : '提交'}
+              </button>
+            </div>
+          )}
         </>
       )}
     </div>
