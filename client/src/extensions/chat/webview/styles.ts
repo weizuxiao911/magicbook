@@ -979,19 +979,26 @@ export const styles = `
 .q__head {
   display: flex; align-items: center; gap: 8px;
   width: 100%; padding: 8px 10px;
-  background: transparent; border: none; cursor: pointer;
+  background: transparent; border: none; cursor: default;
   user-select: none; font-family: inherit;
   font-size: 12.5px; text-align: left;
 }
-.q__head:hover { background: var(--ai-input-bg); }
 .q__badge {
   font-size: 11px; color: var(--ai-fg-muted);
   display: inline-flex; align-items: center; justify-content: center;
 }
 .q__head-title { flex: 1; font-weight: 500; }
-.q__caret {
-  color: var(--ai-fg-muted); font-size: 11px; flex-shrink: 0;
-  padding: 0 4px; min-width: 14px; text-align: center;
+/* 多问题 tab: 单条不显示, 多条时显示可切换 */
+.q__tabs { display: flex; gap: 3px; flex-shrink: 0; }
+.q__tab {
+  min-width: 24px; padding: 2px 7px;
+  background: transparent; border: 1px solid transparent; border-radius: 5px;
+  color: var(--ai-fg-muted); font-size: 11.5px; font-family: inherit;
+  cursor: pointer; text-align: center;
+}
+.q__tab:hover { background: var(--ai-hover); color: var(--ai-fg); }
+.q__tab.is-active {
+  background: var(--ai-active); color: var(--ai-fg);
 }
 .q__summary {
   padding: 2px 10px 8px 26px;
