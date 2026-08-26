@@ -100,6 +100,7 @@
 | customEditor 不匹配 (.paper 用文本打开) | 无语言注册 | contributes.languages 注册扩展名; activationEvents 与 viewType 一一致 |
 | chat agent dropdown 只有 build/plan, 漏掉 .opencode/agents/*.md 自定义 agent | aiListAgents 直接 `fetch /agent?directory=/` 不带 `x-opencode-directory` header, opencode 走 home 解析 | 改用全局 SDK `client.app.agents({query:{directory:cwd}})`; SDK 已带 cwdHeader |
 | opencode HTTP 调用绕过 SDK, 散落 fetch | 早期 chat/commands/api 5 处直接 fetch, dir 用 `window.location.pathname=/`, 漏 cwd | **所有 opencode HTTP 必须走全局 SDK** (`window.__APP_OPENCODE__`, service/agent 创建, 单实例); fetch 仅 SDK 不可用时兜底, 仍要带 cwd header; helper: `getAiDirectory()` / `getAiCwdHeader()` |
+| chat model 下拉显示"无匹配模型" | SDK v2 `client.config.providers` 返回 `{providers, default}` (新 API), 但代码取 `{all, connected}` (v1 旧 API), 拿不到 | 改用 `client.provider.list` (v1, 仍是 `{all, connected, default}`); 注意 SDK 端点选择: `app.agents` (数组), `provider.list` (v1 shape), `config.providers` (v2 shape), 别混用 |
 
 ## 关键命令
 

@@ -431,12 +431,15 @@ export async function aiListModels(): Promise<ModelInfo[]> {
   return result;
 }
 
-/** 拉取 /provider payload — 走 SDK, 兜底 fetch (带 cwd header)
+/** 拉取 /provider payload — 走 SDK (client.provider.list, v1 shape: {all, connected, default}),
+ *  兜底 fetch (带 cwd header)
  *  返回 {all: Provider[], connected: string[]} */
 async function fetchProvidersPayload(): Promise<{ all: any[]; connected: string[] }> {
   const client = getAiClient();
   if (client) {
-    const r = await (client as any).config.providers({ query: { directory: getAiDirectory() } });
+    // provider.list (v1) 返回 {all, connected, default}, 跟后端 /provider 一致
+    // 注意: client.config.providers 是 v2 新 API, shape 不同 ({providers, default}), 不兼容
+    const r = await (client as any).provider.list({ query: { directory: getAiDirectory() } });
     const json = (r as any)?.data ?? r;
     return {
       all: Array.isArray(json?.all) ? json.all : [],
