@@ -38,6 +38,7 @@ import { WelcomeScreen } from './components/WelcomeScreen';
 import { MessageRow } from './components/MessageRow';
 import { SessionsModal } from './components/SessionsModal';
 import { SkillsModal } from './components/SkillsModal';
+import { Portal } from './parts/Portal';
 
 function loadClientCmds() {
   return CLIENT_COMMANDS.map((c) => ({ cmd: c.cmd, name: c.desc, hint: c.hint || '', source: 'client-cmd' as const }));
@@ -1218,49 +1219,55 @@ export const Chat: React.FC = () => {
       </header>
 
       {ready && showSessions && (
-        <SessionsModal
-          sessions={sessions}
-          currentID={sessionID}
-          onSelect={onSwitchSession}
-          onDelete={onDeleteSession}
-          onClose={() => setShowSessions(false)}
-        />
+        <Portal>
+          <SessionsModal
+            sessions={sessions}
+            currentID={sessionID}
+            onSelect={onSwitchSession}
+            onDelete={onDeleteSession}
+            onClose={() => setShowSessions(false)}
+          />
+        </Portal>
       )}
 
       {ready && showSkills && (
-        <SkillsModal
-          skills={skills}
-          onSelect={onSelectSkill}
-          onClose={() => setShowSkills(false)}
-        />
+        <Portal>
+          <SkillsModal
+            skills={skills}
+            onSelect={onSelectSkill}
+            onClose={() => setShowSkills(false)}
+          />
+        </Portal>
       )}
 
       {previewAttachment && (
-        <div
-          className="chat__modal-overlay"
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setPreviewAttachment(null); }}
-        >
-          <div className="chat__preview" role="dialog" aria-modal="true">
-            <div className="chat__preview-head">
-              <span className="chat__preview-name">{previewAttachment.name}</span>
-              <button type="button" className="chat__modal-back" title="关闭" onClick={() => setPreviewAttachment(null)}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-              </button>
-            </div>
-            <div className="chat__preview-body">
-              {previewAttachment.dataUrl ? (
-                <img src={previewAttachment.dataUrl} alt={previewAttachment.name} />
-              ) : (
-                <div className="chat__preview-file">
-                  <span className="chat__attach-ic chat__attach-ic--lg">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                  </span>
-                  <span className="chat__preview-path">{previewAttachment.path}</span>
-                </div>
-              )}
+        <Portal>
+          <div
+            className="chat__modal-overlay"
+            onMouseDown={(e) => { if (e.target === e.currentTarget) setPreviewAttachment(null); }}
+          >
+            <div className="chat__preview" role="dialog" aria-modal="true">
+              <div className="chat__preview-head">
+                <span className="chat__preview-name">{previewAttachment.name}</span>
+                <button type="button" className="chat__modal-back" title="关闭" onClick={() => setPreviewAttachment(null)}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+              </div>
+              <div className="chat__preview-body">
+                {previewAttachment.dataUrl ? (
+                  <img src={previewAttachment.dataUrl} alt={previewAttachment.name} />
+                ) : (
+                  <div className="chat__preview-file">
+                    <span className="chat__attach-ic chat__attach-ic--lg">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    </span>
+                    <span className="chat__preview-path">{previewAttachment.path}</span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        </Portal>
       )}
 
       <div className="chat__messages" ref={scrollRef}>
@@ -1490,27 +1497,29 @@ export const Chat: React.FC = () => {
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                 </button>
                 {showModels && (
-                  <ModelPicker
-                    models={models}
-                    currentModel={currentModel}
-                    currentProvider={currentProvider}
-                    initialView={modelPickerView}
-                    onSelect={(id, providerID) => {
-                      setCurrentModel(id);
-                      setCurrentProvider(providerID);
-                      modelPrefs.setDefault(id, providerID);
-                      setShowModels(false);
-                    }}
-                    onClose={() => setShowModels(false)}
-                    onProvidersChanged={async () => {
-                      try {
-                        const m = await aiListModels();
-                        setModels(m || []);
-                        const ps = await aiListProviders();
-                        setProviders(ps as any);
-                      } catch (e) { console.warn('[ai] refresh after connect failed', e); }
-                    }}
-                  />
+                  <Portal>
+                    <ModelPicker
+                      models={models}
+                      currentModel={currentModel}
+                      currentProvider={currentProvider}
+                      initialView={modelPickerView}
+                      onSelect={(id, providerID) => {
+                        setCurrentModel(id);
+                        setCurrentProvider(providerID);
+                        modelPrefs.setDefault(id, providerID);
+                        setShowModels(false);
+                      }}
+                      onClose={() => setShowModels(false)}
+                      onProvidersChanged={async () => {
+                        try {
+                          const m = await aiListModels();
+                          setModels(m || []);
+                          const ps = await aiListProviders();
+                          setProviders(ps as any);
+                        } catch (e) { console.warn('[ai] refresh after connect failed', e); }
+                      }}
+                    />
+                  </Portal>
                 )}
               </div>
 
