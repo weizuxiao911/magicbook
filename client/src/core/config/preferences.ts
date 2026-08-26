@@ -7,7 +7,7 @@ import type { IAppRendererProps } from '@codeblitzjs/ide-core';
  * (主题 / 自动保存 / startup 行为 / 面包屑) 在这里集中声明,方便后续按需调整。
  */
 export const preferences: IAppRendererProps['appConfig']['defaultPreferences'] = {
-  'general.theme': 'opensumi-design-dark-theme',
+  'general.theme': 'opensumi-design-light-theme',
   'workbench.startupEditor': 'none',
   'breadcrumbs.enabled': false,
   // 禁用预览模式 (OpenSumi key): 单击文件直接打开常驻 tab, 不用斜体预览 tab
@@ -21,11 +21,8 @@ export const preferences: IAppRendererProps['appConfig']['defaultPreferences'] =
     '*.html': 'htmlPreview',
     '*.paper': 'paperEditor',
   },
-// 文件树: 第一层与分组标题完全左对齐(baseIndent 负补偿) + 每层缩进 16 让父子层级明显
+  // 文件树: 第一层与分组标题完全左对齐(baseIndent 负补偿) + 每层缩进 16 让父子层级明显
   'explorer.fileTree.baseIndent': -12,
   'explorer.fileTree.indent': 16,
-  // explorer 不显示隐藏文件/目录（点开头: .env/.opencode/.codeblitz 等）
-  'files.exclude': {
-    '**/.*': true,
-  },
+  // 暂不隐藏隐藏文件（.* 目录/文件都显示）
 };

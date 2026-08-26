@@ -20,14 +20,12 @@ export function fsRoutes(app: Express, getRoot: () => string) {
     return path.join(root, clean);
   };
 
-  // 列目录
+  // 列目录（含隐藏文件）
   app.get('/fs/dir', (req, res) => {
     try {
       const dir = abs(req.query.path as string || '/');
       const entries = fs.readdirSync(dir, { withFileTypes: true });
-      const list = entries
-        .filter((e) => !e.name.startsWith('.'))
-        .map((e) => ({ name: e.name, type: e.isDirectory() ? 'directory' : 'file' }));
+      const list = entries.map((e) => ({ name: e.name, type: e.isDirectory() ? 'directory' : 'file' }));
       res.json(list);
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
