@@ -94,7 +94,15 @@ process.env.APP_BASE_URL = process.env.APP_BASE_URL || `http://${hostname}:${por
 // web 端口也通过 env var 传给 webpack-dev-server
 process.env.WEB_PORT = webPort;
 
-const child = spawn(tsxBin, [cliEntry, ...args], {
+// spawn 决策: 优先本地 node_modules/.bin/tsx (保证版本一致), 否则用 PATH 的 tsx (用户全局装)
+const useLocalTsx = fs.existsSync(tsxBin);
+const tsxCmd = useLocalTsx ? tsxBin : 'tsx';
+if (!useLocalTsx && spawnSync('which', ['tsx']).status !== 0) {
+  console.error('[cli] 找不到 tsx; 请 npm i -g tsx');
+  process.exit(1);
+}
+
+const child = spawn(tsxCmd, [cliEntry, ...args], {
   stdio: 'inherit',
   env: process.env,
 });
