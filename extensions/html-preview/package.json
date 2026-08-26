@@ -14,8 +14,7 @@
   "main": "./dist/extension.js",
   "browser": "./dist/extension.js",
   "activationEvents": [
-    "onCustomEditor:htmlPreview",
-    "onCommand:htmlPreview.show"
+    "*"
   ],
   "contributes": {
     "customEditors": [
@@ -28,6 +27,17 @@
           }
         ],
         "priority": "default"
+      }
+    ],
+    "languages": [
+      {
+        "id": "html-preview",
+        "extensions": [
+          ".html"
+        ],
+        "aliases": [
+          "HTML Preview"
+        ]
       }
     ],
     "commands": [

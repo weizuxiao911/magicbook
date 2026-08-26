@@ -38,22 +38,38 @@ export function activate(context: vscode.ExtensionContext): void {
       // 注册时 webviewOptions.enableScripts 不会传到 customEditor 的 webview 创建（allowScripts 默认 false）;
       // 运行时设置 options 确保 iframe sandbox 含 allow-scripts（用户 html 的 JS 可执行）
       webviewPanel.webview.options = { enableScripts: true, enableForms: true };
-      const update = () => {
-        webviewPanel.webview.html = document.getText();
+      // 取渲染内容: 优先 document（customEditor doc 可能内容未加载/为空）; 空则从 fs 兜底读文件
+      const readContent = async (): Promise<string> => {
+        const docText = document.getText();
+        if (isRenderable(docText)) return docText;
+        try {
+          const bytes = await vscode.workspace.fs.readFile(document.uri);
+          const text = new TextDecoder('utf-8').decode(bytes);
+          if (isRenderable(text)) return text;
+        } catch (e) {
+          console.warn('[html-preview] fs readFile fallback 失败:', e);
+        }
+        return '';
+      };
+      const update = async () => {
+        const html = await readContent();
+        if (isRenderable(html)) webviewPanel.webview.html = html;
       };
       // 恢复/懒加载打开时 document 内容可能尚未加载完（getText 为空）→ 延迟重试更新
       // （参照 paper 扩展 scheduleReload; 避免 webview 一直是空预览）
       let retryTimer: ReturnType<typeof setTimeout> | undefined;
       const ensureRendered = (attempt: number) => {
-        if (isRenderable(document.getText())) {
-          update();
-          return;
-        }
-        if (attempt < 30) retryTimer = setTimeout(() => ensureRendered(attempt + 1), 500);
+        void readContent().then((html) => {
+          if (isRenderable(html)) {
+            webviewPanel.webview.html = html;
+            return;
+          }
+          if (attempt < 60) retryTimer = setTimeout(() => ensureRendered(attempt + 1), 500);
+        });
       };
       ensureRendered(0);
       const changeSub = vscode.workspace.onDidChangeTextDocument((e) => {
-        if (e.document === document) update();
+        if (e.document === document) void update();
       });
       webviewPanel.onDidDispose(() => {
         if (retryTimer) clearTimeout(retryTimer);
