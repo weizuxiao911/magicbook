@@ -43,6 +43,9 @@ graph LR
 ## 启动
 
 ```bash
+# 一次性全局装依赖 (推荐, 避免每次 npx 装)
+npm i -g tsx opencode-ai
+
 # npx (推荐)
 npx github:weizuxiao911/numas                          # web 模式 (opencode + client)
 npx github:weizuxiao911/numas --port 4000              # opencode 4000
@@ -56,6 +59,11 @@ cd cli && npm install && cd ..
 cd client && npm install && cd ..
 npm run dev
 ```
+
+> **升级时若行为异常**: npx 会 cache 旧 numas, 清掉重试:
+> ```bash
+> rm -rf ~/.npm/_npx ~/.npm/_cacache
+> ```
 
 | 服务 | 地址 |
 | --- | --- |
