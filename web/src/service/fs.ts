@@ -311,15 +311,19 @@ export class FileSystemServiceImpl implements IFileSystem {
 
   async list(idePath: string): Promise<FsEntry[]> {
     // opencode /api/fs/list?path=<rel> 返回 {location, data: [{path, type}]}; type ∈ {file, directory}
-    // 空字符串 / "/" 视作 .
-    const queryPath = !idePath || idePath === '/' ? '.' : idePath;
+    // 路径: 不带前导 / 的相对路径 (与 read/find 一致); 空字符串 / "/" 视作 .
+    const norm = !idePath || idePath === '/' ? '/' : idePath.replace(/\/+$/, '');
+    const queryPath = norm === '/' ? '.' : norm.replace(/^\/+/, '');
     const json = await httpJson<{ data: Array<{ path: string; type: string }> }>(
       `${appBaseUrl()}/api/fs/list?path=${encodeURIComponent(queryPath)}`,
     );
-    return (json.data || []).map((e) => ({
+    const entries: FsEntry[] = (json.data || []).map((e) => ({
       name: e.path.split('/').filter(Boolean).pop() || e.path,
       type: e.type === 'directory' ? 'directory' : 'file',
     }));
+    // 回填 stat 缓存 (meta 直接命中, 避免重复 list)
+    this.listCache.set(norm, entries);
+    return entries;
   }
 
   async exists(idePath: string): Promise<boolean> {
@@ -332,24 +336,32 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   /**
-   * stat: 走 FsPty 跑平台相关 stat 命令, 统一输出 "<type>|<size>|<mtime-epoch>" 格式.
-   *   POSIX: GNU stat (-c) / BSD stat (-f) 双兜底
-   *   PowerShell: Get-Item + LastWriteTime 转 epoch
+   * stat: opencode 没有单独的 stat endpoint, 复用 /api/fs/list 拿父目录 entries, 找 entry 拿 type.
+   *   优点: 不用 FsPty 跑 stat 命令 (interactive shell prompt/syntax highlight 干扰 stat 输出);
+   *         opencode 自己拿 type, 准
+   *   缺点: 多一次 list 请求; 但 explorer 先 readdir 后 stat, 命中缓存
    */
+  private listCache = new Map<string, FsEntry[]>();
+
   async meta(idePath: string): Promise<FileMeta> {
-    const ops = await this.ops();
-    const abs = absPath(idePath);
-    const { ok, output } = await getFsPty().exec(ops.stat(abs));
-    if (!ok || /MISSING/i.test(output)) throw new Error(`stat: not found ${idePath}`);
-    const m = output.trim().match(/^(.+?)\|(\d+)\|(\d+(?:\.\d+)?)$/m);
-    if (!m) {
-      // 兜底: 没拿到三段, 给一个默认
-      return { path: idePath, type: idePath.endsWith('/') ? 'directory' : 'file', size: 0 };
+    const norm = idePath === '/' ? '/' : idePath.replace(/\/+$/, '');
+    const base = norm.includes('/') ? norm.slice(0, norm.lastIndexOf('/')) || '/' : '/';
+    const name = norm === '/' ? '' : norm.slice(norm.lastIndexOf('/') + 1);
+
+    // 缓存命中 (readdir 已经拿过)
+    const cached = this.listCache.get(base);
+    let entry: FsEntry | undefined;
+    if (cached) {
+      entry = cached.find((e) => e.name === name);
     }
-    const type = /directory|dir/i.test(m[1]) ? 'directory' : 'file';
-    const size = parseInt(m[2], 10) || 0;
-    const mtime = new Date(parseFloat(m[3]) * 1000).toISOString();
-    return { path: idePath, type, size, mtime };
+    // 未命中: list 父目录一次 (注意: 这次 list 会顺便回填缓存)
+    if (!entry) {
+      const entries = await this.list(base);
+      this.listCache.set(base, entries);
+      entry = entries.find((e) => e.name === name);
+    }
+    if (!entry) throw new Error(`stat: not found ${idePath}`);
+    return { path: idePath, type: entry.type, size: 0 };
   }
 
   async read(idePath: string): Promise<string> {
@@ -390,25 +402,40 @@ export class FileSystemServiceImpl implements IFileSystem {
     const abs = absPath(idePath);
     const b64 = typeof content === 'string' ? bytesToBase64(content) : content.base64;
     const { ok } = await getFsPty().exec(ops.writeFile(abs, b64));
+    if (ok) this.invalidateParent(idePath);
     return ok;
   }
 
   async rm(idePath: string): Promise<boolean> {
     const ops = await this.ops();
     const { ok } = await getFsPty().exec(ops.rm(absPath(idePath)));
+    if (ok) this.invalidateParent(idePath);
     return ok;
   }
 
   async mkdirp(idePath: string): Promise<boolean> {
     const ops = await this.ops();
     const { ok } = await getFsPty().exec(ops.mkdirp(absPath(idePath)));
+    if (ok) this.invalidateParent(idePath);
     return ok;
   }
 
   async move(from: string, to: string): Promise<boolean> {
     const ops = await this.ops();
     const { ok } = await getFsPty().exec(ops.move(absPath(from), absPath(to)));
+    if (ok) {
+      this.invalidateParent(from);
+      this.invalidateParent(to);
+    }
     return ok;
+  }
+
+  /** 文件树变化后: 清掉相关缓存 (自身 + 父目录) */
+  private invalidateParent(idePath: string): void {
+    const norm = idePath === '/' ? '/' : idePath.replace(/\/+$/, '');
+    this.listCache.delete(norm);
+    const parent = norm.includes('/') ? norm.slice(0, norm.lastIndexOf('/')) || '/' : '/';
+    this.listCache.delete(parent);
   }
 
   async find(idePath: string, pattern = '*'): Promise<string[]> {
