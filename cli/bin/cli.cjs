@@ -35,12 +35,18 @@ const tsxBin = path.join(root, 'node_modules', '.bin', 'tsx');
 const opencodeBin = path.join(cliDir, 'node_modules', '.bin', 'opencode');
 const cliEntry = path.join(cliDir, 'src', 'main.ts');  // cli/bin → cli/src/main.ts
 
-/** 缺啥装啥, idempotent; opencode 不锁版本 (PATH 有就用, 没有装 latest) */
+/** 缺啥装啥, idempotent; opencode/tsx 优先用 PATH 里用户全局装的 (任意版本, 不锁) */
 function ensureInstalled(label, cmd, args, cwd) {
   if (label === 'tsx' && fs.existsSync(tsxBin)) return;
+  if (label === 'tsx') {
+    // PATH 有 tsx (用户 npm i -g tsx) 也跳过本地装
+    if (spawnSync('which', ['tsx']).status === 0) {
+      console.log('[cli] 检测到 PATH tsx, 复用 (跳过安装)');
+      return;
+    }
+  }
   if (label === 'opencode') {
     if (fs.existsSync(opencodeBin)) return;
-    // PATH 里有 opencode (任意版本) 也跳过 — 用户自带 opencode-ai 全局装
     if (spawnSync('which', ['opencode']).status === 0) {
       console.log('[cli] 检测到 PATH opencode, 复用 (跳过安装)');
       return;
@@ -57,8 +63,8 @@ function ensureInstalled(label, cmd, args, cwd) {
   }
 }
 
-ensureInstalled('tsx', 'npm', ['install', '--no-save', '--prefer-offline', 'tsx@^4.23.12'], root);
-ensureInstalled('opencode', 'npm', ['install', '--no-save', '--prefer-offline', 'opencode-ai@latest'], cliDir);
+ensureInstalled('tsx', 'npm', ['install', '--no-save', '--prefer-offline', 'tsx'], root);
+ensureInstalled('opencode', 'npm', ['install', '--no-save', '--prefer-offline', 'opencode-ai'], cliDir);
 ensureInstalled('web', 'npm', ['install', '--prefer-offline'], webDir);
 
 const args = process.argv.slice(2);
