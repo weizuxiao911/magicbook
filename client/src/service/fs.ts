@@ -14,7 +14,7 @@ import { Injectable, Autowired } from '@opensumi/di';
 import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser';
 import { Domain, CommandService, FileChangeType, URI } from '@opensumi/ide-core-common';
 import { IFileServiceClient } from '@opensumi/ide-file-service/lib/common';
-import { WorkbenchEditorService, EditorOpenType } from '@opensumi/ide-editor';
+import { WorkbenchEditorService } from '@opensumi/ide-editor';
 import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 
 import type { FsEntry, FileMeta, IFileSystem } from '../core/commands/fs';
@@ -24,35 +24,6 @@ import { FsToken } from '../core/commands/fs';
 function fsBaseUrl(): string {
   const base = ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
   return base ? `${base}/fs` : '';
-}
-
-/** 从 registry metadata 构建 customEditor 映射: 文件扩展名 → viewType（如 {'.html':'htmlPreview', '.paper':'paperEditor'}） */
-function buildCustomEditorMap(): Record<string, string> {
-  const map: Record<string, string> = {};
-  const meta: any[] = (window as any).__APP_REGISTRY_METADATA__ || [];
-  for (const m of meta) {
-    const ces = m?.packageJSON?.contributes?.customEditors;
-    if (!Array.isArray(ces)) continue;
-    for (const ce of ces) {
-      const viewType = ce?.viewType;
-      if (typeof viewType !== 'string') continue;
-      for (const sel of Array.isArray(ce?.selector) ? ce.selector : []) {
-        const pat = sel?.filenamePattern;
-        if (typeof pat === 'string' && pat.startsWith('*.')) {
-          map[pat.slice(1)] = viewType; // '*.html' → '.html'
-        }
-      }
-    }
-  }
-  return map;
-}
-
-/** uri 匹配 customEditor → 返回 viewType（无匹配返回空） */
-function matchCustomEditor(uri: string, map: Record<string, string>): string {
-  for (const ext of Object.keys(map)) {
-    if (uri.endsWith(ext)) return map[ext];
-  }
-  return '';
 }
 
 /** 当前 cwd → base64 header 值 */
@@ -169,68 +140,20 @@ export class FileSystemServiceImpl implements IFileSystem {
             })
             .catch(() => {}),
         ),
-      ).then(async () => {
+      ).then(() => {
         if (alive.length !== uris.length) {
           localStorage.setItem('editor.restore.uris', JSON.stringify(alive));
           console.log('[filesystem] 恢复状态自愈:', uris.filter((u) => !alive.includes(u)), '已从持久化移除');
         }
+        // 激活上次的 tab（backend 只建容器, 这里 open 触发内容加载渲染）
         const target =
           activeUri && alive.includes(activeUri) && !activeUri.startsWith('welcome:')
             ? activeUri
             : alive[alive.length - 1];
-        // customEditor 文件（html/paper 等）: 恢复后强制以 customEditor 打开.
-        // backend 只建容器不触发扩展 resolve, 且 findSuitableOpenType 会沿用 prev 打开类型
-        // （html 曾被文本编辑器打开 → 恢复落回文本, webview 不渲染）; 用 forceOpenType 组件
-        // 强制 viewType → 触发扩展 resolve. 串行避免 tab 竞态.
-        const customEditorMap = buildCustomEditorMap();
-        // 非 target 的 customEditor 文件先逐个强制打开（target 单独走下面的 focus 激活,
-        // 避免对 target 多次 open 造成当前 tab 状态混乱 → 编辑区空白）
-        for (const uri of alive) {
-          if (uri === target) continue;
-          const viewType = matchCustomEditor(uri, customEditorMap);
-          if (!viewType) continue;
-          try {
-            await this.editorService.open(URI.parse(uri), {
-              forceOpenType: {
-                type: EditorOpenType.component,
-                componentId: `vscode_customEditor-${viewType}`,
-              },
-              preview: false,
-            } as any);
-            console.log('[filesystem] 恢复 customEditor 打开:', uri, '→', viewType);
-          } catch (e) {
-            console.warn('[filesystem] 恢复 customEditor 打开失败:', uri, e);
-          }
-        }
-        // 激活上次的 tab（backend 只建容器, 这里 open 触发内容加载渲染; customEditor 文件同样
-        // 带 forceOpenType, 避免 target open 又把之前 customEditor 打开覆盖回文本编辑器）
         if (target) {
-          const targetViewType = matchCustomEditor(target, customEditorMap);
           void this.editorService
-            .open(URI.parse(target), {
-              focus: true,
-              preview: false,
-              ...(targetViewType ? { forceOpenType: { type: EditorOpenType.component, componentId: `vscode_customEditor-${targetViewType}` } } : {}),
-            } as any)
-            .then(() => {
-              console.log('[filesystem] 恢复激活当前 tab:', target);
-              // target 是 customEditor 文件: 恢复时扩展可能尚未激活完成（组件渲染早于扩展
-              // activate → resolve 未执行, webview 不渲染）; 等扩展就绪后延迟重试触发渲染
-              if (targetViewType) {
-                [2000, 5000].forEach((delay) => {
-                  setTimeout(() => {
-                    void this.editorService
-                      .open(URI.parse(target), {
-                        focus: true,
-                        forceOpenType: { type: EditorOpenType.component, componentId: `vscode_customEditor-${targetViewType}` },
-                        preview: false,
-                      } as any)
-                      .then(() => console.log('[filesystem] 恢复 customEditor 重试激活:', target, '→', targetViewType))
-                      .catch(() => {});
-                  }, delay);
-                });
-              }
-            })
+            .open(URI.parse(target), { focus: true, preview: false })
+            .then(() => console.log('[filesystem] 恢复激活当前 tab:', target))
             .catch((e) => console.warn('[filesystem] 恢复激活失败:', target, e));
         }
       });
