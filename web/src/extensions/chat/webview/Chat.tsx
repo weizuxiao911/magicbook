@@ -694,9 +694,10 @@ export const Chat: React.FC = () => {
 
   const sendPrompt = useCallback(async (text: string, opts?: { files?: Array<{ name: string; path: string }>; images?: Array<{ name: string; path: string; dataUrl?: string }> }) => {
     const t = (text || '').trim();
-    if (!t || busy || !client) return;
     const images = opts?.images || [];
     const files = opts?.files || [];
+    // 纯文件/图片 (无文字) 也允许发送
+    if ((!t && !images.length && !files.length) || busy || !client) return;
     const attachNote = files.length
       ? '\n\n[已上传文件]\n' + files.map((a) => `- ${a.path}`).join('\n')
       : '';
@@ -1121,7 +1122,7 @@ export const Chat: React.FC = () => {
         });
         setUploadProgress((p) => ({ ...p, [path]: 1 }));
         setTimeout(() => setUploadProgress((p) => { const { [path]: _, ...rest } = p; return rest; }), 1000);
-        added.push({ name: f.name, path });
+        added.push({ name: path.replace(/^\//, ''), path });
       } catch (e) { setError(`上传 ${f.name} 失败: ${String((e as any)?.message || e)}`); }
     }
     if (added.length) setAttachments((prev) => [...prev, ...added]);
@@ -1171,7 +1172,7 @@ export const Chat: React.FC = () => {
             fr.readAsDataURL(f);
           });
         }
-        added.push({ name: f.name || path, path, dataUrl });
+        added.push({ name: path.replace(/^\//, ''), path, dataUrl });
       } catch (err) { setError(`粘贴文件失败: ${String((err as any)?.message || err)}`); }
     }
     if (added.length) setAttachments((prev) => [...prev, ...added]);
