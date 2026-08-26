@@ -1,86 +1,35 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="512" height="512">
-  <defs>
-    <!-- 牛头 (暖棕) -->
-    <radialGradient id="cow-face" cx="40%" cy="30%" r="70%">
-      <stop offset="0%" stop-color="#fbbf24"/>
-      <stop offset="100%" stop-color="#92400e"/>
-    </radialGradient>
-    <!-- 马面 (深棕, 长脸) -->
-    <radialGradient id="horse-face" cx="40%" cy="30%" r="70%">
-      <stop offset="0%" stop-color="#a16207"/>
-      <stop offset="100%" stop-color="#451a03"/>
-    </radialGradient>
-    <!-- 蓝长袍 -->
-    <linearGradient id="robe" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#3b82f6"/>
-      <stop offset="100%" stop-color="#1e3a8a"/>
-    </linearGradient>
-  </defs>
+  <!-- 牛脸: 上弧 (额头) + Y (脸下半: 两角 + 鼻梁) -->
 
-  <!-- ============== 牛头 (左) ============== -->
-  <!-- 身体 (蓝长袍, 圆胖) -->
-  <ellipse cx="18" cy="48" rx="11" ry="12" fill="url(#robe)" stroke="#1e3a8a" stroke-width="0.5"/>
-  <!-- 头 (牛头) -->
-  <ellipse cx="18" cy="28" rx="9" ry="10" fill="url(#cow-face)" stroke="#451a03" stroke-width="0.8"/>
-  <!-- 牛角 (大, 弯) -->
-  <path d="M10 22 Q6 14 10 12 Q14 14 14 22 Z" fill="#451a03" stroke="#1c0701" stroke-width="0.6"/>
-  <path d="M26 22 Q30 14 26 12 Q22 14 22 22 Z" fill="#451a03" stroke="#1c0701" stroke-width="0.6"/>
-  <!-- 牛耳 -->
-  <ellipse cx="9" cy="28" rx="2" ry="2.5" fill="#92400e" transform="rotate(-15 9 28)"/>
-  <ellipse cx="27" cy="28" rx="2" ry="2.5" fill="#92400e" transform="rotate(15 27 28)"/>
-  <!-- 眼 (小圆) -->
-  <circle cx="14" cy="28" r="1.2" fill="#1b1140"/>
-  <circle cx="22" cy="28" r="1.2" fill="#1b1140"/>
-  <circle cx="14.3" cy="27.7" r="0.4" fill="#fff"/>
-  <circle cx="22.3" cy="27.7" r="0.4" fill="#fff"/>
-  <!-- 鼻 (大, 牛特征) -->
-  <ellipse cx="18" cy="34" rx="4" ry="2.5" fill="#92400e" stroke="#451a03" stroke-width="0.5"/>
-  <ellipse cx="16" cy="34" rx="0.6" ry="0.9" fill="#1b1140"/>
-  <ellipse cx="20" cy="34" rx="0.6" ry="0.9" fill="#1b1140"/>
+  <!-- 上弧 (大圆弧, 牛脸额头) -->
+  <path d="M 8 38 Q 8 8 32 8 Q 56 8 56 38" fill="#fbbf24" stroke="#451a03" stroke-width="3" stroke-linejoin="round"/>
+
+  <!-- Y 字 (两臂 = 牛角 + 竖 = 鼻梁) -->
+  <!-- 左臂 (左牛角) -->
+  <path d="M 14 36 L 20 36 L 28 50 L 30 50 L 26 56 L 24 50 L 14 36 Z" fill="#451a03" stroke="#1c0701" stroke-width="1" stroke-linejoin="round"/>
+  <!-- 右臂 (右牛角) -->
+  <path d="M 50 36 L 44 36 L 36 50 L 34 50 L 38 56 L 40 50 L 50 36 Z" fill="#451a03" stroke="#1c0701" stroke-width="1" stroke-linejoin="round"/>
+  <!-- 竖 (鼻梁) -->
+  <rect x="30" y="36" width="4" height="22" fill="#451a03" stroke="#1c0701" stroke-width="0.8"/>
+
+  <!-- 眼 (鼻梁两侧 2 个点, 大圆白眼 + 黑瞳 + 高光) -->
+  <circle cx="20" cy="30" r="5" fill="#ffffff" stroke="#451a03" stroke-width="1.2"/>
+  <circle cx="20" cy="30" r="2.5" fill="#1b1140"/>
+  <circle cx="18.5" cy="28.5" r="1.2" fill="#ffffff"/>
+
+  <circle cx="44" cy="30" r="5" fill="#ffffff" stroke="#451a03" stroke-width="1.2"/>
+  <circle cx="44" cy="30" r="2.5" fill="#1b1140"/>
+  <circle cx="42.5" cy="28.5" r="1.2" fill="#ffffff"/>
+
+  <!-- 腮红 (粉, 装饰) -->
+  <ellipse cx="14" cy="44" rx="3" ry="2" fill="#fb7185" opacity="0.5"/>
+  <ellipse cx="50" cy="44" rx="3" ry="2" fill="#fb7185" opacity="0.5"/>
+
+  <!-- 鼻底 (小横线) -->
+  <ellipse cx="32" cy="50" rx="3" ry="1.5" fill="#fda4af" stroke="#9f1239" stroke-width="0.6"/>
+  <ellipse cx="30.5" cy="50" rx="0.4" ry="0.6" fill="#1b1140"/>
+  <ellipse cx="33.5" cy="50" rx="0.4" ry="0.6" fill="#1b1140"/>
+
   <!-- 嘴 (微笑) -->
-  <path d="M16 37 Q18 38 20 37" stroke="#1c0701" stroke-width="0.8" fill="none" stroke-linecap="round"/>
-  <!-- 手 (左, 持令牌) -->
-  <ellipse cx="27" cy="42" rx="2.5" ry="3.5" fill="url(#robe)" stroke="#1e3a8a" stroke-width="0.4"/>
-  <!-- 令牌 (白, 牛头标识) -->
-  <rect x="28" y="34" width="3" height="8" rx="0.5" fill="#fef3c7" stroke="#451a03" stroke-width="0.4"/>
-  <line x1="29.5" y1="34" x2="29.5" y2="42" stroke="#451a03" stroke-width="0.3"/>
-  <line x1="28" y1="38" x2="31" y2="38" stroke="#451a03" stroke-width="0.3"/>
-
-  <!-- ============== 马面 (右) ============== -->
-  <!-- 身体 (蓝长袍) -->
-  <ellipse cx="46" cy="48" rx="11" ry="12" fill="url(#robe)" stroke="#1e3a8a" stroke-width="0.5"/>
-  <!-- 头 (马面, 长脸) -->
-  <ellipse cx="46" cy="30" rx="8" ry="11" fill="url(#horse-face)" stroke="#1c0701" stroke-width="0.8"/>
-  <!-- 马耳 (长尖, 顶部) -->
-  <path d="M38 22 L36 14 L42 20 Z" fill="#a16207" stroke="#451a03" stroke-width="0.6"/>
-  <path d="M54 22 L56 14 L50 20 Z" fill="#a16207" stroke="#451a03" stroke-width="0.6"/>
-  <!-- 马鬃 (头顶, 短粗) -->
-  <path d="M40 19 L42 16 L44 19 L46 16 L48 19 L50 16 L52 19" stroke="#451a03" stroke-width="1.5" fill="none"/>
-  <!-- 眼 (马, 小圆, 靠两侧) -->
-  <circle cx="42" cy="28" r="1.2" fill="#1b1140"/>
-  <circle cx="50" cy="28" r="1.2" fill="#1b1140"/>
-  <circle cx="42.3" cy="27.7" r="0.4" fill="#fff"/>
-  <circle cx="50.3" cy="27.7" r="0.4" fill="#fff"/>
-  <!-- 马鼻 (长, 大, 嘴突出) -->
-  <ellipse cx="46" cy="36" rx="3" ry="4" fill="#a16207" stroke="#451a03" stroke-width="0.5"/>
-  <!-- 鼻孔 -->
-  <ellipse cx="45" cy="35" rx="0.5" ry="0.7" fill="#1b1140"/>
-  <ellipse cx="47" cy="35" rx="0.5" ry="0.7" fill="#1b1140"/>
-  <!-- 嘴 (平) -->
-  <path d="M44 39 Q46 40 48 39" stroke="#1c0701" stroke-width="0.8" fill="none" stroke-linecap="round"/>
-  <!-- 手 (右, 持锁链) -->
-  <ellipse cx="37" cy="42" rx="2.5" ry="3.5" fill="url(#robe)" stroke="#1e3a8a" stroke-width="0.4"/>
-  <!-- 锁链 (圆环) -->
-  <circle cx="35" cy="44" r="1.5" fill="none" stroke="#451a03" stroke-width="0.8"/>
-  <line x1="35" y1="46" x2="35" y2="52" stroke="#451a03" stroke-width="0.6"/>
-  <circle cx="35" cy="53" r="1" fill="none" stroke="#451a03" stroke-width="0.6"/>
-
-  <!-- 标签 (红章) -->
-  <ellipse cx="4" cy="38" rx="3" ry="6" fill="#dc2626" stroke="#7f1d1d" stroke-width="0.4"/>
-  <text x="4" y="36" font-family="serif" font-size="3.5" font-weight="900" text-anchor="middle" fill="#fef3c7">牛</text>
-  <text x="4" y="41" font-family="serif" font-size="3.5" font-weight="900" text-anchor="middle" fill="#fef3c7">头</text>
-
-  <ellipse cx="60" cy="38" rx="3" ry="6" fill="#dc2626" stroke="#7f1d1d" stroke-width="0.4"/>
-  <text x="60" y="36" font-family="serif" font-size="3.5" font-weight="900" text-anchor="middle" fill="#fef3c7">马</text>
-  <text x="60" y="41" font-family="serif" font-size="3.5" font-weight="900" text-anchor="middle" fill="#fef3c7">面</text>
+  <path d="M 28 56 Q 32 58 36 56" stroke="#451a03" stroke-width="1.5" fill="none" stroke-linecap="round"/>
 </svg>
