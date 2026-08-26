@@ -474,3 +474,18 @@ export async function aiDisconnectProvider(providerID: string): Promise<void> {
   const { error } = await (client as any).auth.remove({ providerID });
   if (error) throw error;
 }
+
+/** opencode 全局 config — 含 model/username/provider 等. 失败抛错让调用方降级 */
+export interface OpencodeConfig {
+  model?: string;
+  username?: string;
+  provider?: Record<string, any>;
+  [k: string]: any;
+}
+export async function aiGetConfig(): Promise<OpencodeConfig> {
+  const res = await fetch(buildOpencodeUrl('/config'), {
+    headers: { Accept: 'application/json' },
+  });
+  if (!res.ok) throw new Error(`GET /config failed: HTTP ${res.status}`);
+  return res.json() as Promise<OpencodeConfig>;
+}

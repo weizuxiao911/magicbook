@@ -18,6 +18,7 @@ import {
   aiReplyPermission,
   aiListModels,
   aiListProviders,
+  aiGetConfig,
   getAiClient,
 } from '@/extensions/chat/commands/api';
 import { modelPrefs } from '@/extensions/chat/commands/modelPrefs';
@@ -232,18 +233,37 @@ export const Chat: React.FC = () => {
       const m = await aiListModels();
       setModels(m || []);
       if (m?.length) {
+        // 读 opencode 全局默认 model (用户在 ~/.config/opencode/opencode.json 的 "model" 字段)
+        // 失败不致命, 走原 fallback
+        let globalDefault = '';
+        let globalDefaultProvider = '';
+        try {
+          const cfg = await aiGetConfig();
+          const mid = (cfg.model || '').split('/').pop() || '';
+          const pid = (cfg.model || '').split('/')[0] || '';
+          if (mid) { globalDefault = mid; globalDefaultProvider = pid; }
+        } catch { /* ignore */ }
+
         // 只在 currentModel 未设置 OR 不在 models 列表时才 fallback,
         // 避免覆盖 session sync (applySessionToUI) 写入的真实 model
         setCurrentModel((cur) => {
           if (cur && m.find((x: any) => x.id === cur)) return cur;
           const prefs = modelPrefs.get();
-          // 优先按 default + defaultProvider 精确定位 (同名模型跨 provider)
+          // 1. modelPrefs.default (用户本地的 chat 默认)
           if (prefs.default) {
             const def = m.find((x: any) => x.id === prefs.default && x.providerID === prefs.defaultProvider);
             if (def) return def.id;
             const anyProvider = m.find((x: any) => x.id === prefs.default);
             if (anyProvider) return anyProvider.id;
           }
+          // 2. opencode 全局 config.model (用户在 ~/.config/opencode/opencode.json 配的)
+          if (globalDefault) {
+            const def = m.find((x: any) => x.id === globalDefault && x.providerID === globalDefaultProvider);
+            if (def) return def.id;
+            const anyProvider = m.find((x: any) => x.id === globalDefault);
+            if (anyProvider) return anyProvider.id;
+          }
+          // 3. 兜底: 列表第一个
           return m[0].id;
         });
         // 同步推导 currentProvider: 优先用 currentProvider 对应 model,
@@ -255,7 +275,15 @@ export const Chat: React.FC = () => {
             const def = m.find((x: any) => x.id === prefs.default && x.providerID === prefs.defaultProvider);
             if (def) return def.providerID;
           }
-          const target = prefs.default ? m.find((x: any) => x.id === prefs.default) : m[0];
+          if (globalDefaultProvider) {
+            const def = m.find((x: any) => x.id === globalDefault && x.providerID === globalDefaultProvider);
+            if (def) return def.providerID;
+          }
+          const target = prefs.default
+            ? m.find((x: any) => x.id === prefs.default)
+            : globalDefault
+              ? m.find((x: any) => x.id === globalDefault)
+              : m[0];
           return target?.providerID || curP;
         });
       }
