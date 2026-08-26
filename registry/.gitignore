@@ -1,5 +1,3 @@
-# 运行时产物: vsix 包 / 解压 dist / 自签证书（部署时重新生成）
-vsix/
+
 dist/
 certs/
-*.vsix

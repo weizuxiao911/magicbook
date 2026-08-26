@@ -5,6 +5,11 @@
   overflow: hidden;
 }
 
+/* 隐藏 tab 栏 "打开方式" 按钮 (opensumi 内置 EditorTitle 菜单, id=editor/openType/submenu) */
+[id="editor/openType/submenu"] {
+  display: none !important;
+}
+
 [class*="kt_editor_component_wrapper___"] {
   border-radius: 0;
   overflow: hidden;

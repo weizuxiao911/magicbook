@@ -4,8 +4,13 @@ node_modules/
 # 构建产物
 dist/
 out/
-*.vsix
 .webpack-cache/
+
+# 单个 vsix 产物 (extensions/*/dist/*.vsix) — 跟 registry/vsix 区分
+*.vsix
+!registry/vsix/*.vsix
+extensions/*/dist/*.vsix
+extensions/*/*.vsix
 
 # 环境配置（仅 .env.example 提交到 git，其它 gitignore）
 .env
@@ -39,3 +44,4 @@ client/.env.production
 .vscode/
 .playwright-mcp/
 .userData/registry/certs/
+*.tsbuildinfo

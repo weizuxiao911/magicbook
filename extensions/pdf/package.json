@@ -1,0 +1,51 @@
+{
+  "name": "pdf",
+  "displayName": "PDF Viewer",
+  "description": "PDF 阅读器 (customEditor + webview 用 pdfjs-dist 渲染 .pdf, 支持滚动/缩放/页码跳转)",
+  "version": "0.1.0",
+  "publisher": "weizuxiao911",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "pdfViewer",
+        "displayName": "PDF Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.pdf"
+          }
+        ],
+        "priority": "default"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "compile:bundle": "node esbuild.config.mjs",
+    "clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\"",
+    "build:webview": "npm --prefix webview run build",
+    "build": "npm run clean && npm run build:webview && npm run compile:bundle",
+    "watch": "tsc -w -p ."
+  },
+  "dependencies": {
+    "pdfjs-dist": "^4.10.38"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/vscode": "^1.75.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.7.2"
+  },
+  "browser": "./dist/extension.js",
+  "license": "MIT"
+}

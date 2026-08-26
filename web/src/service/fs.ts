@@ -393,6 +393,44 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   /**
+   * 二进制读 (无损): 直接 fetch opencode /api/fs/read + arrayBuffer.
+   * 不走 PTY base64 (二进制经 UTF-8 解码会破坏), 跟 animbook 一致.
+   * relPath: 相对 workspace 的路径 (如 '数据结构.pdf'), 兼容 '/xxx' 前缀.
+   */
+  async readBinaryAbsolute(relPath: string, opts?: { signal?: AbortSignal; onProgress?: (l: number, t: number) => void }): Promise<Uint8Array> {
+    const base = appBaseUrl();
+    if (!base) throw new Error('fs readBinaryAbsolute: base url not ready');
+    const parts = relPath.split('/').filter(Boolean);
+    const name = parts.pop() || '';
+    if (!name) throw new Error(`fs readBinaryAbsolute: empty name ${relPath}`);
+    const dir = parts.join('/');
+    const url = `${base}/api/fs/read/${encodeURIComponent(name)}?directory=${encodeURIComponent(dir)}`;
+    const res = await fetch(url, { headers: { ...cwdHeader() }, signal: opts?.signal });
+    if (!res.ok) throw new Error(`fs readBinaryAbsolute: HTTP ${res.status}`);
+    if (!res.body) {
+      const buf = await res.arrayBuffer();
+      opts?.onProgress?.(buf.byteLength, buf.byteLength);
+      return new Uint8Array(buf);
+    }
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let loaded = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        loaded += value.byteLength;
+        opts?.onProgress?.(loaded, loaded);
+      }
+    }
+    const out = new Uint8Array(loaded);
+    let off = 0;
+    for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+    return out;
+  }
+
+  /**
    * 写文件: base64 内容通过 FsPty 写到绝对路径, 父目录自动 mkdir -p.
    *   大文件分块: 每块 ≤ CHUNK_BYTES, 多次 exec 追加.
    *   超时: 5s 基础, 大文件按 KB 比例放宽 (上限 60s).
