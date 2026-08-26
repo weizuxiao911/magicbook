@@ -24,6 +24,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
+const IS_WIN = process.platform === 'win32';
+
 // ---- 解析子命令 ----
 const args = process.argv.slice(2);
 const subcommand = args[0];
@@ -63,32 +65,38 @@ const REGISTRY_PORT = 7790;
 
 // ---- 启动前清理: 同端口的残留进程 ----
 async function cleanupOrphans(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    const cmd = `lsof -ti tcp:${PORT} 2>/dev/null | xargs -r kill -9; pgrep -f "opencode serve" | xargs -r kill -9 2>/dev/null`;
-    spawn('sh', ['-c', cmd], { stdio: 'ignore' }).on('exit', () => resolve());
-  });
+  const isWin = process.platform === 'win32';
+  // Windows: netstat + taskkill; POSIX: lsof + pkill
+  const runCleanup = (port: number, namePattern: string): Promise<void> =>
+    new Promise<void>((resolve) => {
+      let cmd: string;
+      if (isWin) {
+        cmd =
+          `netstat -ano | findstr :${port} | findstr LISTENING | for /f "tokens=5" %a in ('more') do taskkill /PID %a /T /F 2>NUL` +
+          `& powershell -NoProfile -Command "Get-Process | Where-Object {$_.ProcessName -like '*${namePattern}*'} | Stop-Process -Force -ErrorAction SilentlyContinue"`;
+        spawn('cmd', ['/c', cmd], { stdio: 'ignore', windowsHide: true }).on('exit', () => resolve());
+      } else {
+        cmd = `lsof -ti tcp:${port} 2>/dev/null | xargs -r kill -9; pgrep -f "${namePattern}" | xargs -r kill -9 2>/dev/null`;
+        spawn('sh', ['-c', cmd], { stdio: 'ignore' }).on('exit', () => resolve());
+      }
+    });
+  await runCleanup(PORT, 'opencode serve');
   if (mode === 'web') {
-    await new Promise<void>((resolve) => {
-      const cmd = `lsof -ti tcp:${CLIENT_PORT} 2>/dev/null | xargs -r kill -9; pgrep -f "webpack-dev-server" | xargs -r kill -9 2>/dev/null`;
-      spawn('sh', ['-c', cmd], { stdio: 'ignore' }).on('exit', () => resolve());
-    });
-    await new Promise<void>((resolve) => {
-      const cmd = `lsof -ti tcp:${REGISTRY_PORT} 2>/dev/null | xargs -r kill -9; pgrep -f "registry-server\\|src/server.ts" | xargs -r kill -9 2>/dev/null`;
-      spawn('sh', ['-c', cmd], { stdio: 'ignore' }).on('exit', () => resolve());
-    });
+    await runCleanup(CLIENT_PORT, 'webpack');
+    await runCleanup(REGISTRY_PORT, 'registry-server');
   }
 }
 
 // ---- 子进程: opencode serve (优先 cli/node_modules/.bin/opencode, 兜底 PATH 里的 opencode) ----
 function spawnOpencode(): ChildProcess {
   console.log(`[cli] 启动 opencode serve (透传参数: ${restArgs.join(' ') || '(无)'})...`);
-  const localBin = join(__dirname, '..', 'node_modules', '.bin', 'opencode');
+  const localBin = join(__dirname, '..', 'node_modules', '.bin', IS_WIN ? 'opencode.cmd' : 'opencode');
   let cmd: string;
   let cmdArgs: string[];
   if (existsSync(localBin)) {
     cmd = localBin;
     cmdArgs = ['serve', ...restArgs];
-  } else if (spawnSync('which', ['opencode']).status === 0) {
+  } else if (spawnSync(IS_WIN ? 'where' : 'which', ['opencode']).status === 0) {
     // PATH 有 opencode, 复用 (任意版本, 不锁)
     cmd = 'opencode';
     cmdArgs = ['serve', ...restArgs];
@@ -98,8 +106,9 @@ function spawnOpencode(): ChildProcess {
   }
   const child = spawn(cmd, cmdArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
+    detached: !IS_WIN,
     env: process.env,
+    windowsHide: true,
   });
   pipeLines(child, 'opencode');
   return child;
@@ -111,10 +120,11 @@ function spawnClient(): ChildProcess {
   const webDir = resolve(__dirname, '../../web');
   console.log(`[cli] 启动 web (webpack-dev-server, cwd: ${webDir})...`);
   // 直接调 npm 走 web 的 dev 脚本（dev 内部是 webpack-dev-server）
-  const child = spawn('npm', ['--prefix', webDir, 'run', 'dev'], {
+  const child = spawn(IS_WIN ? 'npm.cmd' : 'npm', ['--prefix', webDir, 'run', 'dev'], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
+    detached: !IS_WIN,
     env: process.env,
+    windowsHide: true,
   });
   pipeLines(child, 'web');
   return child;
@@ -129,8 +139,9 @@ function spawnRegistry(): ChildProcess {
   const child = spawn('node', ['src/server.js'], {
     cwd: registryDir,
     stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
+    detached: !IS_WIN,
     env: { ...process.env, PORT: String(REGISTRY_PORT) },
+    windowsHide: true,
   });
   pipeLines(child, 'registry');
   return child;
@@ -152,6 +163,15 @@ function pipeLines(child: ChildProcess, name: string): void {
 }
 
 // ---- 退出跟踪: 任一子进程退出 → 包装也退出 ----
+/** 杀子进程 (Windows: taskkill /T; POSIX: 负 pid 进程组) */
+function killProcess(child: ChildProcess, sig: NodeJS.Signals = 'SIGKILL'): void {
+  if (IS_WIN) {
+    spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  } else {
+    try { process.kill(-child.pid!, sig); } catch { try { child.kill(sig); } catch { /* ignore */ } }
+  }
+}
+
 function trackExit(child: ChildProcess, name: string, peers: ChildProcess[]): void {
   child.on('exit', (code, signal) => {
     if (signal) {
@@ -161,7 +181,7 @@ function trackExit(child: ChildProcess, name: string, peers: ChildProcess[]): vo
     }
     // 兄弟进程: 一起带走（避免半挂状态）
     for (const p of peers) {
-      try { process.kill(-p.pid!, 'SIGKILL'); } catch { /* ignore */ }
+      killProcess(p);
     }
     process.exit(signal ? 1 : (code ?? 0));
   });
@@ -172,11 +192,7 @@ function installSignalHandlers(children: ChildProcess[]): void {
   const killAll = (sig: NodeJS.Signals) => {
     console.log(`\n[cli] 收到 ${sig}, 清理所有子进程组...`);
     for (const child of children) {
-      try {
-        process.kill(-child.pid!, sig);
-      } catch {
-        try { child.kill(sig); } catch { /* ignore */ }
-      }
+      killProcess(child, sig);
     }
   };
   process.on('SIGINT', killAll);

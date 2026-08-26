@@ -33,23 +33,42 @@ const webDir = path.join(root, 'web');
 const registryDir = path.join(root, 'registry');
 const REGISTRY_PORT = 7790;
 
-const tsxBin = path.join(root, 'node_modules', '.bin', 'tsx');
-const opencodeBin = path.join(cliDir, 'node_modules', '.bin', 'opencode');
+const tsxBin = path.join(root, 'node_modules', '.bin', isWin() ? 'tsx.cmd' : 'tsx');
+const opencodeBin = path.join(cliDir, 'node_modules', '.bin', isWin() ? 'opencode.cmd' : 'opencode');
 const cliEntry = path.join(cliDir, 'src', 'main.ts');  // cli/bin → cli/src/main.ts
 
 /** 缺啥装啥, idempotent; opencode/tsx 优先用 PATH 里用户全局装的 (任意版本, 不锁) */
+function isWin() {
+  return process.platform === 'win32';
+}
+
+/** 跨平台 sleep (win: powershell, posix: sleep) */
+function sleepSec(sec) {
+  if (isWin()) {
+    spawnSync('powershell', ['-NoProfile', '-Command', `Start-Sleep -Seconds ${sec}`]);
+  } else {
+    spawnSync('sleep', [String(sec)]);
+  }
+}
+
+/** 跨平台 which (win: where, posix: which) */
+function whichCmd(cmd) {
+  if (isWin()) return spawnSync('where', [cmd]).status === 0;
+  return spawnSync('which', [cmd]).status === 0;
+}
+
 function ensureInstalled(label, cmd, args, cwd) {
   if (label === 'tsx' && fs.existsSync(tsxBin)) return;
   if (label === 'tsx') {
     // PATH 有 tsx (用户 npm i -g tsx) 也跳过本地装
-    if (spawnSync('which', ['tsx']).status === 0) {
+    if (whichCmd('tsx')) {
       console.log('[cli] 检测到 PATH tsx, 复用 (跳过安装)');
       return;
     }
   }
   if (label === 'opencode') {
     if (fs.existsSync(opencodeBin)) return;
-    if (spawnSync('which', ['opencode']).status === 0) {
+    if (whichCmd('opencode')) {
       console.log('[cli] 检测到 PATH opencode, 复用 (跳过安装)');
       return;
     }
@@ -65,11 +84,11 @@ function ensureInstalled(label, cmd, args, cwd) {
   // 网络抖动重试 2 次 (registry 抽风, ECONNRESET 等)
   let r;
   for (let attempt = 1; attempt <= 3; attempt++) {
-    r = spawnSync(cmd, args, { cwd, stdio: 'inherit' });
+    r = spawnSync(cmd, args, { cwd, stdio: 'inherit', shell: isWin() });
     if (r.status === 0) break;
     if (attempt < 3) {
       console.warn(`[cli] ${label} 安装失败 (尝试 ${attempt}/3), 等 3s 重试...`);
-      spawnSync('sleep', ['3']);
+      sleepSec(3);
     }
   }
   if (r.status !== 0) {
@@ -82,8 +101,12 @@ function ensureInstalled(label, cmd, args, cwd) {
 
 ensureInstalled('tsx', 'npm', ['install', '--no-save', '--prefer-offline', 'tsx'], root);
 ensureInstalled('opencode', 'npm', ['install', '--no-save', '--prefer-offline', 'opencode-ai'], cliDir);
-ensureInstalled('web', 'npm', ['run', 'build:config', '--include=dev', '--prefer-offline'], webDir);
-ensureInstalled('registry', 'npm', ['run', 'build:config', '--include=dev', '--prefer-offline'], registryDir);
+// web/registry: 先 npm install 装 deps (含 dev), 再 build:config 编译配置
+ensureInstalled('web', 'npm', ['install', '--include=dev', '--prefer-offline'], webDir);
+ensureInstalled('registry', 'npm', ['install', '--include=dev', '--prefer-offline'], registryDir);
+// 配置预编译 (webpack.config.ts / server.ts → JS, 运行时不需要 tsx 编译 ts 配置)
+runNpmScript(webDir, 'build:config');
+runNpmScript(registryDir, 'build:config');
 
 const args = process.argv.slice(2);
 if (args.length === 0) args.push('web'); // 默认 web 模式
@@ -117,10 +140,21 @@ process.env.REGISTRY_BASE_URL = process.env.REGISTRY_BASE_URL || `http://${hostn
 // spawn 决策: 优先本地 node_modules/.bin/tsx (保证版本一致), 否则用 PATH 的 tsx (用户全局装)
 const useLocalTsx = fs.existsSync(tsxBin);
 const tsxCmd = useLocalTsx ? tsxBin : 'tsx';
-if (!useLocalTsx && spawnSync('which', ['tsx']).status !== 0) {
+if (!useLocalTsx && !whichCmd('tsx')) {
   console.error('[cli] 找不到 tsx; 请 npm i -g tsx');
   process.exit(1);
 }
+
+// build:config 预编译 (webpack.config.ts / server.ts → JS), 跨平台 npm
+function runNpmScript(cwd, script) {
+  const r = spawnSync(isWin() ? 'npm.cmd' : 'npm', ['run', script], { cwd, stdio: 'inherit', shell: isWin() });
+  if (r.status !== 0) {
+    console.error(`[cli] ${script} 失败 (status=${r.status})`);
+    process.exit(1);
+  }
+}
+runNpmScript(webDir, 'build:config');
+runNpmScript(registryDir, 'build:config');
 
 const child = spawn(tsxCmd, [cliEntry, ...args], {
   stdio: 'inherit',

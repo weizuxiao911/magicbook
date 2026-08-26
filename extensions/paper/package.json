@@ -1,7 +1,7 @@
 {
   "name": "paper",
   "displayName": "Paper",
-  "description": "试卷/题目预览（customEditor + webview 渲染 .paper, 复刻 yunyan-paper-web）",
+  "description": "试卷/题目预览 (customEditor + 简单 HTML webview 渲染 .paper, 刷新可重载)",
   "version": "0.1.0",
   "publisher": "weizuxiao911",
   "engines": {
@@ -11,6 +11,7 @@
     "Other"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onCustomEditor:paperEditor",
     "onCommand:paper.saveToLibrary"
   ],
@@ -28,23 +29,6 @@
         "priority": "default"
       }
     ],
-    "commands": [
-      {
-        "command": "paper.saveToLibrary",
-        "title": "存入试卷库",
-        "category": "Paper",
-        "icon": "$(save)"
-      }
-    ],
-    "menus": {
-      "editor/title": [
-        {
-          "command": "paper.saveToLibrary",
-          "when": "editorLangId == paperEditor || resourceExtname == .paper",
-          "group": "navigation"
-        }
-      ]
-    },
     "languages": [
       {
         "id": "paper",
@@ -58,20 +42,11 @@
     ]
   },
   "scripts": {
-    "compile": "tsc -p .",
-    "compile:bundle": "node esbuild.config.mjs",
     "clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\"",
-    "build:webview": "npm --prefix webview run build",
-    "build": "npm run clean && npm run build:webview && npm run compile:bundle",
-    "watch": "tsc -w -p ."
-  },
-  "dependencies": {
-    "js-yaml": "^5.2.1",
-    "markdown-it": "^14.1.0"
+    "compile:bundle": "node esbuild.config.mjs",
+    "build": "npm run clean && npm run compile:bundle"
   },
   "devDependencies": {
-    "@types/js-yaml": "^4.0.9",
-    "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.10.1",
     "@types/vscode": "^1.75.0",
     "@vscode/vsce": "^3.9.2",

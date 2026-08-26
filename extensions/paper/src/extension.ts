@@ -1,72 +1,153 @@
 import * as vscode from 'vscode'
+import { resolvePaperFromContent } from './paperFileService'
 
-import { PAPER_CUSTOM_EDITOR_VIEW_TYPE, PaperCustomEditorProvider } from './panels/PaperCustomEditorProvider'
-import { initConfig } from './services/config'
-import { resolvePaperFromContent } from './services/paperFileService'
-import { savePaper } from './services/paperService'
-import { getPluginConfig } from './services/config'
-import { normalizeQuestionForSave } from './utils/transform'
+export const PAPER_CUSTOM_EDITOR_VIEW_TYPE = 'paperEditor'
 
+/**
+ * 试卷阅读器扩展 (.paper → 直接 HTML webview, 不用 vite)
+ *
+ * 刷新恢复:
+ *   - onStartupFinished 启动即激活 (provider 先注册, 恢复 tab 能 resolve)
+ *   - resolve 读 .paper → 解析 → HTML 展示; document 空 → fs 兜底 + 延迟重试
+ *   - self-heal: 激活后延迟检查打开中的 .paper tab (textDocuments + tabGroups),
+ *     未 resolve 则 openWith 重开触发渲染
+ */
 export function activate(context: vscode.ExtensionContext) {
-  // 初始化 YAML 配置路径（/app/.env 或扩展目录下 app/.env）
-  initConfig(context.extensionPath)
+  console.log('[paper] activate')
 
-  const customEditorDisposable = vscode.window.registerCustomEditorProvider(
-    PAPER_CUSTOM_EDITOR_VIEW_TYPE,
-    new PaperCustomEditorProvider(context),
-    {
-      webviewOptions: {
-        retainContextWhenHidden: true
-      },
-      supportsMultipleEditorsPerDocument: false
-    }
-  )
-  context.subscriptions.push(customEditorDisposable)
-  // 全局监听激活资源切换 → 激活 paper 视图时重发数据 (兜底恢复/切换后内容未加载)
-  context.subscriptions.push(PaperCustomEditorProvider.ensureActivationReloadListener())
+  const panels = new Map<string, vscode.WebviewPanel>()
 
-  // 刷新恢复自愈: 页面刷新后 DOM 销毁重建, 框架可能不重新触发 resolve
-  // (custom editor webview 恢复依赖扩展 worker 激活, 激活晚于编辑器恢复).
-  // 扩展激活后延迟检查: 已打开但未 resolve 的 .paper 文档 → 主动重新打开
-  // 触发框架重新 resolve → webview 重新加载内容.
-  context.subscriptions.push(
-    PaperCustomEditorProvider.createRestoreSelfHeal(context)
-  )
+  const provider: vscode.CustomTextEditorProvider = {
+    async resolveCustomTextEditor(document, webviewPanel, _token) {
+      console.log('[paper] resolve:', document.uri.toString())
+      panels.set(document.uri.toString(), webviewPanel)
+      webviewPanel.webview.options = { enableScripts: true }
 
-  // tab 栏 action: 存入试卷库 — 直接读当前 paper 文档内容保存 (不依赖 webview 渲染)
-  context.subscriptions.push(
-    vscode.commands.registerCommand('paper.saveToLibrary', async () => {
-      try {
-        // 找当前激活的 .paper 文档 (custom editor 的 document)
-        const editorDoc = vscode.window.activeTextEditor?.document
-        const paperDoc =
-          editorDoc?.uri.path.endsWith('.paper')
-            ? editorDoc
-            : vscode.workspace.textDocuments.find((d) => d.uri.path.endsWith('.paper'))
-        if (!paperDoc) {
-          vscode.window.showWarningMessage('未打开试卷文件')
-          return
+      // 读 .paper 内容: document 优先, 空则 fs 兜底
+      const readContent = async (): Promise<string> => {
+        const t = document.getText()
+        if (t.trim()) return t
+        try {
+          const bytes = await vscode.workspace.fs.readFile(document.uri)
+          const text = new TextDecoder('utf-8').decode(bytes)
+          if (text.trim()) return text
+        } catch (e) {
+          console.warn('[paper] fs read fallback 失败:', e)
         }
-
-        const state = resolvePaperFromContent(paperDoc.uri.fsPath, paperDoc.getText())
-        if (state.status !== 'ready') {
-          vscode.window.showWarningMessage(state.status === 'empty' ? '当前试卷内容为空，请录入题目后再试' : '试卷文件不是合法的 JSON')
-          return
-        }
-
-        const config = getPluginConfig()
-        await savePaper({
-          name: state.paper.title,
-          questions: state.paper.questions.map((item) => normalizeQuestionForSave(item, config.scope.labCode))
-        })
-        vscode.window.showInformationMessage(`试卷「${state.paper.title}」已存入试卷库`)
-      } catch (err) {
-        vscode.window.showErrorMessage(`存入试卷库失败: ${err instanceof Error ? err.message : String(err)}`)
+        return ''
       }
-    })
+
+      // 渲染 HTML (每次读内容 → 解析 → 重设 webview.html)
+      let timers: ReturnType<typeof setTimeout>[] = []
+      const push = (html: string) => {
+        timers.forEach((t) => clearTimeout(t))
+        timers = []
+        // 多档延迟重发, 覆盖 opensumi webview listening 空窗期 (参照 html-preview)
+        ;[0, 300, 1000, 2500, 5000].forEach((delay) => {
+          timers.push(setTimeout(() => { try { webviewPanel.webview.html = html } catch { /* ignore */ } }, delay))
+        })
+      }
+      const render = async () => {
+        const text = await readContent()
+        if (text.trim()) push(buildHtml(resolvePaperFromContent(document.uri.fsPath, text)))
+      }
+
+      // 恢复/懒加载: document 可能未加载完 → 延迟重试
+      let retryTimer: ReturnType<typeof setTimeout> | undefined
+      const ensureRendered = (attempt: number) => {
+        void readContent().then((text) => {
+          if (text.trim()) {
+            push(buildHtml(resolvePaperFromContent(document.uri.fsPath, text)))
+            return
+          }
+          if (attempt < 60) retryTimer = setTimeout(() => ensureRendered(attempt + 1), 500)
+        })
+      }
+      ensureRendered(0)
+
+      const changeSub = vscode.workspace.onDidChangeTextDocument((e) => {
+        if (e.document === document) void render()
+      })
+      webviewPanel.onDidDispose(() => {
+        if (retryTimer) clearTimeout(retryTimer)
+        timers.forEach((t) => clearTimeout(t))
+        panels.delete(document.uri.toString())
+        changeSub.dispose()
+      })
+    },
+  }
+
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(PAPER_CUSTOM_EDITOR_VIEW_TYPE, provider, {
+      webviewOptions: { enableScripts: true },
+    }),
   )
+
+  // self-heal: 刷新后恢复的 .paper tab 未 resolve → openWith 重开
+  let selfHealTimer: ReturnType<typeof setTimeout> | undefined
+  const selfHealCheck = (attempt: number) => {
+    const uris = new Set<string>()
+    for (const d of vscode.workspace.textDocuments) {
+      if (d.uri.path.toLowerCase().endsWith('.paper')) uris.add(d.uri.toString())
+    }
+    try {
+      for (const g of vscode.window.tabGroups.all) {
+        for (const t of g.tabs) {
+          const uri = (t.input as any)?.uri
+          if (uri && String(uri.path || '').toLowerCase().endsWith('.paper')) uris.add(uri.toString())
+        }
+      }
+    } catch { /* not supported */ }
+    const pending = Array.from(uris).filter((u) => !panels.has(u))
+    console.log(`[paper] self-heal attempt=${attempt} uris=${uris.size} pending=${pending.length}`)
+    if (pending.length) {
+      void vscode.commands.executeCommand('vscode.openWith', vscode.Uri.parse(pending[0]), PAPER_CUSTOM_EDITOR_VIEW_TYPE)
+      return
+    }
+    if (attempt < 10) selfHealTimer = setTimeout(() => selfHealCheck(attempt + 1), 3000)
+  }
+  selfHealTimer = setTimeout(() => selfHealCheck(0), 5000)
+  context.subscriptions.push({ dispose: () => selfHealTimer && clearTimeout(selfHealTimer) })
 }
 
-export function deactivate() {
-  return undefined
+// ---- 解析 → HTML ----
+
+function buildHtml(state: any): string {
+  const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+
+  if (state.status === 'empty') {
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:system-ui,sans-serif;background:#fff;color:#666;padding:60px 20px;text-align:center}</style></head><body>${esc(state.description || '空')}</body></html>`
+  }
+  if (state.status === 'error') {
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:system-ui,sans-serif;background:#fff;color:#d93026;padding:60px 20px;text-align:center}</style></head><body>${esc(state.description || '错误')}</body></html>`
+  }
+
+  const qs: any[] = state.paper?.questions || []
+  const optText = (o: unknown) => (typeof o === 'string' ? o : JSON.stringify(o))
+  const ansOf = (a: unknown) => (Array.isArray(a) ? a.map(String) : a == null ? [] : [String(a)])
+
+  const cards = qs.map((q: any, i: number) => {
+    const ans = ansOf(q.answer)
+    const opts = Array.isArray(q.options) && q.options.length
+      ? q.options.map((o: unknown) => `<div class="opt${ans.includes(String(o)) ? ' ans' : ''}">${esc(optText(o))}</div>`).join('')
+      : ''
+    const topic = q.topic != null ? q.topic : q.text
+    return `<div class="q"><div class="q-h"><span class="no">${i + 1}</span>${q.score != null ? `<span class="score">${q.score} 分</span>` : ''}</div>
+      <div class="topic">${esc(topic)}</div>${opts}
+      ${ans.length ? `<div class="ans">答案: ${esc(ans.join(', '))}</div>` : ''}</div>`
+  }).join('')
+
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+<style>
+  *{box-sizing:border-box} body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:16px;background:#fff;color:#222}
+  .head{display:flex;align-items:baseline;gap:12px;border-bottom:2px solid #1677ff;padding-bottom:8px;margin-bottom:16px}
+  .title{font-size:20px;font-weight:700} .meta{color:#666;font-size:13px}
+  .q{border:1px solid #e5e5e5;border-radius:8px;padding:12px 14px;margin-bottom:12px}
+  .q-h{display:flex;justify-content:space-between;margin-bottom:6px} .no{color:#1677ff;font-weight:600} .score{color:#999;font-size:13px}
+  .topic{margin-bottom:8px;line-height:1.6} .opt{margin:4px 0;font-size:14px} .opt.ans{color:#389e0d;font-weight:600}
+  .ans{margin-top:6px;font-size:13px;color:#389e0d}
+</style></head>
+<body><div class="head"><span class="title">${esc(state.paper?.title || '试卷')}</span>
+  <span class="meta">总分 ${state.paper?.totalScore ?? 0} · 共 ${state.paper?.questionCount ?? 0} 题</span></div>
+${cards}</body></html>`
 }
