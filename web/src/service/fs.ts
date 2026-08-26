@@ -26,7 +26,7 @@ import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 import type { FsEntry, FileMeta, IFileSystem } from '../commands/fs';
 import { FsToken } from '../commands/fs';
 import { getFsPty } from './fs-pty';
-import { detectPlatform, getShellOps } from './shell-ops';
+import { detectPlatform, getShellOps, shellQuotePosix } from './shell-ops';
 import { appBaseUrl, cwdHeader, effectiveCwd } from './env';
 
 /** 通用 JSON fetch（带 cwd 头） */
@@ -394,16 +394,54 @@ export class FileSystemServiceImpl implements IFileSystem {
 
   /**
    * 写文件: base64 内容通过 FsPty 写到绝对路径, 父目录自动 mkdir -p.
-   *   POSIX: printf | base64 -d
-   *   PowerShell: [IO.File]::WriteAllBytes(..., FromBase64String(...))
+   *   大文件分块: 每块 ≤ CHUNK_BYTES (远低于 ARG_MAX ~256KB), 多次 exec 追加.
+   *   超时按块数线性算: 小文件 10s 够, 大文件按 KB 比例放宽.
+   *   POSIX: 每块 `printf %s ... | base64 -d >> path` (首块用 >)
+   *   PowerShell: 单条 [IO.File]::WriteAllBytes (无 ARG_MAX 问题, 不分块)
    */
   async write(idePath: string, content: string | { base64: string }): Promise<boolean> {
     const ops = await this.ops();
     const abs = absPath(idePath);
     const b64 = typeof content === 'string' ? bytesToBase64(content) : content.base64;
-    const { ok } = await getFsPty().exec(ops.writeFile(abs, b64));
-    if (ok) this.invalidateParent(idePath);
-    return ok;
+    const kind = (await this.ops()).kind;
+    // PowerShell: 单条命令, 无 ARG_MAX, 不分块
+    if (kind === 'powershell') {
+      const { ok } = await getFsPty().exec(ops.writeFile(abs, b64), this.writeTimeoutMs(b64.length));
+      if (ok) this.invalidateParent(idePath);
+      return ok;
+    }
+    // POSIX: 分块写
+    const CHUNK = 4 * 1024; // 4KB 每块 (base64, 安全远低于 ARG_MAX)
+    const absQ = shellQuotePosix(abs);
+    const dir = abs.replace(/\/[^/]+$/, '');
+    // 1) mkdir -p
+    if (dir && dir !== abs) {
+      const { ok: ok1 } = await getFsPty().exec(`mkdir -p ${shellQuotePosix(dir)}`);
+      if (!ok1) return false;
+    }
+    // 2) 写首块 (> 覆盖)
+    const first = b64.slice(0, CHUNK);
+    const { ok: ok2 } = await getFsPty().exec(
+      `printf %s ${first} | base64 -d > ${absQ}`,
+      this.writeTimeoutMs(b64.length),
+    );
+    if (!ok2) return false;
+    // 3) 写剩余块 (>> 追加)
+    for (let i = CHUNK; i < b64.length; i += CHUNK) {
+      const chunk = b64.slice(i, i + CHUNK);
+      const { ok } = await getFsPty().exec(
+        `printf %s ${chunk} | base64 -d >> ${absQ}`,
+        this.writeTimeoutMs(b64.length),
+      );
+      if (!ok) return false;
+    }
+    this.invalidateParent(idePath);
+    return true;
+  }
+
+  /** 写超时: 10s 基础 + 1s / KB base64 (≈0.75KB 原文), 至少 30s */
+  private writeTimeoutMs(b64Len: number): number {
+    return Math.max(10000, 10000 + Math.ceil(b64Len / 1024) * 1000);
   }
 
   async rm(idePath: string): Promise<boolean> {

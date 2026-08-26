@@ -121,7 +121,7 @@ export function getShellOps(kind: ShellKind): ShellOps {
 // ---- shell 字符串转义 ----
 
 /** POSIX 单引号包裹: 内容里的 ' 替换为 '"'"' */
-function shellQuotePosix(s: string): string {
+export function shellQuotePosix(s: string): string {
   return `'${s.replace(/'/g, `'\"'\"'`)}'`;
 }
 
