@@ -1114,28 +1114,42 @@ export const Chat: React.FC = () => {
 
   const onPaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = Array.from(e.clipboardData?.items || []);
-    const images = items.filter((it) => it.kind === 'file' && it.type.startsWith('image/'));
-    if (images.length === 0) return; // 纯文本粘贴交给 textarea 默认行为
+    // 接任意 kind==='file' (图片/视频/音频/任意文件), 不只图片
+    // 纯文本/代码片段 (kind 不为 file) 走 textarea 默认行为
+    const fileItems = items.filter((it) => it.kind === 'file');
+    if (fileItems.length === 0) return;
     e.preventDefault();
     if (!fs?.write) { setError('沙箱文件系统未就绪'); return; }
     const added: Array<{ name: string; path: string; dataUrl?: string }> = [];
-    for (const it of images) {
+    for (const it of fileItems) {
       try {
         const f = it.getAsFile();
         if (!f) continue;
-        const ext = (f.type.split('/')[1] || 'png').split(';')[0].replace(/[^\w]/g, '');
-        const name = `paste-${Date.now()}-${Math.floor(Math.random() * 1000)}.${ext}`;
+        // 文件名: 优先原始名, 无 type 时按 mime 推 ext
+        const mime = f.type || 'application/octet-stream';
+        const extFromMime = mime.split('/')[1] || '';
+        const extFromName = (f.name?.split('.').pop() || '').toLowerCase();
+        const ext = (extFromName && extFromName.length <= 5) ? extFromName
+          : (extFromMime.split(';')[0].replace(/[^\w]/g, '') || 'bin');
+        const safeBase = (f.name || `paste-${Date.now()}-${Math.floor(Math.random() * 1000)}`)
+          .replace(/[^\w.\-\u4e00-\u9fa5]/g, '_');
+        const name = /\.[a-z0-9]{1,5}$/i.test(safeBase) ? safeBase : `${safeBase}.${ext}`;
         const path = `/${name}`;
         const buf = new Uint8Array(await f.arrayBuffer());
+        // 走 PTY shell 写文件 (service/fs.write → FsPty.exec → base64 写)
         await fs.write(path, { base64: bytesToBase64(buf) });
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const fr = new FileReader();
-          fr.onload = () => resolve(String(fr.result || ''));
-          fr.onerror = () => reject(fr.error);
-          fr.readAsDataURL(f);
-        });
+        // 预览图: 图片类型才生成 dataUrl, 其它只显示图标
+        let dataUrl: string | undefined;
+        if (mime.startsWith('image/')) {
+          dataUrl = await new Promise<string>((resolve, reject) => {
+            const fr = new FileReader();
+            fr.onload = () => resolve(String(fr.result || ''));
+            fr.onerror = () => reject(fr.error);
+            fr.readAsDataURL(f);
+          });
+        }
         added.push({ name: f.name || name, path, dataUrl });
-      } catch (err) { setError(`粘贴图片失败: ${String((err as any)?.message || err)}`); }
+      } catch (err) { setError(`粘贴文件失败: ${String((err as any)?.message || err)}`); }
     }
     if (added.length) setAttachments((prev) => [...prev, ...added]);
   }, [fs]);
@@ -1391,6 +1405,7 @@ export const Chat: React.FC = () => {
               ref={fileInputRef}
               type="file"
               multiple
+              accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.md,.json,.js,.ts,.tsx,.py,.sh,.html,.css,.zip,.tar,.gz"
               style={{ display: 'none' }}
               onChange={(e) => { void onUploadFile(e.target.files); e.target.value = ''; }}
             />

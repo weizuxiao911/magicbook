@@ -693,13 +693,13 @@ export const styles = `
 }
 
 .chat__modal-foot {
-  display: flex; align-items: center; gap: 12px;
-  padding: 14px 20px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px;
   background: transparent;
   border: none;
   box-shadow: 0 -1px 0 var(--ai-divider);
   color: var(--ai-fg);
-  font-family: inherit; font-size: 15px; font-weight: 600;
+  font-family: inherit; font-size: 13px; font-weight: 500;
   cursor: pointer; text-align: left;
 }
 .chat__modal-foot:hover { background: var(--ai-input-bg); }
