@@ -1,64 +1,79 @@
 # AI 工作台
 
-浏览器端可交互工作台（C/S 架构）：**opensumi/codeblitz 全局交互容器**（explorer / 编辑器 / 终端 / 聊天 / 扩展）+ **服务端**（sandbox 调度 + opencode + registry）。
+浏览器端可交互工作台（**本地模式**）：**opensumi/codeblitz 全局交互容器**（explorer / 编辑器 / 终端 / 聊天 / 扩展）+ **opencode 直连后端**（AI + 终端 PTY + 文件系统）+ **registry 扩展分发**。
+
+`npx github:weizuxiao911/magicbook` 一行启动整套。
 
 ## 架构
 
 ```
-浏览器 (client/)
-  ├── 容器: opensumi/codeblitz（explorer / 编辑器 / 终端 / 聊天 / 扩展）
-  ├── 适配层: RemoteFS（BrowserFS → /fs）、终端代理（→ /ai/pty）、registry（扩展元数据）
-  └── 唯一配置入口: APP_BASE_URL（.env.development, 编译期注入）
+┌─────────────────────────────────────────────────────────┐
+│ 浏览器 (client/ + extensions/)                           │
+│   - opensumi/codeblitz 容器 (explorer/编辑器/终端/聊天) │
+│   - SDK 直连 opencode (无中间代理, 无中间层抽象)      │
+│   - 写操作走单例 PTY (FsPty, 跨平台 shell-ops)          │
+│   - 读操作走 opencode 全局 API (/api/fs/* /find/file)    │
+└────────────────────┬────────────────────────────────────┘
+                     │ WebSocket / fetch
+                     │ (APP_BASE_URL, 单一事实源)
+┌────────────────────▼────────────────────────────────────┐
+│ opencode serve (3100, 默认)                              │
+│   - /api/fs/{list,read,find}    全局只读 API            │
+│   - /api/pty / WS                终端 + 单例 PTY 通道    │
+│   - /path                        宿主 cwd + home        │
+│   - /session/{id}/shell          仅给 chat agent 工具调 │
+└─────────────────────────────────────────────────────────┘
 
-服务端 (sandbox/)
-  ├── :7789   入口 — /ai 反向代理（→ opencode :24096）、/fs 文件系统、/workspace 调度、
-  │            /sandbox 信息接口（baseurl + 默认 shell + 连接状态）、/health
-  ├── opencode :24096  AI + 终端 PTY（/pty, node-pty; sandbox 探活/自启, 非默认启动）
-  └── registry :7790  vsix 扩展分发（HTTPS, kt-ext 协议; metadata.json + 静态资源）
+registry (7790, HTTPS) — vsix 扩展分发 (独立服务)
 ```
 
-下游服务地址**全部由 `APP_BASE_URL` 派生**（不配置第二个地址）：
-
-| 服务 | 地址 | 说明 |
-| --- | --- | --- |
-| opencode（AI/聊天） | `${APP_BASE_URL}/ai` | sandbox 全量透传（含 ws upgrade） |
-| 终端 PTY | `${APP_BASE_URL}/ai/pty` | 同 opencode 址（sandbox 透传） |
-| 文件系统 | `${APP_BASE_URL}/fs` | sandbox 内置实现（读写宿主文件系统） |
-| 扩展分发 | `REGISTRY_BASE_URL` | 编译期独立配置（.env REGISTRY_BASE_URL） |
-
-扩展源码在 `extensions/<name>/`，打包成 vsix 交给 registry 分发；client 经 metadata 拉取元数据，打开匹配文件（如 `.html` / `.paper`）时激活扩展（customEditor + webview）。
+**关键变化（vs 旧架构）**:
+- ❌ 旧: client → 中间层(:7789, /ai /fs /workspace) → opencode(:24096) 三层
+- ✅ 新: client → opencode(:3100) 直连, cli 是进程编排器
+- ❌ 旧: 中间层 HTTP 路由实现 /fs
+- ✅ 新: 写操作走 FsPty 单例 PTY, 读操作走 opencode 全局 API
+- ❌ 旧: 中间层抽象 (singleton / runtime / 等)
+- ✅ 新: 单一事实源 (cli's --port → process.env → webpack 注入)
 
 ## 快速开始
 
 ```bash
+# 方式 1: npx (推荐, 一行启动, 自动装依赖)
+npx github:weizuxiao911/magicbook              # 默认 :3100 + :7788
+npx github:weizuxiao911/magicbook --port 4000  # opencode 4000
+npx github:weizuxiao911/magicbook --client-port 8000  # webpack 8000
+
+# 方式 2: git clone + npm install (本地开发)
+git clone https://github.com/weizuxiao911/magicbook
+cd magicbook
 npm install
-npm run dev        # sandbox（tsx watch）+ client（webpack-dev-server）并发启动
+npm run dev                # cli web 模式 (opencode 3100 + client 7788)
+npm run serve              # 只起 opencode (无 client)
 ```
 
 | 服务 | 地址 | 说明 |
 | --- | --- | --- |
-| 工作台 | http://localhost:7788 | 浏览器打开 |
-| sandbox | http://127.0.0.1:7789 | 统一入口（/ai /fs /workspace /sandbox） |
-| opencode | http://127.0.0.1:24096 | AI + 终端（sandbox 自动拉起） |
-| registry | https://127.0.0.1:7790 | 扩展分发（自签证书; 单独 `cd registry && npm run dev`） |
+| 工作台 | http://localhost:7788 (默认) | 浏览器打开; 端口可由 `--client-port` 改 |
+| opencode | http://127.0.0.1:3100 (默认) | AI + 终端 + 文件系统; 端口由 `--port` 改 |
+| registry | https://127.0.0.1:7790 | 扩展分发（自签; 单独 `cd registry && npm run dev`） |
 
-### 配置（.env.development）
-
-```bash
-APP_BASE_URL=http://127.0.0.1:7789   # 唯一入口, client 编译期注入
-REGISTRY_BASE_URL=                   # 扩展分发地址（可选）
-```
-
-### 首次运行：信任 registry 证书
-
-registry 用自签 HTTPS（kt-ext 协议强制 https），首次需要把证书加入系统钥匙串：
+## 端口与配置（单一事实源: cli）
 
 ```bash
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \
-  /Users/weizuxiao/Documents/开源项目/workspace-dev/registry/certs/cert.pem
+cli --port <N>             # opencode 端口 (默认 3100)
+cli --client-port <N>      # webpack-dev-server 端口 (默认 7788)
+cli --hostname <host>      # opencode 绑定地址 (默认 127.0.0.1)
+# CORS auto-derived: http://<hostname>:<client-port>
 ```
 
-（证书已含 SAN：`localhost` 与 `127.0.0.1`；重新生成：见 `registry/` 说明）
+cli 启动时把 `--port` 通过 `process.env.APP_BASE_URL` 注入 webpack, webpack 编译期 `__APP_BASE_URL__` 注入前端 bundle. 客户端 SDK 直连, 无 CORS 配置散落.
+
+`client/.env.development` 是直跑 `cd client && npm run dev` 的兜底（不走 cli 时）:
+
+```bash
+APP_BASE_URL=http://127.0.0.1:3100   # 跟 cli --port 一致
+REGISTRY_BASE_URL=https://127.0.0.1:7790
+```
 
 ## 扩展开发与分发
 
@@ -81,14 +96,30 @@ npm run serve     # HTTPS 分发（:7790）
 > 扩展激活链路：metadata → 打开文件触发 `onCustomEditor:<viewType>` → 拉取 `browser` 入口 → 注册 provider → resolve webview。
 > 常见问题（FileType 常量 / 证书 / 控制帧过滤 / __PAPER_MANIFEST__ 等）见 [`AGENTS.md`](./AGENTS.md) 的「常见问题与修复」速查表。
 
+### 首次运行：信任 registry 证书
+
+registry 用自签 HTTPS（kt-ext 协议强制 https），首次需要把证书加入系统钥匙串：
+
+```bash
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \
+  /Users/weizuxiao/Documents/开源项目/workspace-dev/registry/certs/cert.pem
+```
+
+（证书已含 SAN：`localhost` 与 `127.0.0.1`；重新生成：见 `registry/` 说明）
+
 ## 目录
 
 | 路径 | 职责 |
 | --- | --- |
+| `cli/` | 进程编排器：`bin/cli.cjs` npx 入口 + `src/main.ts` web/serve 路由; opencode 进程组管理 |
 | `client/` | opensumi/codeblitz 容器 + 适配层（RemoteFS / 终端 / registry / 聊天）+ 登录 |
-| `sandbox/` | 服务端统一入口（:7789）：/ai 透传、/fs 文件系统、/workspace 调度、/sandbox 信息、opencode 生命周期 |
-| `registry/` | vsix 扩展分发（HTTPS，kt-ext；build → metadata.json + 静态资源） |
+| `client/src/commands/` | 接口+Token 定义 (IAgent/IRegistry/IFileSystem/IEnvService/IAuth) |
+| `client/src/config/` | 初始化 / 模块注册 / 布局 / runtime config |
+| `client/src/service/` | 8 实现 (agent/auth/env/fs/fs-pty/registry/shell-ops/terminal) |
+| `client/src/styles/` | CSS 覆盖 |
+| `client/.env.development` | cli 不走时的兜底配置 |
 | `extensions/` | vsix 扩展源码（html-preview / paper） |
+| `registry/` | vsix 扩展分发（HTTPS，kt-ext；build → metadata.json + 静态资源） |
 
 ## License
 
