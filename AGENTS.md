@@ -135,6 +135,6 @@ cd client && npm run typecheck    # tsc --noEmit
 ```bash
 cd client && npm run typecheck                # tsc --noEmit 通过
 node cli/bin/cli.cjs                          # cli web 起来; opencode 24096 + webpack 7788
-# 浏览器开 http://localhost:7788
+# **必须**用 playwright MCP 打开 http://localhost:7788 验证 (重启 dev 后尤其要)
 # explorer 列表正常 + 上传文件 + 终端 三件套
 ```
