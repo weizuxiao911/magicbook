@@ -18,7 +18,7 @@
 ## 品牌资产
 
 - 名称: **Numas** (无括号中文, 跟 `index.html` title 一致)
-- Logo: `web/src/assets/logo.svg` — 戴耳机的牛骑在垮裤快掉被压扁的马 (打工人幽默, 卡通风格, 透明背景)
+- Logo: `web/src/assets/logo.svg` — 牛头马面 (中国神话鬼差, 卡通人物: 牛头 + 马面, 蓝长袍, 红色印章标签, 单色暖橙+深棕+蓝)
 - Favicon: `web/src/assets/favicon.ico` (16/32/48 PNG-in-ICO) + `favicon.png` (64x64) — 透明背景
 - 重生成: `.tmp/favicon-build/build.js` (依赖 `@resvg/resvg-js` 纯 node, 不用 ImageMagick)
 - 调试日志需要保留 (`web/src/extensions/chat/commands/api.ts` 的 `[meta] stat` 之类) 后续排除问题用
