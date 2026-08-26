@@ -1,115 +1,106 @@
 # AGENTS.md — AI 工作台 项目 AI 协作约定
 
-> AI agent 速查表。修改前先看「项目速写」「分层思想」「约定 / 禁忌」再动手。
+> AI agent 速查表。**本文件是过程文档**: 记录项目怎么一步步走到现在, 为什么这么做, 改东西前要避免哪些坑。
+> README.md 是**架构终态文档** (给人看), 本文件是**过程文档** (给 AI 看, 让它能跟踪迭代)。
 
-## 项目速写
+## 当前状态速写 (项目终态)
 
-`AI 工作台` 是**本地模式**的浏览器端可交互工作台。client → opencode 直连, 无中间 HTTP 代理, 单一事实源是 cli 入口。
+`AI 工作台` 是本地模式浏览器端工作台。client → opencode 直连, 无中间 HTTP 代理, 单一事实源是 cli 入口。架构详图见 README.md。
 
 | 端 | 目录 | 职责 |
 | --- | --- | --- |
-| 入口 | `cli/` | 进程编排器: npx bin (`bin/cli.cjs`) + web/serve 路由 (`src/main.ts`); opencode 进程组管理 |
-| 客户端 | `client/` | opensumi/codeblitz 交互层（explorer / 编辑器 / 终端 / 聊天 / 扩展）|
-| 客户端 | `client/src/commands/` | 接口+Token 定义 (IAgent/IRegistry/IFileSystem/IEnvService/IAuth) |
-| 客户端 | `client/src/config/` | 初始化 / 模块注册 / 布局 / runtime config |
-| 客户端 | `client/src/service/` | 8 实现 (agent/auth/env/fs/fs-pty/registry/shell-ops/terminal) |
-| 客户端 | `client/src/styles/` | CSS 覆盖 |
-| 服务 | opencode (外部) | AI + 终端 PTY + 文件系统; cli 拉起的子进程 |
-| 扩展 | `extensions/` | vsix 扩展源码（html-preview / paper）|
-| 分发 | `registry/` | vsix 扩展分发（HTTPS, kt-ext）|
-
-## 关键文件位置
-
-```
-magicbook/
-├── package.json            # 顶层 bin (cli) + dev/serve scripts; devDeps: tsx
-├── cli/
-│   ├── bin/cli.cjs         # npx 入口: 解析 --port/--client-port, 设 process.env, spawn tsx
-│   ├── src/main.ts         # web/serve 路由; spawn opencode + spawn webpack (npm 间接)
-│   └── package.json        # devDeps: tsx + typescript (无 opencode-ai; 用 spawn 拉二进制)
-├── client/
-│   ├── package.json        # 全部 react/codeblitz/webpack 等 deps
-│   ├── webpack.config.ts   # 内嵌; 端口读 process.env.CLIENT_PORT; .env 兜底
-│   ├── src/commands/       # 平铺的接口+Token (单一文件 per 接口)
-│   ├── src/config/         # 初始化/模块/布局
-│   ├── src/service/        # 8 实现
-│   ├── src/extensions/     # chat / workspace / login / actions / welcome
-│   ├── src/styles/         # CSS
-│   └── .env.development    # cli 不走时的兜底
-├── extensions/             # 扩展源码: html-preview / paper
-└── registry/               # 扩展分发: build → metadata.json + 静态资源（:7790）
-```
-
-## 关键命令
-
-```bash
-# 用户使用 (推荐)
-npx github:weizuxiao911/magicbook              # 一行启动 (cli's web 模式)
-
-# 开发者本地
-npm install                                  # 根: 装 tsx (~10s)
-cd cli && npm install                         # 装 cli 的 tsx/typescript (~5s)
-cd ../client && npm install                   # 装 react/codeblitz/webpack (~30s)
-cd ../.. && npm run dev                       # 或: node cli/bin/cli.cjs
-
-# 单独模式
-npx github:weizuxiao911/magicbook serve       # 只起 opencode (无 client)
-
-# 验证
-cd client && npm run typecheck                # tsc --noEmit
-```
-
-## 分层思想
-
-> 本地模式, client → opencode 直连, **零中间层**。单一事实源是 cli 入口。
-> 端口 (`--port`/`--client-port`) 一处配置, 通过 process.env 注入下游, 避免散落。
-
-- **cli** = 进程编排器, 不是 HTTP 服务。它 spawn opencode + spawn webpack, 自己监听 SIGINT 整组清理。
-- **opencode = `${APP_BASE_URL}`**（无 /ai 前缀; 单一事实源）。
-- **cli's --port** → `process.env.APP_BASE_URL` → webpack DefinePlugin → `__APP_BASE_URL__` → 客户端 SDK 直连。
-- **fs 写操作**走 FsPty 单例 PTY（`/api/pty` 全局，不依赖 session）+ 平台 shell-ops（POSIX/PowerShell）。
-- **fs 读操作**走 opencode 全局 API（`/api/fs/list` `/api/fs/read/*` `/find/file`）。
-- **terminal** 走 `/pty/{id}/connect` WebSocket（每终端独立会话）。
-- **session.shell** 仅服务 chat agent 工具调用（不用于 fs 写, 避免 409）。
-- **registry** 是唯一例外：编译期独立配置 `REGISTRY_BASE_URL`。
-
-## 约定 / 禁忌
-
-- **单一事实源**：端口、CORS、APP_BASE_URL 全由 cli 控制, 透 process.env 注入 webpack；不要散落到各 service / 各模块。
-- **跨层只通过协议交互**：client 调 opencode API；不直连 opencode 进程内部状态。
-- **直连无代理**：client → opencode 之间不加任何 HTTP 中间层（历史教训: 中间层带来 409 死锁 / ws 卡死 / CORS 散落）。
-- **写操作走 PTY，不走 session.shell**：session 单 shell 限制 → 409 风暴；PTY 是全局的，无此问题。
-- **中文路径 encodeURI**：HTTP header 必须 ISO-8859-1, `x-opencode-directory` 需 `encodeURI()`。
-- **平台兼容**：fs 命令按 host 平台分流（mac/linux=POSIX, win=PowerShell）；shell 选择走 `/pty/shells` 探测，不猜 UA。
-- **单一职责**：每个模块只做一件事，不跨模块堆逻辑。
-- **配置外置**：敏感信息不入库（.env 走 .gitignore）。
-- **中文优先**：文档、接口说明、用户可见文案以中文为主。
-- **tsx 统一**：bin/cli.cjs + cli/src/main.ts + client/webpack.config.ts 全走 tsx（替代历史 ts-node 链路）。
-
-## 验证清单（改完跑）
-
-```bash
-cd client && npm run typecheck                # tsc --noEmit 通过
-node cli/bin/cli.cjs                          # cli web 模式起来; opencode 3100 + webpack 7788
-# 浏览器开 http://localhost:7788
-# explorer 列表正常 + 上传文件 + 终端 三件套
-```
+| 入口 | `cli/` | 进程编排器: npx bin + web/serve 路由 + opencode 进程组管理 |
+| 客户端 | `client/` | codeblitz 容器 + 8 service + 4 内置 extension |
+| 后端 | opencode (外部) | AI + 终端 PTY + 文件系统; cli 拉起的子进程 |
+| 扩展 | `extensions/` | vsix 源码 |
+| 分发 | `registry/` | vsix 扩展分发 (独立进程) |
 
 ## 任务执行
 
-按上级 `../AGENTS.md`（用户级）的「核心决策规则」与「标准工作流程」执行；本文件的项目级约束优先。
+按上级 `../AGENTS.md`（用户级）的「核心决策规则」与「标准工作流程」执行; 本文件的项目级约束优先。
 
-## 变更日志
+## 关键决策与权衡 (Why)
 
-| 日期 | 变更 | 影响范围 |
-| --- | --- | --- |
-| 初始版本 | 建立项目骨架（原 magicbook 仓库结构整理: servers 目录移除, 扩展/webview 配置上移） | 整个仓库 |
-| 中间层时代 | 统一 APP_BASE_URL 派生架构; 中间层 tsx 运行 + opencode 逃逸加固; 终端走 /ai/pty; question 多问题 tab | 中间层/client |
-| **本次重构 (33ffdfc)** | 砍掉中间层抽象, client → opencode 直连, cli 入口; PTY 替 session.shell; 平铺 core/ → commands/ config/ styles/; npx 一行启动 | 整个仓库 |
+### 为什么 client → opencode 直连 (无中间层)
 
-## 常见问题与修复（踩坑速查）
+- **历史**: 早期有中间层 (:7789), 反代 `/ai/*` 到 opencode, 内置 `/fs/*` HTTP 路由, `/workspace/*` 调度
+- **痛点**:
+  - 写文件 409 死锁: 中间层用 opencode session 跑 shell, 单 session 一次只跑一个 shell, 并发就 409
+  - 终端 ws 卡死: bun 跑 http-proxy 的 ws 握手问题
+  - CORS 散落: 多个 base url 配置
+  - 调度复杂: workspace 选择要先 ensure opencode 启动
+- **解法**: 砍掉中间层
+  - 写文件走 opencode 全局 PTY (单例, promise chain 串行)
+  - 读文件走 opencode 全局 API (无 session 限制)
+  - 终端走 `/pty/{id}/connect` (每终端独立 session)
+  - session.shell 仅服务 chat agent 工具调用
 
-> 本会话积累的修复记录，改相关模块前先查这里。
+### 为什么端口统一在 cli (单一事实源)
+
+- **历史**: 早期 `APP_BASE_URL` 写在 `.env.development`, 改 cli 端口要改两边
+- **痛点**: webpack 编译期注入 `__APP_BASE_URL__`, cli 端口改 webpack 不知道, 客户端连不上
+- **解法**: cli 解析 `--port` → `process.env.APP_BASE_URL` → spawn 时 env 继承 → webpack 读 process.env 优先, .env 兜底
+- **结果**: 改 `cli --port 4000` 全栈同步, 一处配置
+
+### 为什么 fs 写走单例 PTY (不用 session.shell)
+
+- **历史**: fs.ts 用 `client.session.shell({ sessionID, agent: 'build', command })` 跑 mkdir/rm/mv/base64 等
+- **痛点**: opencode session 一次只能跑一个 shell, 多个并发 fs.write 第二个起 409
+- **解法**: 走 opencode `/api/pty` (全局, 无 session 限制), 单例 + promise chain 串行 + UUID marker 命令完成检测
+- **结果**: 0 个 409, 5 并发写全过
+
+### 为什么平铺 `core/` → `commands/` `config/` `styles/`
+
+- **历史**: 早期 `client/src/core/commands/`, `core/config/`, `core/styles/` 三层嵌套
+- **痛点**: 每个接口一个 `commands/X/index.ts` 单文件目录, `core/` 包装层无意义
+- **解法**: 拍平到 `client/src/commands/X.ts` 等单文件, `core/` 删
+- **结果**: 16 文件 → 11 文件 (-31%), 0 行逻辑改动
+
+### 为什么用 npx github: 分发 (不是 npm publish)
+
+- **用户决策**: "git clone 源码, 现状态" + "我的疑问就跟webpack有关! port 是cli 支持 --port的吧webpack又用.env?" + "仓库是开源的 public"
+- **路径**:
+  - 公开 GitHub 仓库 → 用户 `npx github:user/repo` 即可 (无需 npm 账号)
+  - 加 `cli/bin/cli.cjs` 作 npx 入口 (CommonJS, 必须 JS, 不能 TS)
+  - `package.json:bin: { cli: "cli/bin/cli.cjs" }`
+  - 用户 `npx github:...` 走 bin → spawn `tsx cli/src/main.ts`
+- **结果**: 零发布成本, 仓库即分发
+
+### 为什么 deps 全下沉 (root 18 个 webpack devDeps → client)
+
+- **历史**: 早期 root `package.json` 有 18 个 webpack 工具链 devDeps, client 没自己的 deps
+- **痛点**: 依赖管理混乱, root 装 webpack 但 webpack 是 client 用的
+- **解法**:
+  - root 只留 `tsx` (cli/bin 用), devDeps 从 18 减到 1
+  - client 自己装 react + codeblitz + webpack + 所有 devDeps
+  - cli 删 `opencode-ai` (cli spawn 拉二进制, 不 import SDK, -174M)
+- **结果**: root node_modules 11M, cli 36M, client 766M
+
+### 为什么 .env 从项目根 → client/
+
+- **历史**: `.env.development` 在项目根, webpack 读 `../.env.development`
+- **痛点**: cli 是项目级入口, .env 也该是项目级; 但 webpack 是 client 工具, 依赖外置 .env 不直观
+- **解法**: 搬到 `client/.env.development`, webpack 读 `./.env`, project root 兜底 (兼容老路径)
+- **结果**: .env 局部化, cli 不读 .env (用 process.env 注入)
+
+## 变更日志 (How we got here)
+
+> **AI 读法**: 看完这一节, 你会知道每个决策触发的问题、改动、为什么; 后续改东西前先扫一遍最近 3 条。
+
+| 日期 | 触发问题 | 决策 | 实施 |
+| --- | --- | --- | --- |
+| 初始版本 | 仓库结构混乱 (servers/ 目录多层) | 整理仓库 | servers 移除, 扩展/webview 配置上移 |
+| 中间层时代 | 早期架构有 HTTP 反代 | 统一 `APP_BASE_URL` 派生所有地址 | 中间层 tsx 运行 + opencode 逃逸加固 + 终端走 /ai/pty + 信息接口 |
+| **重构 1 (33ffdfc)** | 客户端/中间层/opencode 三层, 写文件 409, 终端 ws 卡死, CORS 散落, 端口双源 | 砍中间层, client → opencode 直连 | 中间层目录 → cli/ 改名 + 子命令 web/serve; PTY 替 session.shell; 平台 shell-ops; encodeURI CJK 路径; 平铺 core/ |
+| **重构 2 (依赖清理)** | root 装 500M webpack 工具链; cli 装 174M opencode-ai (实际不 import) | 依赖下沉 + 删未用 | root 留 tsx; client 装 webpack; cli 删 opencode-ai |
+| **重构 3 (npx 分发)** | 用户问 "别人怎么用" | 公开 GitHub 仓库走 npx github: | `cli/bin/cli.cjs` npx 入口 (44 行 CommonJS) + `package.json:bin` |
+| **重构 4 (端口单一源)** | `cli --port` 改了 webpack 不知道, 客户端连不上 | cli 设 process.env, webpack 优先读 env | `cli/bin/cli.cjs` 解析 `--port` → `process.env.APP_BASE_URL` → webpack DefinePlugin 注入 |
+| **重构 5 (client-port)** | 用户问 "client 端口怎么改" | 加 `--client-port` flag | cli 解析 → `process.env.CLIENT_PORT` → webpack `devServer.port`; CORS auto-derived |
+| **重构 6 (env 搬迁)** | .env 在项目根, webpack 读 `../.env` 跨目录 | 搬到 client/ | `client/.env.development`, webpack 读 `./.env`, project root 兜底 |
+| **重构 7 (CJK 路径)** | 中文路径 fetch header 报 non-ISO-8859-1 | `encodeURI` 包裹 header | 6 处 `cwdHeader` 全部 `encodeURI` |
+| **重构 8 (docs)** | README/AGENTS 还提旧中间层架构 | 删旧架构全部引用 | README 讲终态架构, AGENTS 讲过程决策 |
+
+## 踩坑速查 (踩过的坑, 改东西前先查这里)
 
 ### 架构 / 端口 / 启动
 
@@ -160,26 +151,70 @@ node cli/bin/cli.cjs                          # cli web 模式起来; opencode 3
 | `__PAPER_MANIFEST__ is not defined` | esbuild 直接跑没注入 define | 用项目的 esbuild.config.mjs（define __PAPER_MANIFEST__ = webview vite manifest） |
 | vsix 必须 browser 兼容 | codeblitz 纯浏览器, main 只在 node | package.json 声明 browser 字段（main 别名）；bundle 禁 node builtins（fs/path 等） |
 
-### 架构要点
+## 关键文件位置
 
-- **本地模式**：client → opencode 直连, 无 HTTP 中间层。cli 是进程编排器, 不是 HTTP 服务。
-- **唯一配置**：cli 的 `--port` (默认 3100) 和 `--client-port` (默认 7788); 端口透 process.env 注入 webpack 编译期。
-- **服务端口**：opencode :3100 (默认, cli 拉起) / client :7788 (默认, webpack-dev-server) / registry :7790 (独立)。
-- **opencode 生命周期**：cli 独家调度 (spawn + detached); 整进程组 SIGKILL 防逃逸; 启动前 cleanupOrphans 清残留。
-- **cwd 策略**：APP_CWD || hostCwd (opencode /path 注入到 __APP_CONFIG__.cwd); 都没则报错 (不默认 '/')。
-- **fs 写操作**：单例 FsPty (lazy init, promise chain 串行, UUID marker 命令完成检测), 0 409 冲突。
-- **fs 平台兼容**：mac/linux=POSIX (bash/zsh), win=PowerShell, cmd 兜底; shell 走 /pty/shells 探测, 不猜 UA。
-- **CJK 路径**：`x-opencode-directory` header 用 `encodeURI()` 防 ISO-8859-1 报错。
-- **扩展源码**：`extensions/<name>/`（入库）；产物（vsix/dist/uploads）归 registry（gitignore）。
-- **vsix 开发规范（用户约定）**: **一律 TypeScript**（`src/extension.ts` + esbuild → `dist/extension.js`）;
-  **webview 单独维护**（`webview/` 目录或 `webview.tsx`, 不内联拼 HTML 字符串）;
-  **publisher 统一 `weizuxiao911`**（用户生产的 vsix 统一使用账号名）;
-  **vsix 文件名规范 `{发布者}.{拓展名称}-{版本}.vsix`**（如 `weizuxiao911.magicbook-html-preview-0.1.0.vsix`, 由 vsce 打包默认生成）;
-  项目统一 MIT 开源协议（根 LICENSE）
-- **扩展加载机制**：metadata 注入 → customEditor 打开触发 onCustomEditor 激活 → 拉 browser 入口 → provider 注册 → resolve
-- **npx 分发**：`npx github:weizuxiao911/magicbook` 走根 package.json 的 `bin: { cli: "cli/bin/cli.cjs" }` 入口 → cli/bin/cli.cjs (CommonJS, 44 行) → spawn tsx → cli/src/main.ts。
+```
+magicbook/
+├── package.json            # 顶层 bin (cli) + dev/serve scripts; devDeps: tsx
+├── cli/
+│   ├── bin/cli.cjs         # npx 入口: 解析 --port/--client-port, 设 process.env, spawn tsx
+│   ├── src/main.ts         # web/serve 路由; spawn opencode + spawn webpack (npm 间接)
+│   └── package.json        # devDeps: tsx + typescript (无 opencode-ai; 用 spawn 拉二进制)
+├── client/
+│   ├── package.json        # 全部 react/codeblitz/webpack 等 deps
+│   ├── webpack.config.ts   # 内嵌; 端口读 process.env.CLIENT_PORT; .env 兜底
+│   ├── .env.development    # cli 不走时的兜底
+│   ├── src/commands/       # 平铺的接口+Token (单一文件 per 接口)
+│   ├── src/config/         # 初始化/模块/布局
+│   ├── src/service/        # 8 实现
+│   ├── src/extensions/     # chat / workspace / login / actions / welcome
+│   └── src/styles/         # CSS
+├── extensions/             # 扩展源码: html-preview / paper
+└── registry/               # 扩展分发: build → metadata.json + 静态资源（:7790）
+```
 
-### 待优化交互体验问题（登记）
+## 关键命令
+
+```bash
+# 用户使用 (推荐)
+npx github:weizuxiao911/magicbook              # 一行启动 (cli's web 模式)
+
+# 开发者本地
+npm install                                  # 根: 装 tsx (~10s)
+cd cli && npm install                         # 装 cli 的 tsx/typescript (~5s)
+cd ../client && npm install                   # 装 react/codeblitz/webpack (~30s)
+cd ../.. && npm run dev                       # 或: node cli/bin/cli.cjs
+
+# 单独模式
+npx github:weizuxiao911/magicbook serve       # 只起 opencode (无 client)
+
+# 验证
+cd client && npm run typecheck                # tsc --noEmit
+```
+
+## 约定 / 禁忌
+
+- **单一事实源**：端口、CORS、APP_BASE_URL 全由 cli 控制, 透 process.env 注入 webpack；不要散落到各 service / 各模块。
+- **跨层只通过协议交互**：client 调 opencode API；不直连 opencode 进程内部状态。
+- **直连无代理**：client → opencode 之间不加任何 HTTP 中间层（历史教训: 中间层带来 409 死锁 / ws 卡死 / CORS 散落）。
+- **写操作走 PTY，不走 session.shell**：session 单 shell 限制 → 409 风暴；PTY 是全局的，无此问题。
+- **中文路径 encodeURI**：HTTP header 必须 ISO-8859-1, `x-opencode-directory` 需 `encodeURI()`。
+- **平台兼容**：fs 命令按 host 平台分流（mac/linux=POSIX, win=PowerShell）；shell 选择走 `/pty/shells` 探测，不猜 UA。
+- **单一职责**：每个模块只做一件事，不跨模块堆逻辑。
+- **配置外置**：敏感信息不入库（.env 走 .gitignore）。
+- **中文优先**：文档、接口说明、用户可见文案以中文为主。
+- **tsx 统一**：bin/cli.cjs + cli/src/main.ts + client/webpack.config.ts 全走 tsx（替代历史 ts-node 链路）。
+
+## 验证清单（改完跑）
+
+```bash
+cd client && npm run typecheck                # tsc --noEmit 通过
+node cli/bin/cli.cjs                          # cli web 模式起来; opencode 3100 + webpack 7788
+# 浏览器开 http://localhost:7788
+# explorer 列表正常 + 上传文件 + 终端 三件套
+```
+
+## 待优化交互体验问题（登记）
 
 | 问题 | 现象 | 期望 | 备注 |
 | --- | --- | --- | --- |

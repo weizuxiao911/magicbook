@@ -1,125 +1,362 @@
 # AI 工作台
 
-浏览器端可交互工作台（**本地模式**）：**opensumi/codeblitz 全局交互容器**（explorer / 编辑器 / 终端 / 聊天 / 扩展）+ **opencode 直连后端**（AI + 终端 PTY + 文件系统）+ **registry 扩展分发**。
+> 浏览器端可交互工作台（本地模式）。`codeblitz` 全局交互容器 直连 `opencode` 后端，`registry` 提供 vsix 扩展分发。
+> `npx github:weizuxiao911/magicbook` 一行启动。
 
-`npx github:weizuxiao911/magicbook` 一行启动整套。
+## 架构总览
 
-## 架构
+```mermaid
+graph TB
+    subgraph Browser["🌐 浏览器 (client/)"]
+        UI["codeblitz 容器<br/>(explorer/编辑器/终端/聊天)"]
+        FS["fs 服务<br/>读: 全局 API<br/>写: FsPty 单例 PTY"]
+        SDK["SDK 直连<br/>(无中间代理)"]
+        UI --> FS
+        UI --> SDK
+    end
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ 浏览器 (client/ + extensions/)                           │
-│   - opensumi/codeblitz 容器 (explorer/编辑器/终端/聊天) │
-│   - SDK 直连 opencode (无中间代理, 无中间层抽象)      │
-│   - 写操作走单例 PTY (FsPty, 跨平台 shell-ops)          │
-│   - 读操作走 opencode 全局 API (/api/fs/* /find/file)    │
-└────────────────────┬────────────────────────────────────┘
-                     │ WebSocket / fetch
-                     │ (APP_BASE_URL, 单一事实源)
-┌────────────────────▼────────────────────────────────────┐
-│ opencode serve (3100, 默认)                              │
-│   - /api/fs/{list,read,find}    全局只读 API            │
-│   - /api/pty / WS                终端 + 单例 PTY 通道    │
-│   - /path                        宿主 cwd + home        │
-│   - /session/{id}/shell          仅给 chat agent 工具调 │
-└─────────────────────────────────────────────────────────┘
+    subgraph Backend["⚙️ opencode (外部进程, cli 拉起)"]
+        API["/api/fs/* /find/file<br/>(全局只读)"]
+        PTY["/api/pty + WS<br/>(全局 PTY 通道)"]
+        SHELL["/session/{id}/shell<br/>(仅供 chat agent)"]
+        PWD["/path<br/>(host cwd + home)"]
+    end
 
-registry (7790, HTTPS) — vsix 扩展分发 (独立服务)
-```
+    subgraph Dist["📦 registry (独立进程)"]
+        META["metadata.json"]
+        VSIX["vsix 解压资源"]
+    end
 
-**关键变化（vs 旧架构）**:
-- ❌ 旧: client → 中间层(:7789, /ai /fs /workspace) → opencode(:24096) 三层
-- ✅ 新: client → opencode(:3100) 直连, cli 是进程编排器
-- ❌ 旧: 中间层 HTTP 路由实现 /fs
-- ✅ 新: 写操作走 FsPty 单例 PTY, 读操作走 opencode 全局 API
-- ❌ 旧: 中间层抽象 (singleton / runtime / 等)
-- ✅ 新: 单一事实源 (cli's --port → process.env → webpack 注入)
+    SDK ==>|"fetch / WebSocket<br/>APP_BASE_URL"| API
+    SDK ==>|"fetch / WebSocket"| PTY
+    SDK -.->|"启动时拉"| META
+    SDK -.->|"激活时拉"| VSIX
 
-## 快速开始
-
-```bash
-# 方式 1: npx (推荐, 一行启动, 自动装依赖)
-npx github:weizuxiao911/magicbook              # 默认 :3100 + :7788
-npx github:weizuxiao911/magicbook --port 4000  # opencode 4000
-npx github:weizuxiao911/magicbook --client-port 8000  # webpack 8000
-
-# 方式 2: git clone + npm install (本地开发)
-git clone https://github.com/weizuxiao911/magicbook
-cd magicbook
-npm install
-npm run dev                # cli web 模式 (opencode 3100 + client 7788)
-npm run serve              # 只起 opencode (无 client)
+    classDef browser fill:#e3f2fd,stroke:#1976d2
+    classDef backend fill:#fff3e0,stroke:#f57c00
+    classDef dist fill:#f3e5f5,stroke:#7b1fa2
+    class Browser browser
+    class Backend backend
+    class Dist dist
 ```
 
-| 服务 | 地址 | 说明 |
+## 端口单一事实源 (cli)
+
+```mermaid
+graph LR
+    A["🖥️ 用户<br/>cli --port 4000"] --> B["cli/bin/cli.cjs<br/>set process.env<br/>APP_BASE_URL"]
+    B -->|"env 继承"| C["opencode serve<br/>:4000"]
+    B -->|"env 继承"| D["webpack-dev-server<br/>:7788"]
+    D -->|"编译期<br/>DefinePlugin"| E["__APP_BASE_URL__<br/>= http://127.0.0.1:4000"]
+    E --> F["客户端 SDK<br/>直连 :4000"]
+    C -.->|"响应"| F
+
+    classDef user fill:#fff9c4
+    classDef cli fill:#c8e6c9
+    classDef server fill:#bbdefb
+    classDef client fill:#f8bbd0
+    class A user
+    class B cli
+    class C,D server
+    class E,F client
+```
+
+| 端 | 默认 | cli flag | env var |
+| --- | --- | --- | --- |
+| opencode | 3100 | `--port` | `APP_BASE_URL` (= `http://127.0.0.1:<port>`) |
+| webpack-dev-server | 7788 | `--client-port` | `CLIENT_PORT` |
+| opencode 绑定地址 | 127.0.0.1 | `--hostname` | — |
+| CORS allow-origin | 派生 | (auto, 跟 `--client-port`) | — |
+
+## 数据流
+
+### fs 读 (list / read / find / meta)
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant O as opencode
+
+    C->>O: GET /api/fs/list?path=.<br/>x-opencode-directory: <cwd>
+    Note over C,O: encodeURI 包装中文路径
+    O->>O: 解析 cwd, 列目录
+    O-->>C: { data: [{ path, type }] }
+    Note over C,O: 0 中间层, 直连
+```
+
+### fs 写 (write / rm / mkdir / move / readBinary)
+
+```mermaid
+sequenceDiagram
+    participant C as Client (FsPty)
+    participant O as opencode (/api/pty + WS)
+
+    Note over C: lazy init: 探测 /pty/shells
+    C->>O: POST /api/pty { command: zsh, cwd }
+    O-->>C: { id: pty_xxx }
+    C->>O: WS /api/pty/{id}/connect
+    Note over C,O: 全局 PTY, 单例
+    C->>O: write cmd + UUID marker
+    Note over C,O: promise chain 串行
+    O-->>C: stdout (含 marker)
+    C->>C: 截取 marker, 返回 { ok, output }
+```
+
+### terminal (用户开终端)
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant T as terminal.ts
+    participant O as opencode
+
+    U->>T: create2()
+    T->>O: POST /api/pty { command: zsh }
+    O-->>T: { id }
+    T->>O: WS /api/pty/{id}/connect
+    Note over T,O: 每终端独立 session
+    T-->>U: 渲染终端
+    U->>T: 输入命令
+    T->>O: ws.send(input)
+    O-->>T: stdout
+    T-->>U: 显示输出
+```
+
+## 组件
+
+```mermaid
+graph TB
+    subgraph CLI["cli/ (进程编排器)"]
+        BIN["bin/cli.cjs<br/>(npx 入口, 44 行)"]
+        MAIN["src/main.ts<br/>(web/serve 路由)"]
+    end
+
+    subgraph CLIENT["client/ (浏览器)"]
+        COMMANDS["src/commands/<br/>接口 + Token"]
+        CONFIG["src/config/<br/>初始化/模块/布局"]
+        SERVICE["src/service/<br/>8 实现"]
+        EXT["src/extensions/<br/>chat/workspace/login/..."]
+    end
+
+    subgraph OPENCODE["opencode (外部)"]
+        FS["/api/fs/*"]
+        PTY["/api/pty + WS"]
+        SHELL["/session/{id}/shell"]
+    end
+
+    subgraph REG["registry/ (独立)"]
+        BUILD["build → metadata.json"]
+        SERVE["serve :7790 HTTPS"]
+    end
+
+    BIN --> MAIN
+    MAIN -->|spawn| OPENCODE
+    MAIN -->|spawn webpack| SERVICE
+    SERVICE --> FS
+    SERVICE --> PTY
+    EXT -.->|激活时加载| REG
+
+    classDef cli fill:#c8e6c9
+    classDef client fill:#bbdefb
+    classDef opencode fill:#fff3e0
+    classDef reg fill:#f3e5f5
+    class BIN,MAIN cli
+    class COMMANDS,CONFIG,SERVICE,EXT client
+    class FS,PTY,SHELL opencode
+    class BUILD,SERVE reg
+```
+
+| 端 | 目录 / 进程 | 职责 |
 | --- | --- | --- |
-| 工作台 | http://localhost:7788 (默认) | 浏览器打开; 端口可由 `--client-port` 改 |
-| opencode | http://127.0.0.1:3100 (默认) | AI + 终端 + 文件系统; 端口由 `--port` 改 |
-| registry | https://127.0.0.1:7790 | 扩展分发（自签; 单独 `cd registry && npm run dev`） |
+| cli 编排器 | `cli/bin/cli.cjs` + `cli/src/main.ts` | npx 入口; 解析参数; 拉起 opencode + webpack 子进程; 进程组清理 |
+| 客户端 | `client/` | codeblitz 容器 + 8 service + 4 内置 extension |
+| 客户端 | `client/src/commands/` | 接口 + Token 定义 (IAgent/IRegistry/IFileSystem/IEnvService/IAuth) |
+| 客户端 | `client/src/config/` | 初始化 / 模块注册 / 布局 / runtime config |
+| 客户端 | `client/src/styles/` | CSS 覆盖 |
+| 客户端 | `client/src/extensions/` | 拓展 (chat/workspace/login/actions/welcome) |
+| 后端 | opencode (外部进程) | AI 推理 + 终端 PTY + 文件系统; cli 拉起的子进程 |
+| 扩展 | `extensions/<name>/` | vsix 源码 (html-preview / paper) |
+| 分发 | `registry/` (独立进程) | vsix 扩展分发 (build → metadata.json + 静态资源) |
 
-## 端口与配置（单一事实源: cli）
+## 启动方式
 
-```bash
-cli --port <N>             # opencode 端口 (默认 3100)
-cli --client-port <N>      # webpack-dev-server 端口 (默认 7788)
-cli --hostname <host>      # opencode 绑定地址 (默认 127.0.0.1)
-# CORS auto-derived: http://<hostname>:<client-port>
+```mermaid
+graph TD
+    Start([用户]) --> Choice{选择启动方式}
+    Choice -->|npx<br/>推荐| Npx["npx github:weizuxiao911/magicbook<br/>自动 clone + 装依赖 + 跑 bin"]
+    Choice -->|git clone<br/>本地开发| Git["git clone ...<br/>npm install<br/>npm run dev"]
+    Npx --> Mode{模式}
+    Git --> Mode
+    Mode -->|web<br/>默认| Web["启 opencode + webpack<br/>:3100 + :7788"]
+    Mode -->|serve| Serve["只启 opencode<br/>:3100"]
+    Web --> End([打开 http://localhost:7788])
+    Serve --> End2([CLI 调用 API])
+
+    classDef start fill:#fff9c4
+    classDef npx fill:#c8e6c9
+    classDef git fill:#bbdefb
+    classDef mode fill:#f8bbd0
+    classDef end fill:#d1c4e8
+    class Start start
+    class Npx npx
+    class Git git
+    class Mode mode
+    class Web,Serve npx
+    class End,End2 end
 ```
 
-cli 启动时把 `--port` 通过 `process.env.APP_BASE_URL` 注入 webpack, webpack 编译期 `__APP_BASE_URL__` 注入前端 bundle. 客户端 SDK 直连, 无 CORS 配置散落.
-
-`client/.env.development` 是直跑 `cd client && npm run dev` 的兜底（不走 cli 时）:
-
 ```bash
-APP_BASE_URL=http://127.0.0.1:3100   # 跟 cli --port 一致
-REGISTRY_BASE_URL=https://127.0.0.1:7790
+# 1. npx (推荐, 公共仓库)
+npx github:weizuxiao911/magicbook
+npx github:weizuxiao911/magicbook --port 4000          # opencode 4000
+npx github:weizuxiao911/magicbook --client-port 8000   # webpack 8000
+npx github:weizuxiao911/magicbook serve                # 只起 opencode
+
+# 2. git clone (本地开发)
+git clone https://github.com/weizuxiao911/magicbook
+cd magicbook && npm install
+cd cli && npm install && cd ..
+cd client && npm install && cd ..
+npm run dev
 ```
 
-## 扩展开发与分发
+| 端 | 地址 | 说明 |
+| --- | --- | --- |
+| 工作台 | http://localhost:7788 | 浏览器入口 |
+| opencode | http://127.0.0.1:3100 | AI + 终端 + 文件系统 |
+| registry | https://127.0.0.1:7790 | 扩展分发 (需 `cd registry && npm run dev`) |
 
-1. **写扩展源码**：`extensions/<name>/`（**一律 TypeScript**：`src/extension.ts` 入口 + esbuild 编译到 `dist/`；**必须声明 `browser` 字段**（浏览器扩展，无 node 依赖）；**publisher 统一 `weizuxiao911`**）
-   - **webview 单独维护**：扩展若有 webview UI，放 `webview/` 目录（或 `webview.tsx`），不内联拼 HTML 字符串
-   - HTML 预览示例：`extensions/html-preview/`（TS + `src/extension.ts`，customEditor `*.html` → webview 直接运行文件内容，支持 JS 执行）
-   - 试卷预览示例：`extensions/paper/`（TS + `webview/` vite 构建，customEditor `*.paper`）
-2. **打包**：在扩展目录 `npx @vscode/vsce package --allow-missing-repository`
-   - vsix 文件名规范 `{发布者}.{拓展名称}-{版本}.vsix`（vsce 默认生成，如 `weizuxiao911.magicbook-html-preview-0.1.0.vsix`）
-3. **分发**：把 `.vsix` 放入 `registry/vsix/`，然后：
+## 平台兼容
 
-```bash
-cd registry
-npm run build     # 扫描 vsix → 解压 dist/<id>/ + 生成 metadata.json
-npm run serve     # HTTPS 分发（:7790）
+```mermaid
+graph TD
+    Start([fs 操作]) --> Detect{检测 host OS}
+    Detect -->|navigator.platform| Mac["macOS<br/>zsh 优先"]
+    Detect --> Linux["Linux<br/>bash 优先"]
+    Detect --> Win["Windows<br/>powershell / pwsh"]
+
+    Mac --> Probe["opencode /pty/shells<br/>取可用 shell 列表"]
+    Linux --> Probe
+    Win --> Probe
+
+    Probe --> Pick{匹配平台}
+    Pick -->|mac/linux| Posix["POSIX<br/>(bash / zsh / sh / fish)"]
+    Pick -->|win| Ps["PowerShell<br/>(pwsh / powershell)"]
+    Pick -->|fallback| Cmd["cmd.exe<br/>(部分操作支持)"]
+
+    Posix --> Cmd2[("mkdir -p<br/>mv / rm -rf<br/>stat -c<br/>base64 -d")]
+    Ps --> Cmd3[("New-Item -ItemType Directory<br/>Move-Item -Force<br/>Remove-Item -Recurse<br/>Get-Item")]
+    Cmd --> Cmd4[("mkdir<br/>rmdir /S /Q<br/>move /Y<br/>(无 stat)")]
+
+    classDef os fill:#e3f2fd
+    classDef posix fill:#c8e6c9
+    classDef ps fill:#fff3e0
+    classDef cmd fill:#ffccbc
+    class Mac,Linux,Win,Detect os
+    class Posix,Cmd2 posix
+    class Ps,Cmd3 ps
+    class Cmd,Cmd4 cmd
 ```
 
-4. **客户端加载**：刷新工作台 → 打开匹配文件（如 `demo.html` / `demo.paper`）→ customEditor 激活 → 预览。
+| 平台 | shell | fs 命令 |
+| --- | --- | --- |
+| macOS | /bin/zsh (默认) / bash | `mkdir -p` / `mv` / `rm -rf` / `stat -c` / `base64 -d` |
+| Linux | /bin/bash | (同上) |
+| Windows | powershell / pwsh | `New-Item` / `Move-Item -Force` / `Remove-Item -Recurse` / `Get-Item` |
+| Windows 兜底 | cmd.exe | `mkdir` / `rmdir /S /Q` / `move /Y` (无 stat) |
 
-> 扩展激活链路：metadata → 打开文件触发 `onCustomEditor:<viewType>` → 拉取 `browser` 入口 → 注册 provider → resolve webview。
-> 常见问题（FileType 常量 / 证书 / 控制帧过滤 / __PAPER_MANIFEST__ 等）见 [`AGENTS.md`](./AGENTS.md) 的「常见问题与修复」速查表。
+## 扩展机制
 
-### 首次运行：信任 registry 证书
+```mermaid
+graph LR
+    subgraph Source["extensions/&lt;name&gt;/ (源码)"]
+        TS["src/extension.ts<br/>(TypeScript)"]
+        WV["webview/<br/>(iframe UI)"]
+    end
 
-registry 用自签 HTTPS（kt-ext 协议强制 https），首次需要把证书加入系统钥匙串：
+    TS -->|"esbuild<br/>(禁 node builtins)"| Bundle["dist/extension.js<br/>(browser 入口)"]
+    WV -->|"vite build"| WV2["webview/<br/>(构建产物)"]
+
+    Bundle --> VSIX["vsce package<br/>→ *.vsix"]
+    WV2 --> VSIX
+
+    VSIX -->|"放入<br/>registry/vsix/"| Reg["registry/<br/>build → metadata.json"]
+    Reg --> Serve["HTTPS :7790<br/>(kt-ext)"]
+
+    Serve --> Meta["metadata.json"]
+    Meta -.->|启动时拉| Client["client/<br/>(加载元数据)"]
+    WV2 -.->|激活时拉| Client
+
+    Client --> Match{打开匹配文件}
+    Match -->|.html| HP["html-preview 激活"]
+    Match -->|.paper| PP["paper 激活"]
+    HP --> Iframe["iframe 内运行<br/>用户 JS 可执行"]
+    PP --> Iframe
+
+    classDef src fill:#e3f2fd
+    classDef bundle fill:#fff3e0
+    classDef dist fill:#f3e5f5
+    classDef client fill:#c8e6c9
+    class TS,WV src
+    class Bundle,WV2 bundle
+    class VSIX,Reg,Serve dist
+    class Client,Match,HP,PP,Iframe client
+```
+
+**扩展开发规范**:
+- **一律 TypeScript** (`src/extension.ts` + esbuild → `dist/extension.js`)
+- **webview 单独维护** (`webview/` 目录, 不内联拼 HTML)
+- **publisher 统一 `weizuxiao911`**
+- **vsix 文件名** `{发布者}.{拓展名称}-{版本}.vsix`
+- **MIT** 开源协议
+
+激活链路: `metadata → 打开文件 → onCustomEditor:<viewType> → 拉 browser 入口 → provider 注册 → resolve webview`
+
+### 首次运行: 信任 registry 证书
 
 ```bash
 sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \
-  /Users/weizuxiao/Documents/开源项目/workspace-dev/registry/certs/cert.pem
+  /Users/weizuxiao911/.../registry/certs/cert.pem
 ```
 
-（证书已含 SAN：`localhost` 与 `127.0.0.1`；重新生成：见 `registry/` 说明）
+(证书已含 SAN: `localhost` + `127.0.0.1`)
 
 ## 目录
 
-| 路径 | 职责 |
-| --- | --- |
-| `cli/` | 进程编排器：`bin/cli.cjs` npx 入口 + `src/main.ts` web/serve 路由; opencode 进程组管理 |
-| `client/` | opensumi/codeblitz 容器 + 适配层（RemoteFS / 终端 / registry / 聊天）+ 登录 |
-| `client/src/commands/` | 接口+Token 定义 (IAgent/IRegistry/IFileSystem/IEnvService/IAuth) |
-| `client/src/config/` | 初始化 / 模块注册 / 布局 / runtime config |
-| `client/src/service/` | 8 实现 (agent/auth/env/fs/fs-pty/registry/shell-ops/terminal) |
-| `client/src/styles/` | CSS 覆盖 |
-| `client/.env.development` | cli 不走时的兜底配置 |
-| `extensions/` | vsix 扩展源码（html-preview / paper） |
-| `registry/` | vsix 扩展分发（HTTPS，kt-ext；build → metadata.json + 静态资源） |
+```
+magicbook/
+├── package.json            # 顶层 bin (cli) + dev/serve scripts
+├── cli/                    # 进程编排器
+│   ├── bin/cli.cjs         # npx 入口 (CommonJS, 44 行)
+│   ├── src/main.ts         # web/serve 路由 + opencode/webpack 进程管理
+│   └── package.json        # devDeps: tsx + typescript
+├── client/                 # codeblitz 容器
+│   ├── package.json        # deps + devDeps
+│   ├── webpack.config.ts   # 内嵌; 端口读 process.env.CLIENT_PORT
+│   ├── .env.development    # cli 不走时的兜底
+│   ├── src/commands/       # 接口 + Token (平铺)
+│   ├── src/config/         # 初始化 / 模块 / 布局 / runtime
+│   ├── src/service/        # 8 实现
+│   ├── src/extensions/     # chat / workspace / login / actions / welcome
+│   └── src/styles/         # CSS
+├── extensions/             # vsix 扩展源码 (html-preview / paper)
+├── registry/               # vsix 扩展分发 (独立进程, :7790)
+└── LICENSE                 # MIT
+```
+
+## 技术选型速览
+
+| 层 | 选型 | 原因 |
+| --- | --- | --- |
+| npx 入口 | `cli/bin/cli.cjs` (CommonJS) | npx 调 .js 文件 (不能 TS), 必须 JS; 内部 spawn tsx 跑 TS |
+| 进程编排 | `tsx` 统一 | 替代历史 ts-node, 启动快 ~300ms |
+| 写操作 | 单例 PTY (FsPty) | 绕开 opencode session 单 shell 限制 (409) |
+| 读操作 | opencode 全局 API | 轻量、高频, 无 session 限制 |
+| 终端 | `/pty/{id}/connect` WS | 每终端独立 session, 不冲突 |
+| 端口注入 | `process.env` | 单一事实源, cli → webpack → client 一条链 |
+| 平台兼容 | `/pty/shells` 探测 + 平台分流 | macOS=zsh, Linux=bash, Windows=powershell |
+| CJK 路径 | `encodeURI` header | HTTP header 限制 ISO-8859-1, 浏览器自动 |
+| 依赖 | root 只 `tsx`, cli 只 `tsx`, client 全套 | 各管各, 互不污染 (-98% root size) |
 
 ## License
 
