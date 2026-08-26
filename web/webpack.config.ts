@@ -101,8 +101,6 @@ const config: webpack.Configuration = {
       },
     },
   },
-  devtool: process.env.NODE_ENV === 'production' ? 'source-map' : 'eval-cheap-module-source-map',
-  mode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
   resolve: {
     extensions: ['.ts', '.tsx', '.js', '.json'],
     alias: {
@@ -225,6 +223,7 @@ const config: webpack.Configuration = {
     // 第三方库（opensumi/codeblitz）浏览器 fallback: 构建期 polyfill, src 本身零 node 依赖
     new NodePolyfillPlugin({ includeAliases: ['process', 'Buffer'] }),
   ],
+  // @ts-ignore - devServer 不在 webpack.Configuration 类型里, 但 CLI serve 模式接受
   devServer: {
     allowedHosts: 'all',
     host: '0.0.0.0',

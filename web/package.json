@@ -4,8 +4,9 @@
   "private": true,
   "description": "Numas web — opensumi/codeblitz 交互层（纯浏览器）",
   "scripts": {
-    "dev": "tsx node_modules/webpack-cli/bin/cli.js serve --config webpack.config.ts",
-    "build": "cross-env NODE_ENV=production tsx node_modules/webpack-cli/bin/cli.js --config webpack.config.ts",
+    "dev": "node node_modules/webpack-cli/bin/cli.js serve --config webpack.config.js",
+    "build": "npm run build:config && cross-env NODE_ENV=production node node_modules/webpack-cli/bin/cli.js --config webpack.config.js",
+    "build:config": "tsc webpack.config.ts --module CommonJS --target ES2020 --esModuleInterop --skipLibCheck --resolveJsonModule",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
@@ -33,7 +34,6 @@
     "style-loader": "^3.3.1",
     "ts-loader": "^9.5.1",
     "ts-node": "^10.9.2",
-    "tsx": "^4.23.12",
     "typescript": "^5.5.4",
     "url-loader": "^4.1.1",
     "webpack": "^5.89.0",
