@@ -51,9 +51,21 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         return '';
       };
+      // 赋值内容。opensumi webview 的 _sendToWebview 在 _isListening=false 时会丢弃内容
+      // （WebviewMounter.doMount 视容器尺寸控制 listening）; 故内容就绪后要多次间隔重发,
+      // 确保某次落在 listening=true 时刻, 否则 iframe 一直是空宿主页.
+      let timers: ReturnType<typeof setTimeout>[] = [];
+      const pushContent = (html: string) => {
+        timers.forEach((t) => clearTimeout(t));
+        timers = [];
+        // 立即 + 多档延迟重发（覆盖 container 布局/doMount 完成前的空窗期）
+        [0, 300, 1000, 2500, 5000].forEach((delay) => {
+          timers.push(setTimeout(() => { try { webviewPanel.webview.html = html; } catch { /* ignore */ } }, delay));
+        });
+      };
       const update = async () => {
         const html = await readContent();
-        if (isRenderable(html)) webviewPanel.webview.html = html;
+        if (isRenderable(html)) pushContent(html);
       };
       // 恢复/懒加载打开时 document 内容可能尚未加载完（getText 为空）→ 延迟重试更新
       // （参照 paper 扩展 scheduleReload; 避免 webview 一直是空预览）
@@ -61,7 +73,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const ensureRendered = (attempt: number) => {
         void readContent().then((html) => {
           if (isRenderable(html)) {
-            webviewPanel.webview.html = html;
+            pushContent(html);
             return;
           }
           if (attempt < 60) retryTimer = setTimeout(() => ensureRendered(attempt + 1), 500);
@@ -73,6 +85,7 @@ export function activate(context: vscode.ExtensionContext): void {
       });
       webviewPanel.onDidDispose(() => {
         if (retryTimer) clearTimeout(retryTimer);
+        timers.forEach((t) => clearTimeout(t));
         panels.delete(document.uri.toString());
         changeSub.dispose();
       });
