@@ -31,6 +31,7 @@ const root = path.resolve(__dirname, '../..');  // cli/bin → 项目根
 const cliDir = path.resolve(__dirname, '..');    // cli/bin → cli/
 const webDir = path.join(root, 'web');
 const registryDir = path.join(root, 'registry');
+const REGISTRY_PORT = 7790;
 
 const tsxBin = path.join(root, 'node_modules', '.bin', 'tsx');
 const opencodeBin = path.join(cliDir, 'node_modules', '.bin', 'opencode');
@@ -110,6 +111,8 @@ const hostname = hostnameIdx >= 0 && args[hostnameIdx + 1] ? args[hostnameIdx + 
 process.env.APP_BASE_URL = process.env.APP_BASE_URL || `http://${hostname}:${port}`;
 // web 端口也通过 env var 传给 webpack-dev-server
 process.env.WEB_PORT = webPort;
+// registry 端口注入 web 端 (跟 opencode 同模式: 单一事实源 = cli 决定 url)
+process.env.REGISTRY_BASE_URL = process.env.REGISTRY_BASE_URL || `http://${hostname}:${REGISTRY_PORT}`;
 
 // spawn 决策: 优先本地 node_modules/.bin/tsx (保证版本一致), 否则用 PATH 的 tsx (用户全局装)
 const useLocalTsx = fs.existsSync(tsxBin);

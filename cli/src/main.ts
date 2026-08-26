@@ -123,7 +123,7 @@ function spawnClient(): ChildProcess {
 // ---- 子进程: registry (vsix 扩展分发, 仅 web 模式需要) ----
 function spawnRegistry(): ChildProcess {
   const registryDir = resolve(__dirname, '../../registry');
-  console.log(`[cli] 启动 registry (HTTPS :${REGISTRY_PORT}, cwd: ${registryDir})...`);
+  console.log(`[cli] 启动 registry (:${REGISTRY_PORT}, cwd: ${registryDir})...`);
   // registry 走 node --experimental-strip-types (Node 22+ 内置 TS 支持), 跑 src/server.ts
   const child = spawn('node', [
     '--experimental-strip-types',
