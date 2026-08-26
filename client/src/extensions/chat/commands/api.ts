@@ -1,20 +1,20 @@
 /**
  * ai api 共享底层 — extensions/chat/commands/api
  *
- * 前置: 全局 opencode SDK 实例已创建 (由 service/opencode 创建并挂 window.__APP_OPENCODE__).
+ * 前置: 全局 opencode SDK 实例已创建 (由 service/agent 创建并挂 window.__APP_OPENCODE__).
  * 本文件提供 AI 会话/消息的底层封装, 供 chat webview 复用.
- * chat 只引用全局 opencode 实例, 不 import 任何 service/opencode 内部实现.
+ * chat 只引用全局 opencode 实例, 不 import 任何 service/agent 内部实现.
  *
  * v2 client 参数为平铺结构: SDK 的 buildClientParams 内部把 id/agent/model 等
  * 映射到 body, sessionID 等映射到 path.
  */
 
-/** 全局 opencode SDK 实例 (service/opencode 创建后挂载) */
+/** 全局 opencode SDK 实例 (service/agent 创建后挂载) */
 function getGlobalOpencodeClient() {
   return (window as any).__APP_OPENCODE__;
 }
 
-/** 全局 opencode runtime 元信息 (baseUrl 等, service/opencode 挂载) */
+/** 全局 opencode runtime 元信息 (baseUrl 等, service/agent 挂载) */
 function getGlobalOpencodeRuntime() {
   return (window as any).__APP_OPENCODE_RUNTIME__ || {};
 }
@@ -28,7 +28,7 @@ export function isAiReady(): boolean {
 }
 
 export async function waitForAiReady(timeoutMs = 8000): Promise<void> {
-  // 等 SDK client 就绪 (沙箱/SDK 重连期间不立即抛错)
+  // 等 SDK client 就绪（agent runtime 初始化期间不立即抛错）
   if (isAiReady()) return;
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -48,7 +48,7 @@ function buildOpencodeUrl(path = ''): string {
 
 export function assertAiReady(): void {
   if (!isAiReady()) {
-    throw new Error('opencode client not ready (sandbox 未激活, 登录后会自动激活)');
+    throw new Error('opencode client not ready (agent runtime 未就绪, 登录后会自动激活)');
   }
 }
 

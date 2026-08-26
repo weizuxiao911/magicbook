@@ -2,7 +2,7 @@
  * auth 实现 — service/auth/index.ts
  *
  * implements core/commands/auth 的 IAuth: 登录态 / 会话 / 运行时就绪.
- * 单一事实源: cookie 登录态 + sandbox runtime 就绪 + 全局事件广播.
+ * 单一事实源: cookie 登录态 + agent runtime 就绪 + 全局事件广播.
  *
  * 跨拓展唤起登录走 AUTH_CMD 命令（login 拓展注册, 此处经 CommandService 执行）.
  */
@@ -11,8 +11,8 @@ import { Injectable, Autowired, INJECTOR_TOKEN, Injector } from '@opensumi/di';
 import { BrowserModule } from '@opensumi/ide-core-browser';
 import { CommandService } from '@opensumi/ide-core-common';
 
-import type { AuthEvent, IAuth } from '../core/commands/auth';
-import { AuthToken, AUTH_CMD } from '../core/commands/auth';
+import type { AuthEvent, IAuth } from '../commands/auth';
+import { AuthToken, AUTH_CMD } from '../commands/auth';
 
 const USER_COOKIE = 'animbook_username';
 
@@ -44,8 +44,8 @@ export class AuthServiceImpl implements IAuth {
   }
 
   isRuntimeReady(): boolean {
-    const rt = (window as any).__APP_SANDBOX__?.getRuntime?.();
-    return !!rt;
+    // agent runtime 就绪 = __APP_CONFIG__.cwd 已注入（initRuntime 完成）
+    return !!(window as any).__APP_CONFIG__?.cwd;
   }
 
   showLogin(): void {
@@ -73,7 +73,7 @@ export class AuthServiceImpl implements IAuth {
     this.emit('logined');
   }
 
-  /** runtime 就绪/丢失（由 sandbox 应用后调用） */
+  /** runtime 就绪/丢失（由 agent 应用后调用） */
   runtimeChanged(ready: boolean): void {
     this.emit(ready ? 'runtime-ready' : 'runtime-lost');
   }

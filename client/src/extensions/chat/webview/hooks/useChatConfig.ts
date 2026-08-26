@@ -62,12 +62,12 @@ export function useChatConfig(ready: boolean) {
       await attempt();
     };
     void wrap();
-    const onSandboxReady = () => { if (timer) clearTimeout(timer); void wrap(); };
-    window.addEventListener('chat:sandbox-ready', onSandboxReady);
+    const onRuntimeReady = () => { if (timer) clearTimeout(timer); void wrap(); };
+    window.addEventListener('runtime-ready', onRuntimeReady);
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
-      window.removeEventListener('chat:sandbox-ready', onSandboxReady);
+      window.removeEventListener('runtime-ready', onRuntimeReady);
     };
   }, [ready, attempt]);
 

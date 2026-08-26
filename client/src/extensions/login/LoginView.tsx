@@ -7,18 +7,18 @@
  * 流程:
  *   - 启动读 cookie: 有 username → 直接初始化 + 建 client (已登录, 跳过)
  *   - 无 → 全屏登录页
- *   - 登录成功 → 写 cookie → 初始化 BASE_URL + SDK client → 派发 app.logined
- *   - 监听 app.connected (fs 确认 client 就绪) → 写 .env.user → 进入主界面
+ *   - 登录成功 → 写 cookie → 触发 agent.initRuntime()（有 APP_CWD 时探 opencode 注入 cwd/shell）→ 派发 app.logined
+ *   - 监听 app.connected (agent runtime 就绪后) → 写 .env.user → 进入主界面
  */
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/injectable-hooks';
 import { CommandService } from '@opensumi/ide-core-common';
 
-import { getSandboxService } from '../../service/sandbox';
+import { getAgentService } from '../../service/agent';
 import { getAuthService } from '../../service/auth';
-import { APP_CHAT_CONFIG } from '../../core/config/brand';
-import { FsToken, type IFileSystem } from '../../core/commands/fs';
+import { APP_CHAT_CONFIG } from '../../config/brand';
+import { FsToken, type IFileSystem } from '../../commands/fs';
 
 import { LOGIN_EVENTS, USER_COOKIE, getCookie } from './module';
 
@@ -52,20 +52,18 @@ export const LoginView: React.FC = () => {
     return () => timers.forEach(clearTimeout);
   }, []);
 
-  /** 初始化服务 (登录后: 获取沙箱 runtime → 应用各协议地址 → 派发 app.logined) */
+  /** 初始化服务 (登录后: 触发 agent.initRuntime() → 派发 runtime-ready → 派发 app.logined) */
   const doLogin = useCallback((user: string) => {
     // 1. 登录态写入（service/auth 统一管理 cookie + 广播 logined）
     getAuthService().loginSucceed(user);
     void (async () => {
       try {
-        // 2. 获取/创建沙箱 → server 返回完整协议地址
-        const runtime = await getSandboxService().get();
-        // 3. 应用运行时 (写全局配置: agentUrl/fsUrl/registryUrl)
-        getSandboxService().applyRuntime(runtime);
+        // 2. 触发 agent runtime 初始化（有 APP_CWD 时探 opencode 注入 cwd/defaultShell, 派发 runtime-ready）
+        await getAgentService().initRuntime();
         getAuthService().runtimeChanged(true);
-        console.log('[login] sandbox runtime 就绪:', runtime.runtimeId);
+        console.log('[login] agent runtime 就绪');
       } catch (err) {
-        console.warn('[login] sandbox 获取失败 (骨架模式继续):', err);
+        console.warn('[login] agent runtime 初始化失败 (骨架模式继续):', err);
       }
       window.dispatchEvent(new CustomEvent(LOGIN_EVENTS.LOGINED, { detail: { username: user } }));
       console.log('[login] app.logined:', user);
@@ -86,7 +84,7 @@ export const LoginView: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 监听 app.connected: fs 侧 client 就绪后派发 → 写 .env.user → 进入主界面
+  // 监听 app.connected: agent runtime 就绪后派发 → 写 .env.user → 进入主界面
   useEffect(() => {
     const onConnected = (e: Event) => {
       const detail = (e as CustomEvent<{ username?: string }>).detail || {};

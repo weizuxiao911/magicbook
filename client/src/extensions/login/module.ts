@@ -6,9 +6,9 @@
  *   - LoginView: 用户名/密码表单, 本地免登录模式 (任意账号密码可登录)
  *
  * 登录流程 (见 README「登录与初始化流程」):
- *   1. 表单提交 → 初始化 opencodeBaseUrl/registryBaseUrl (env 默认值) + 建 SDK client
+ *   1. 表单提交 → 触发 agent.initRuntime()（有 APP_CWD 时探 opencode 注入 cwd/shell）→ 派发 runtime-ready
  *   2. 派发 app.logined {username}
- *   3. 监听 app.connected (fs 侧 client 就绪后派发) → fs.write /.env.user 写 username
+ *   3. 监听 app.connected (agent runtime 就绪后) → fs.write /.env.user 写 username
  */
 
 import { Injectable } from '@opensumi/di';
@@ -16,7 +16,7 @@ import { Domain, CommandContribution, CommandRegistry } from '@opensumi/ide-core
 import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser';
 import { ComponentContribution, ComponentRegistry } from '@opensumi/ide-core-browser/lib/layout';
 
-import { AUTH_CMD as AUTH_CMD_CORE } from '../../core/commands/auth';
+import { AUTH_CMD as AUTH_CMD_CORE } from '../../commands/auth';
 import { LoginView } from './LoginView';
 
 /** 自定义登录槽位 id (LayoutComponent 里用 SlotRenderer slot="login" 渲染为全屏遮罩) */

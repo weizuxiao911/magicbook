@@ -1,0 +1,16 @@
+{
+  "name": "cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "opencode + codeblitz 容器 — web 模式拉起 client + opencode, serve 模式只起 opencode",
+  "scripts": {
+    "web": "tsx src/main.ts web",
+    "serve": "tsx src/main.ts serve"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.5.4"
+  }
+}

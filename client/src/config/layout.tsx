@@ -4,7 +4,7 @@ import { BoxPanel, SplitPanel } from '@opensumi/ide-core-browser/lib/components'
 import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/injectable-hooks';
 import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 
-import { WorkspacePicker } from '../../extensions/workspace/WorkspacePicker';
+import { WorkspacePicker } from '../extensions/workspace/WorkspacePicker';
 
 export function LayoutComponent(): React.ReactElement {
   useInjectable<IMainLayoutService>(IMainLayoutService);

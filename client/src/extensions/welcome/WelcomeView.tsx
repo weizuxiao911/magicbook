@@ -2,8 +2,8 @@ import React, { useMemo, useRef } from 'react';
 import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/injectable-hooks';
 import { CommandService } from '@opensumi/ide-core-common';
 
-import { FsToken, type IFileSystem } from '@/core/commands/fs';
-import { EnvToken, type IEnvService } from '@/core/commands/env';
+import { FsToken, type IFileSystem } from '@/commands/fs';
+import { EnvToken, type IEnvService } from '@/commands/env';
 
 /**
  * WelcomeView — webapp 主区欢迎页

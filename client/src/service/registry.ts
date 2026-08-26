@@ -11,8 +11,8 @@ import { BrowserModule, Domain, URI } from '@opensumi/ide-core-browser';
 import { StaticResourceContribution, StaticResourceService } from '@opensumi/ide-core-browser/lib/static-resource';
 import { EXT_SCHEME } from '@codeblitzjs/ide-sumi-core/lib/common/constant';
 
-import type { ExtensionMetadata, IRegistry } from '../core/commands/registry';
-import { RegistryToken } from '../core/commands/registry';
+import type { ExtensionMetadata, IRegistry } from '../commands/registry';
+import { RegistryToken } from '../commands/registry';
 
 /** registry 服务地址（编译期 REGISTRY_BASE_URL 注入; HTTPS, kt-ext 协议） */
 function registryBaseUrl(): string {

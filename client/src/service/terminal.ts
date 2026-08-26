@@ -3,8 +3,7 @@
  *
  * 注册为 opensumi 的 ITerminalServicePath（后端服务）:
  *   - NodePtyTerminalService（opensumi 终端前端）经 DI 注入本实现
- *   - 不再有独立 pty_base_url: opencode 地址 = app_base_url/ai（sandbox 反向代理透传, 含 ws upgrade）,
- *     client 只消费通用契约:
+ *   - opencode serve 直连（无 /ai 前缀, server 端 = opencode 自己）:
  *     POST {opencode}/pty 创建会话, WebSocket {opencode}/pty/{id}/connect 数据通道
  *   - 输出含服务端控制帧（\u0000{json}, 如 cursor 同步）→ 过滤后为 pty 数据; 输入为纯文本
  */
@@ -21,10 +20,15 @@ import {
   type ITerminalServiceClient,
 } from '@opensumi/ide-terminal-next/lib/common';
 
-/** opencode 地址 = app_base_url/ai（唯一配置入口, 由 appBaseUrl 派生） */
+/** opencode serve 地址（单一配置入口, appBaseUrl 直连, 无 /ai 前缀） */
 function opencodeBaseUrl(): string {
-  const app = ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
-  return app ? `${app}/ai` : '';
+  return ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
+}
+
+/** 当前 cwd → x-opencode-directory header（per-request 工作目录切换, APP_CWD 优先, 兜底 hostCwd; encodeURI 防中文路径 break header） */
+function cwdHeader(): Record<string, string> {
+  const cwd = localStorage.getItem('APP_CWD') || (window as any).__APP_CONFIG__?.cwd;
+  return cwd ? { 'x-opencode-directory': encodeURI(cwd) } : {};
 }
 
 /** 默认 shell: 优先 applyRuntime 注入（宿主事实）; 未注入时先取默认值, ensureDefaultShell() 会从 server /platform 懒加载覆盖 */
@@ -73,16 +77,22 @@ export class RemoteTerminalService implements ITerminalNodeService {
     });
   }
 
-  /** 确保默认 shell 就绪: 未注入时从 server /sandbox 取宿主默认（多平台由宿主机判定, 不猜浏览器 UA） */
+  /** 确保默认 shell 就绪: 未注入时从 opencode /pty/shells 取宿主默认（多平台由宿主机判定, 不猜浏览器 UA） */
   private async ensureDefaultShell(): Promise<void> {
     if ((window as any).__APP_CONFIG__?.defaultShell) return;
     try {
-      const app = ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
-      if (!app) return;
-      const res = await fetch(`${app}/sandbox`, { headers: { Accept: 'application/json' } });
+      const base = opencodeBaseUrl();
+      if (!base) return;
+      // /pty/shells 列出 opencode 探测到的可用 shell; macOS 偏好 zsh（acceptable=true 优先）
+      const res = await fetch(`${base}/pty/shells`, { headers: { Accept: 'application/json', ...cwdHeader() } });
       if (res.ok) {
-        const j = await res.json();
-        if (j?.default_shell) (window as any).__APP_CONFIG__.defaultShell = j.default_shell;
+        const list = (await res.json()) as Array<{ name: string; path: string; acceptable: boolean }>;
+        if (Array.isArray(list) && list.length) {
+          const preferred = navigator.userAgent.includes('Mac')
+            ? list.find((s) => s.acceptable && /zsh/i.test(s.name)) || list.find((s) => s.acceptable)
+            : list.find((s) => s.acceptable && /bash/i.test(s.name)) || list.find((s) => s.acceptable);
+          if (preferred) (window as any).__APP_CONFIG__.defaultShell = preferred.path;
+        }
       }
     } catch { /* 忽略, 交给默认兜底 */ }
   }
@@ -90,7 +100,7 @@ export class RemoteTerminalService implements ITerminalNodeService {
   /** GET {opencode}/path 取宿主机绝对 cwd（pty 会话工作目录） */
   private async getPtyCwd(): Promise<string> {
     const base = opencodeBaseUrl();
-    const res = await fetch(`${base}/path`, { headers: { Accept: 'application/json' } });
+    const res = await fetch(`${base}/path`, { headers: { Accept: 'application/json', ...cwdHeader() } });
     if (!res.ok) throw new Error(`pty /path ${res.status}`);
     const json = await res.json();
     const dir = json?.directory as string | undefined;
@@ -100,19 +110,18 @@ export class RemoteTerminalService implements ITerminalNodeService {
   /** POST {opencode}/pty 创建会话（spawn shell, cwd=宿主机绝对 workspace; 默认 shell 按 macOS 事实） */
   private async createPty(launchConfig: IShellLaunchConfig, cwd: string): Promise<{ id: string; pid: number; command: string }> {
     const base = opencodeBaseUrl();
-    if (!base) throw new Error('opencode url not ready (sandbox runtime 未应用)');
-    // 默认 shell（server /sandbox 宿主事实, macOS zsh）优先: 前端可能在注入前就把 executable
+    if (!base) throw new Error('opencode url not ready (appBaseUrl 未注入)');
+    // 默认 shell（opencode /pty/shells 宿主事实, macOS zsh）优先: 前端可能在注入前就把 executable
     // 定为 bash（getDefaultSystemShell 早期调用）, 尊重它会导致刷新后 shell 变成 bash;
     // detectAvailableProfiles 只暴露 defaultShell 一个 profile, 用户显式选择不会冲突
     const command = defaultShell() || launchConfig.executable || '/bin/bash';
     const res = await fetch(`${base}/pty`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...cwdHeader() },
       body: JSON.stringify({
         command,
         args: (launchConfig.args as string[]) || undefined,
         cwd,
-        directory: cwd,
       }),
     });
     if (!res.ok) throw new Error(`pty create ${res.status}`);
@@ -120,6 +129,7 @@ export class RemoteTerminalService implements ITerminalNodeService {
   }
 
   private wsUrl(ptyId: string, cwd: string): string {
+    // WS 端点吃 query param directory（与 x-opencode-directory header 等价, 浏览器 WS API 不便加 header）
     return `${opencodeBaseUrl().replace(/^http/, 'ws')}/pty/${ptyId}/connect?directory=${encodeURIComponent(cwd)}`;
   }
 

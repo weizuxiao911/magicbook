@@ -4,28 +4,38 @@ import webpack from 'webpack';
 import HtmlWebpackPlugin from 'html-webpack-plugin';
 import NodePolyfillPlugin from 'node-polyfill-webpack-plugin';
 
-const ROOT = __dirname;
-const CLIENT = path.resolve(ROOT, 'client');
+// 配置在 client/ 内, 自身即 client 根; .env 在 client/, 显式 ./.env.${DEPLOY_ENV}
+const CLIENT = __dirname;
+const PROJECT_ROOT = path.resolve(CLIENT, '..');
 
 function loadEnvVar(name: string, fallback = ''): string {
-  const envFile = path.resolve(ROOT, `.env.${process.env.DEPLOY_ENV || 'development'}`);
-  try {
-    if (!fs.existsSync(envFile)) return fallback;
-    const content = fs.readFileSync(envFile, 'utf-8');
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq <= 0) continue;
-      const key = trimmed.slice(0, eq).trim();
-      if (key === name) {
-        return trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
+  // 优先 client/.env, 兜底项目根 .env (兼容老配置)
+  const candidates = [
+    path.resolve(CLIENT, `.env.${process.env.DEPLOY_ENV || 'development'}`),
+    path.resolve(PROJECT_ROOT, `.env.${process.env.DEPLOY_ENV || 'development'}`),
+  ];
+  for (const envFile of candidates) {
+    try {
+      if (!fs.existsSync(envFile)) continue;
+      const content = fs.readFileSync(envFile, 'utf-8');
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eq = trimmed.indexOf('=');
+        if (eq <= 0) continue;
+        const key = trimmed.slice(0, eq).trim();
+        if (key === name) {
+          return trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
+        }
       }
-    }
-  } catch {
-    /* ignore */
+    } catch { /* ignore */ }
   }
   return fallback;
+}
+
+/** env var 解析: process.env (cli 注入) 优先, 兜底 .env (直接 cd client && npm run dev 用), 最后 hardcoded 默认 */
+function getEnv(name: string, fallback = ''): string {
+  return process.env[name] || loadEnvVar(name, '') || fallback;
 }
 
 const isDev = process.env.NODE_ENV !== 'production';
@@ -205,10 +215,11 @@ const config: webpack.Configuration = {
       template: path.resolve(CLIENT, 'src/index.html'),
       favicon: path.resolve(CLIENT, 'src/assets/favicon.ico'),
     }),
-    // 纯前端: 编译期从 .env 读取配置, DefinePlugin 注入为全局常量（产物无 process/node 引用）
+    // 纯前端: 编译期读 env var, DefinePlugin 注入为全局常量（产物无 process/node 引用）
+    // 单一事实源: cli's --port 注入 process.env.APP_BASE_URL, 此处优先; .env 兜底
     new webpack.DefinePlugin({
-      __APP_BASE_URL__: JSON.stringify(loadEnvVar('APP_BASE_URL', '')),
-      __APP_REGISTRY_BASE_URL__: JSON.stringify(loadEnvVar('REGISTRY_BASE_URL', '')),
+      __APP_BASE_URL__: JSON.stringify(getEnv('APP_BASE_URL', 'http://127.0.0.1:3100')),
+      __APP_REGISTRY_BASE_URL__: JSON.stringify(getEnv('REGISTRY_BASE_URL', 'http://127.0.0.1:7790')),
       __APP_DEPLOY_ENV__: JSON.stringify(process.env.DEPLOY_ENV || 'development'),
     }),
     // 第三方库（opensumi/codeblitz）浏览器 fallback: 构建期 polyfill, src 本身零 node 依赖
@@ -217,7 +228,8 @@ const config: webpack.Configuration = {
   devServer: {
     allowedHosts: 'all',
     host: '0.0.0.0',
-    port: 7788,
+    // 端口由 cli 注入 (process.env.CLIENT_PORT), 兜底 7788 (直跑 client 时的默认)
+    port: parseInt(process.env.CLIENT_PORT || '7788', 10),
     historyApiFallback: { disableDotRule: true },
     hot: true,
     client: {

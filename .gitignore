@@ -14,6 +14,12 @@ out/
 .env.development
 .env.staging
 .env.production
+client/.env
+client/.env.local
+client/.env.*.local
+client/.env.development
+client/.env.staging
+client/.env.production
 
 # 运行时工作区/数据
 /workspace/

@@ -4,7 +4,7 @@ import { CommandService } from '@opensumi/ide-core-common';
 import { SlotLocation } from '@opensumi/ide-core-browser';
 import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 
-import { FsToken, type IFileSystem } from '@/core/commands/fs';
+import { FsToken, type IFileSystem } from '@/commands/fs';
 
 import {
   aiListAgents,
@@ -161,8 +161,8 @@ export const Chat: React.FC = () => {
     return rt ? { userId: rt.userId, tenantId: rt.tenantId, deployEnv: rt.deployEnv } : null;
   }, []);
 
-// chat 可用性: agentUrl 已注入（sandbox runtime 就绪）即视为可用,
-  // 不强制创建 SDK client（opencode 服务未起时面板仍可用, 请求时再失败提示）.
+// chat 可用性: appBaseUrl 已注入（agent runtime 就绪）即视为可用,
+// 不强制创建 SDK client（opencode 服务未起时面板仍可用, 请求时再失败提示）.
   const client = (window as any).__APP_OPENCODE__;
   const isReady = () => {
     // 必须有 APP_CWD（已选工作目录）才可用
@@ -268,12 +268,12 @@ export const Chat: React.FC = () => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const wrap = async () => { if (!cancelled) await loadConfig(); };
     void wrap();
-    const onSandboxReady = () => { if (timer) clearTimeout(timer); void wrap(); };
-    window.addEventListener('chat:sandbox-ready', onSandboxReady);
+    const onRuntimeReady = () => { if (timer) clearTimeout(timer); void wrap(); };
+    window.addEventListener('runtime-ready', onRuntimeReady);
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
-      window.removeEventListener('chat:sandbox-ready', onSandboxReady);
+      window.removeEventListener('runtime-ready', onRuntimeReady);
     };
   }, [ready, loadConfig]);
   useEffect(() => {

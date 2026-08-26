@@ -1,10 +1,13 @@
 /**
- * agent 实现 — service/agent/index.ts
+ * agent 实现 — service/agent.ts
  *
- * implements core/commands/agent 的 IAgent: 对接 server /opencode/*.
+ * implements core/commands/agent 的 IAgent: 对接 opencode 直连（无中间层）.
  * AI SDK 客户端单例, 供全局使用（chat 等拓展经 AgentToken 注入）.
  *
- * baseUrl: 唯一配置入口 app_base_url → opencode 地址 = app_base_url/ai（sandbox 反向代理透传）.
+ * baseUrl: 唯一配置入口 app_base_url → opencode serve 直连（无 /ai 前缀; server 端 = opencode 自己）.
+ *
+ * 运行时初始化 (initRuntime): 启动期探 /global/health + /path + /pty/shells,
+ *   注入 cwd/defaultShell 到 __APP_CONFIG__, 派发 runtime-ready 事件, 建 SDK client.
  * 纯浏览器: 不依赖 process/node.
  */
 
@@ -13,14 +16,32 @@ import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser
 import { Domain } from '@opensumi/ide-core-common';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
-import type { IAgent, AgentMessage, AgentModel, AgentSession } from '../core/commands/agent';
-import { AgentToken } from '../core/commands/agent';
+import type { IAgent, AgentMessage, AgentModel, AgentSession } from '../commands/agent';
+import { AgentToken } from '../commands/agent';
 
 let _client: any = null;
 
-function agentUrl(): string {
-  const base = ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
-  return base ? `${base}/ai` : '';
+function opencodeBaseUrl(): string {
+  return ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
+}
+
+/** 当前 cwd → x-opencode-directory header（per-request 工作目录切换） */
+function cwdHeader(): Record<string, string> {
+  const cwd = localStorage.getItem('APP_CWD');
+  return cwd ? { 'x-opencode-directory': cwd } : {};
+}
+
+/** 探测宿主机默认 shell: 从 /pty/shells 取 (多平台由宿主机 opencode 判定, 不猜浏览器 UA) */
+async function probeDefaultShell(base: string, cwd: string): Promise<string> {
+  try {
+    const res = await fetch(`${base}/pty/shells`, { headers: { Accept: 'application/json', 'x-opencode-directory': cwd } });
+    if (!res.ok) return '';
+    const list = (await res.json()) as Array<{ name: string; path: string; acceptable: boolean }>;
+    if (!Array.isArray(list) || !list.length) return '';
+    return list.find((s) => s.acceptable)?.path || '';
+  } catch {
+    return '';
+  }
 }
 
 @Injectable()
@@ -28,55 +49,101 @@ function agentUrl(): string {
 export class AgentServiceImpl implements IAgent, ClientAppContribution {
   static instance: AgentServiceImpl | null = null;
 
+  /** runtime 状态（initRuntime 后填充, 注入 __APP_CONFIG__.cwd/.defaultShell） */
+  private _runtime: { cwd: string; defaultShell: string; healthy: boolean } | null = null;
+
   constructor() {
     AgentServiceImpl.instance = this;
-    // runtime 就绪后自建 SDK client
-    window.addEventListener('runtime-ready', () => {
-      try {
-        this.getClient();
-        console.log('[agent] client 就绪 (runtime-ready):', agentUrl());
-      } catch (err) {
-        console.warn('[agent] client 实例化失败:', err);
-      }
-    });
+    (window as any).__APP_AGENT__ = this;
   }
 
-  /** 容器启动: 挂全局; runtime 已就绪（如 sandbox 先启动）则立即建 client */
+  /** 容器启动: 总是自动 initRuntime（探 hostCwd 兜底无 APP_CWD 场景; 派发 runtime-ready; 已有 APP_CWD 时也跑） */
   onStart(): void {
-    (window as any).__APP_AGENT__ = this;
-    if (agentUrl()) {
-      try {
-        this.getClient();
-        console.log('[agent] client 就绪 (onStart):', agentUrl());
-      } catch (err) {
-        console.warn('[agent] client 实例化失败:', err);
+    void this.initRuntime();
+  }
+
+  /**
+   * 初始化 runtime: 探 opencode /global/health + /path + /pty/shells, 注入 cwd/defaultShell 到全局配置,
+   * 派发 runtime-ready 事件, 建 SDK client. 幂等: 已初始化则直接返回.
+   * 调用方: agent.onStart()（自动）/ LoginView.doLogin（手动, 登录后兜底）
+   */
+  async initRuntime(): Promise<void> {
+    if (this._runtime) return;
+    const base = opencodeBaseUrl();
+    if (!base) return;
+    const cwd = localStorage.getItem('APP_CWD') || '';
+    // 1. 探 /global/health（不阻塞, 失败按"未就绪"占位）
+    let healthy = false;
+    try {
+      const res = await fetch(`${base}/global/health`, { headers: { Accept: 'application/json' } });
+      if (res.ok) {
+        const j = await res.json();
+        healthy = !!j?.healthy;
       }
+    } catch { /* opencode 未起, 占位即可 */ }
+    // 2. 探 /path + /pty/shells 拿宿主 cwd + 默认 shell（per-request 用 cwdHeader 切目录）
+    // 总是探测: APP_CWD 没设时拿 hostCwd 兜底, 写了 __APP_CONFIG__.cwd
+    let hostCwd = '';
+    let defaultShell = '';
+    try {
+      const res = await fetch(`${base}/path`, { headers: { Accept: 'application/json', ...cwdHeader() } });
+      if (res.ok) {
+        const j = await res.json();
+        if (j?.directory) hostCwd = j.directory;
+      }
+      defaultShell = await probeDefaultShell(base, cwd);
+    } catch { /* 忽略, 走默认 */ }
+
+    this._runtime = {
+      cwd: hostCwd || cwd,
+      defaultShell: defaultShell || '/bin/bash',
+      healthy,
+    };
+    // 注入全局配置（env / fs/uri / terminal 读这里）
+    (window as any).__APP_CONFIG__ = {
+      ...((window as any).__APP_CONFIG__ || {}),
+      cwd: this._runtime.cwd,
+      defaultShell: this._runtime.defaultShell,
+    };
+    // 派发 runtime-ready（fs 事件订阅 / chat 重新拉配置 / 终端懒加载 shell / explorer 刷新）
+    window.dispatchEvent(new CustomEvent('runtime-ready', { detail: this._runtime }));
+    // 立即建 SDK client
+    try {
+      this.getClient();
+      console.log('[agent] runtime applied:', this._runtime);
+    } catch (err) {
+      console.warn('[agent] client 实例化失败:', err);
     }
   }
 
   getClient(): any {
     if (_client) return _client;
-    const base = agentUrl();
+    const base = opencodeBaseUrl();
     if (!base) return null;
-    // 所有 SDK 请求带 X-Current-Cwd → sandbox 中间件幂等 ensure opencode 就绪
-    // （活且 cwd 匹配则几 ms 放行; opencode 挂了会由 sandbox 拉起, 避免 chat 请求 502）
+    // 所有 SDK 请求带 x-opencode-directory → opencode 按 header 切换工作目录上下文
+    // （per-request 路由, 无需重启服务; 直连 opencode, 无中间代理）
     const cwd = localStorage.getItem('APP_CWD');
-    const headers = cwd ? { 'X-Current-Cwd': btoa(unescape(encodeURIComponent(cwd))) } : {};
+    const headers = cwd ? { 'x-opencode-directory': cwd } : {};
     _client = createOpencodeClient({ baseUrl: base, headers, responseStyle: 'fields', throwOnError: true });
     (window as any).__APP_OPENCODE__ = _client;
     (window as any).__APP_OPENCODE_RUNTIME__ = { baseUrl: base };
     return _client;
   }
 
+  /** runtime 元信息（cwd / defaultShell / healthy; 未初始化返回 null） */
+  getRuntime(): { cwd: string; defaultShell: string; healthy: boolean } | null {
+    return this._runtime;
+  }
+
   isReady(): boolean {
-    return !!_client || !!agentUrl();
+    return !!_client || !!opencodeBaseUrl();
   }
 
   async waitForReady(timeoutMs = 8000): Promise<void> {
     if (this.isReady()) return;
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
-      if (agentUrl()) {
+      if (opencodeBaseUrl()) {
         this.getClient();
         return;
       }
@@ -152,7 +219,7 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
 
   async listAgents(): Promise<unknown[]> {
     await this.waitForReady();
-    const res = await fetch(`${agentUrl()}/agent`, { headers: { Accept: 'application/json' } });
+    const res = await fetch(`${opencodeBaseUrl()}/agent`, { headers: { Accept: 'application/json' } });
     if (!res.ok) throw new Error(`GET /agent failed: HTTP ${res.status}`);
     const list = await res.json();
     return Array.isArray(list) ? list : [];
@@ -160,7 +227,7 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
 
   async listModels(): Promise<AgentModel[]> {
     await this.waitForReady();
-    const res = await fetch(`${agentUrl()}/provider`, { headers: { Accept: 'application/json' } });
+    const res = await fetch(`${opencodeBaseUrl()}/provider`, { headers: { Accept: 'application/json' } });
     if (!res.ok) throw new Error(`GET /provider failed: HTTP ${res.status}`);
     const json = await res.json();
     const all: any[] = Array.isArray(json?.all) ? json.all : [];
@@ -180,7 +247,7 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
 }
 
 /** 模块级单例 getter */
-export function getAgentService(): IAgent {
+export function getAgentService(): AgentServiceImpl {
   return AgentServiceImpl.instance || (AgentServiceImpl.instance = new AgentServiceImpl());
 }
 

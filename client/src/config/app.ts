@@ -2,8 +2,8 @@
  * 系统机制初始化 — core/config/app.ts
  *
  * 模块加载时（App 渲染前, index.tsx import）完成全局机制挂载:
- *   - window.__APP_CONFIG__: 编译期注入配置（sandbox/registry 地址, 其余协议地址由 sandbox 返回）
- *   - BrowserFS backend 注册: RemoteFS（core/config/bfs.ts, 读写全透传 server fs, 调 service/fs 单实例）;
+ *   - window.__APP_CONFIG__: 编译期注入配置（opencode/registry 地址, 其余协议地址由 agent runtime 注入）
+ *   - BrowserFS backend 注册: RemoteFS（core/config/bfs.ts, 读写全透传 opencode, 调 service/fs 单实例）;
  *     runtime.ts workspace.filesystem 按 fs: RemoteFS.Name 创建, 必须在渲染前注册
  */
 

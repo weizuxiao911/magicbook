@@ -1,5 +1,19 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { getSandboxService } from '../../service/sandbox';
+import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
+
+function appBaseUrl(): string {
+  return ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
+}
+
+function cwdHeader(): Record<string, string> {
+  const cwd = localStorage.getItem('APP_CWD') || (window as any).__APP_CONFIG__?.cwd;
+  // encodeURI: header 必须是 ISO-8859-1, 中文路径要 percent-encode
+  return cwd ? { 'x-opencode-directory': encodeURI(cwd) } : {};
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\"'\"'`)}'`;
+}
 
 interface DirEntry { name: string; path: string; }
 
@@ -9,6 +23,66 @@ const QUICK = [
   { name: '文档', path: '~/Documents' },
   { name: '下载', path: '~/Downloads' },
 ];
+
+async function browseDir(path: string): Promise<{ path: string; directories: DirEntry[] }> {
+  const base = appBaseUrl();
+  if (!base) throw new Error('app base url not ready');
+  // encodeURI: 中文路径要 percent-encode, header 必须是 ISO-8859-1
+  const res = await fetch(`${base}/api/fs/list?path=.`, {
+    headers: { Accept: 'application/json', 'x-opencode-directory': encodeURI(path) },
+  });
+  if (!res.ok) throw new Error(`browse failed: HTTP ${res.status}`);
+  const json = await res.json();
+  const entries: Array<{ path: string; type: string }> = Array.isArray(json?.data) ? json.data : [];
+  const directories = entries
+    .filter((e) => e.type === 'directory')
+    .map((e) => ({
+      name: e.path.replace(/\/+$/, '').split('/').pop() || e.path,
+      path: path.replace(/\/+$/, '') + '/' + e.path.replace(/^\/+/, ''),
+    }));
+  return { path: path.replace(/\/+$/, ''), directories };
+}
+
+let _fsClient: any = null;
+let _fsSessionId: string | null = null;
+
+async function getFsClient(): Promise<any> {
+  if (_fsClient) return _fsClient;
+  const base = appBaseUrl();
+  if (!base) throw new Error('app base url not ready');
+  _fsClient = createOpencodeClient({
+    baseUrl: base,
+    headers: cwdHeader(),
+    responseStyle: 'fields',
+    throwOnError: true,
+  });
+  return _fsClient;
+}
+
+async function getFsSession(): Promise<string> {
+  if (_fsSessionId) return _fsSessionId;
+  const client = await getFsClient();
+  const { data, error } = await client.session.create({ title: 'fs-shim' });
+  if (error || !data?.id) throw new Error('fs session create failed');
+  const id = data.id as string;
+  _fsSessionId = id;
+  return id;
+}
+
+async function mkdirDir(parent: string, name: string): Promise<{ ok: boolean; path: string }> {
+  const target = parent.replace(/\/+$/, '') + '/' + name;
+  const sid = await getFsSession();
+  const client = await getFsClient();
+  const cmd = `mkdir -p ${shellQuote(target)} && echo __OK__`;
+  const { data, error } = await client.session.shell({
+    sessionID: sid,
+    agent: 'build',
+    command: cmd,
+  });
+  if (error) throw error;
+  const ok = JSON.stringify(data).includes('__OK__');
+  return { ok, path: target };
+}
 
 export const WorkspacePicker: React.FC = () => {
   const [open, setOpen] = useState(false);
@@ -21,6 +95,16 @@ export const WorkspacePicker: React.FC = () => {
   const [mkName, setMkName] = useState('');
   const [active, setActive] = useState(0);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+// 用户家目录: opencode /path 返回, 用于展开 QUICK 里的 ~ 路径 (opencode 不展开 ~, 必须给绝对路径)
+const [home, setHome] = useState('');
+
+/** ~ → 实际家目录, 给 opencode 绝对路径 (opencode 不展开 ~) */
+const expandHome = (p: string): string => {
+  if (!home) return p;
+  if (p === '~') return home;
+  if (p.startsWith('~/')) return home + p.slice(1);
+  return p;
+};
   const inputRef = useRef<HTMLInputElement>(null);
   const mkRef = useRef<HTMLInputElement>(null);
 
@@ -28,7 +112,7 @@ export const WorkspacePicker: React.FC = () => {
     if (!dir.trim()) return;
     setLoading(true); setError('');
     try {
-      const r = await getSandboxService().browse(dir);
+      const r = await browseDir(dir);
       setCurrentPath(r.path);
       setDirs(r.directories);
       setSelected(null); setActive(0);
@@ -37,9 +121,24 @@ export const WorkspacePicker: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const h = () => {
+    const h = async () => {
       setOpen(true); setDirs([]); setSelected(null); setError(''); setMkMode(false); setMkName('');
-      setTimeout(() => { inputRef.current?.focus(); doBrowse('~'); }, 100);
+      setTimeout(async () => {
+        inputRef.current?.focus();
+        // 初始路径: APP_CWD (用户选) → hostCwd (opencode /path 注入) → 现拉一次 (兜底)
+        // 顺便拿 home 展开 QUICK 里的 ~ 路径
+        let start = localStorage.getItem('APP_CWD') || (window as any).__APP_CONFIG__?.cwd || '';
+        try {
+          const base = ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
+          const res = await fetch(`${base}/path`, { headers: { Accept: 'application/json' } });
+          if (res.ok) {
+            const j = await res.json();
+            if (j?.directory) start = j.directory;
+            if (j?.home) setHome(j.home);
+          }
+        } catch { /* ignore, 走 / 兜底 */ }
+        doBrowse(start || '/');
+      }, 100);
     };
     window.addEventListener('workspace:show-picker', h);
     return () => window.removeEventListener('workspace:show-picker', h);
@@ -48,8 +147,6 @@ export const WorkspacePicker: React.FC = () => {
   const confirm = useCallback(async (dir: string) => {
     setLoading(true); setError('');
     try {
-      const rt = await getSandboxService().setWorkspace(dir);
-      getSandboxService().applyRuntime(rt);
       localStorage.setItem('APP_CWD', dir);
       window.location.reload();
     } catch (e: any) { setError(e?.message || '切换失败'); }
@@ -61,7 +158,7 @@ export const WorkspacePicker: React.FC = () => {
     if (!name || !currentPath) return;
     setLoading(true); setError('');
     try {
-      await getSandboxService().mkdir(currentPath, name);
+      await mkdirDir(currentPath, name);
       setMkMode(false); setMkName(''); setCtxMenu(null);
       doBrowse(currentPath);
     } catch (e: any) { setError(e?.message || '创建失败'); }
@@ -112,7 +209,7 @@ export const WorkspacePicker: React.FC = () => {
           <div className="wp-side">
             <div className="wp-side-title">快速访问</div>
             {QUICK.map((q) => (
-              <button key={q.path} type="button" className="wp-side-item" onClick={() => doBrowse(q.path)}>
+              <button key={q.path} type="button" className="wp-side-item" onClick={() => doBrowse(expandHome(q.path))}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                 <span>{q.name}</span>
               </button>

@@ -11,14 +11,14 @@ import { AppRenderer, getDefaultAppConfig } from '@codeblitzjs/ide-core';
 import '@codeblitzjs/ide-core/bundle/codeblitz.css';
 import '@codeblitzjs/ide-core/languages';
 
-import { buildSlots } from './core/config/slots';
-import { getBuiltinModules } from './core/config/modules';
-import { preferences } from './core/config/preferences';
-import { runtimeConfig } from './core/config/runtime';
+import { buildSlots } from './config/slots';
+import { getBuiltinModules } from './config/modules';
+import { preferences } from './config/preferences';
+import { runtimeConfig } from './config/runtime';
 import { getRegistryService } from './service/registry';
-import type { ExtensionMetadata } from './core/commands/registry';
-import './core/styles/overrides.css';
-import './core/styles/slots.css';
+import type { ExtensionMetadata } from './commands/registry';
+import './styles/overrides.css';
+import './styles/slots.css';
 
 /** 渲染前暂存上次打开的编辑器 uris（容器初始化恢复失败会清空 storage, 登录后按暂存恢复） */
 function stashSavedEditorUris(): void {
