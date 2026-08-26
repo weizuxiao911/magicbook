@@ -48,15 +48,15 @@ if (mode === 'help' || args.includes('--help') || args.includes('-h')) {
 未识别参数透传给 opencode serve（仅识别 --help/-h/help）.
 
 示例:
-  npx tsx cli web --port 3100 --hostname 127.0.0.1 --cors http://127.0.0.1:7788
-  npx tsx cli serve --port 3100 --hostname 127.0.0.1
+  npx tsx cli web --port 24096 --hostname 127.0.0.1 --cors http://127.0.0.1:7788
+  npx tsx cli serve --port 24096 --hostname 127.0.0.1
 `);
   process.exit(0);
 }
 
 const PORT = (() => {
   const i = restArgs.indexOf('--port');
-  return i >= 0 && restArgs[i + 1] ? parseInt(restArgs[i + 1], 10) : 3100;
+  return i >= 0 && restArgs[i + 1] ? parseInt(restArgs[i + 1], 10) : 24096;
 })();
 const CLIENT_PORT = 7788;
 

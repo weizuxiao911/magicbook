@@ -8,7 +8,7 @@
 ```mermaid
 graph TB
     Browser["浏览器 (web/)<br/>codeblitz 容器 + FsPty"]
-    Opencode["opencode serve (3100)<br/>/api/fs/* + /api/pty + WS"]
+    Opencode["opencode serve (24096)<br/>/api/fs/* + /api/pty + WS"]
     Registry["registry (7790)<br/>vsix 扩展分发"]
 
     Browser ==>|"fetch / WS<br/>(APP_BASE_URL)"| Opencode
@@ -37,7 +37,7 @@ graph LR
 
 | 端 | 默认 | flag | env |
 | --- | --- | --- | --- |
-| opencode | 3100 | `--port` | `APP_BASE_URL` |
+| opencode | 24096 | `--port` | `APP_BASE_URL` |
 | webpack-dev-server | 7788 | `--web-port` | `WEB_PORT` |
 
 ## 启动
@@ -60,7 +60,7 @@ npm run dev
 | 服务 | 地址 |
 | --- | --- |
 | 工作台 | http://localhost:7788 |
-| opencode | http://127.0.0.1:3100 |
+| opencode | http://127.0.0.1:24096 |
 | registry | https://127.0.0.1:7790 |
 
 ## 数据流

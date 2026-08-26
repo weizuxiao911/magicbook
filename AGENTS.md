@@ -132,7 +132,7 @@ cd client && npm run typecheck    # tsc --noEmit
 
 ```bash
 cd client && npm run typecheck                # tsc --noEmit 通过
-node cli/bin/cli.cjs                          # cli web 起来; opencode 3100 + webpack 7788
+node cli/bin/cli.cjs                          # cli web 起来; opencode 24096 + webpack 7788
 # 浏览器开 http://localhost:7788
 # explorer 列表正常 + 上传文件 + 终端 三件套
 ```

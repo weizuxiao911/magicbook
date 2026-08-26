@@ -5,7 +5,7 @@
  * 转发到 cli/src/main.ts (通过 tsx 执行); 默认子命令 web.
  *
  * 使用:
- *   npx github:user/repo            → 等价 web (默认 :3100 + :7788)
+ *   npx github:user/repo            → 等价 web (默认 :24096 + :7788)
  *   npx github:user/repo web        → 启 web (codeblitz) + opencode
  *   npx github:user/repo serve      → 只起 opencode
  *   npx github:user/repo --help     → 帮助
@@ -19,7 +19,7 @@
  *   - 缺 web deps     → npm install 在 web/ (react + codeblitz + webpack)
  * 每个检查 idempotent, 首次 ~30s 装完, 之后秒级.
  *
- * 默认 opencode 端口 3100 (匹配 web/.env.development 的 APP_BASE_URL);
+ * 默认 opencode 端口 24096 (匹配 web/.env.development 的 APP_BASE_URL);
  * CORS 默认 http://127.0.0.1:7788 (webpack-dev-server 默认地址). 用户可命令行覆盖.
  */
 
@@ -73,7 +73,7 @@ if (wpIdx >= 0 && args[wpIdx + 1]) {
 }
 
 // 默认 opencode 参数
-if (!args.includes('--port')) args.push('--port', '3100');
+if (!args.includes('--port')) args.push('--port', '24096');
 if (!args.includes('--hostname')) args.push('--hostname', '127.0.0.1');
 // CORS 默认指向 web 端口
 if (!args.includes('--cors')) args.push('--cors', `http://127.0.0.1:${webPort}`);
@@ -82,7 +82,7 @@ if (!args.includes('--cors')) args.push('--cors', `http://127.0.0.1:${webPort}`)
 // (webpack 优先读 process.env, 兜底 .env; 用户运行时改 --port 即可全局生效)
 const portIdx = args.indexOf('--port');
 const hostnameIdx = args.indexOf('--hostname');
-const port = portIdx >= 0 && args[portIdx + 1] ? args[portIdx + 1] : '3100';
+const port = portIdx >= 0 && args[portIdx + 1] ? args[portIdx + 1] : '24096';
 const hostname = hostnameIdx >= 0 && args[hostnameIdx + 1] ? args[hostnameIdx + 1] : '127.0.0.1';
 process.env.APP_BASE_URL = process.env.APP_BASE_URL || `http://${hostname}:${port}`;
 // web 端口也通过 env var 传给 webpack-dev-server
