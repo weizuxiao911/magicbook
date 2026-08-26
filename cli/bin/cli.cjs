@@ -60,7 +60,6 @@ function ensureInstalled(label, cmd, args, cwd) {
 ensureInstalled('tsx', 'npm', ['install', '--no-save', '--prefer-offline', 'tsx@^4.23.12'], root);
 ensureInstalled('opencode', 'npm', ['install', '--no-save', '--prefer-offline', 'opencode-ai@latest'], cliDir);
 ensureInstalled('client', 'npm', ['install', '--prefer-offline'], clientDir);
-}
 
 const args = process.argv.slice(2);
 if (args.length === 0) args.push('web'); // 默认 web 模式
