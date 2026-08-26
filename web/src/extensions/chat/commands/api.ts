@@ -173,19 +173,31 @@ export async function aiDeleteAllSessions(): Promise<number> {
   return deleted;
 }
 
-/** 会话内 agent 列表 — 直接调 /agent?directory=, 拿全量 (内置 + project 自定义),
- *  只返回 mode === 'primary' 的 (v1 endpoint 用 name 字段, 无 hidden 字段). */
+/** 会话内 agent 列表 — 用全局 SDK client (已带 cwd header), 拿全量 (内置 + project 自定义),
+ *  只返回 mode === 'primary' 的.
+ *
+ *  关键: 必须传有效 cwd 作为 directory query (SDK 的 cwdHeader 是默认 cwd, 这里再显式传
+ *  防止 window.location.pathname=/ 时 opencode 走 home 解析), 否则拿不到 .opencode/agents/*.md
+ *  (之前用 ?directory=/ 走 query 不带 header, 只能拿到 native agent) */
 export async function aiListAgents(): Promise<any[]> {
   await waitForAiReady();
-  // directory 参数: 浏览器侧用当前页面 URL 的 pathname 或 '.', opencode 按 cwd 解析
-  const dir = typeof window !== 'undefined' && window.location?.pathname
-    ? window.location.pathname
-    : '.';
-  const url = `${buildOpencodeUrl('/agent')}?directory=${encodeURIComponent(dir)}`;
-  const res = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`GET /agent failed: HTTP ${res.status}`);
-  const list: any[] = await res.json();
-  if (!Array.isArray(list)) return [];
+  const client = getAiClient();
+  if (!client) {
+    // 兜底: SDK 未就绪, 直接 fetch (同原逻辑, 不带 header 也能拿到 native)
+    const res = await fetch(buildOpencodeUrl('/agent'), { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`GET /agent failed: HTTP ${res.status}`);
+    return filterPrimaryAgents(await res.json());
+  }
+  const cwd = (typeof localStorage !== 'undefined' ? localStorage.getItem('APP_CWD') : '')
+    || (getGlobalOpencodeRuntime().cwd || '');
+  const r = await (client as any).app.agents({
+    query: cwd ? { directory: cwd } : undefined,
+  });
+  const list = (r as any)?.data ?? r;
+  return filterPrimaryAgents(Array.isArray(list) ? list : []);
+}
+
+function filterPrimaryAgents(list: any[]): any[] {
   return list
     .filter((a) => a && a.mode === 'primary')
     .map((a) => ({
