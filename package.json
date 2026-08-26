@@ -9,7 +9,7 @@
     "dev": "npm --prefix cli run web -- --port 3100 --hostname 127.0.0.1 --cors http://127.0.0.1:7788",
     "serve": "npm --prefix cli run serve -- --port 3100 --hostname 127.0.0.1"
   },
-  "devDependencies": {
+  "dependencies": {
     "tsx": "^4.23.12"
   }
 }

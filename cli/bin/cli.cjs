@@ -13,16 +13,54 @@
  * 设计: npx 调起本文件 (package.json bin), 内部 spawn tsx 跑 cli/src/main.ts.
  *   不再依赖 npm --prefix 间接调, 少一层 fork, 冷启 -300ms.
  *
+ * npx github: 不会自动装 numas 的 deps, 所以 bin 自检 + 自装:
+ *   - 缺 tsx          → 装到 root/node_modules
+ *   - 缺 opencode     → 装到 cli/node_modules (opencode-ai 提供二进制)
+ *   - 缺 client deps  → npm install 在 client/ (react + codeblitz + webpack)
+ * 每个检查 idempotent, 首次 ~30s 装完, 之后秒级.
+ *
  * 默认 opencode 端口 3100 (匹配 client/.env.development 的 APP_BASE_URL);
  * CORS 默认 http://127.0.0.1:7788 (webpack-dev-server 默认地址). 用户可命令行覆盖.
  */
 
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '../..');  // cli/bin → 项目根
+const cliDir = path.resolve(__dirname, '..');    // cli/bin → cli/
+const clientDir = path.join(root, 'client');
+
 const tsxBin = path.join(root, 'node_modules', '.bin', 'tsx');
-const cliEntry = path.join(__dirname, '..', 'src', 'main.ts');  // cli/bin → cli/src/main.ts
+const opencodeBin = path.join(cliDir, 'node_modules', '.bin', 'opencode');
+const cliEntry = path.join(cliDir, 'src', 'main.ts');  // cli/bin → cli/src/main.ts
+
+/** 缺啥装啥, idempotent; opencode 不锁版本 (PATH 有就用, 没有装 latest) */
+function ensureInstalled(label, cmd, args, cwd) {
+  if (label === 'tsx' && fs.existsSync(tsxBin)) return;
+  if (label === 'opencode') {
+    if (fs.existsSync(opencodeBin)) return;
+    // PATH 里有 opencode (任意版本) 也跳过 — 用户自带 opencode-ai 全局装
+    if (spawnSync('which', ['opencode']).status === 0) {
+      console.log('[cli] 检测到 PATH opencode, 复用 (跳过安装)');
+      return;
+    }
+  }
+  if (label === 'client') {
+    if (fs.existsSync(path.join(clientDir, 'node_modules', 'webpack'))) return;
+  }
+  console.log(`[cli] 首次运行, 装 ${label} ...`);
+  const r = spawnSync(cmd, args, { cwd, stdio: 'inherit' });
+  if (r.status !== 0) {
+    console.error(`[cli] ${label} 安装失败 (status=${r.status}), 请手动: cd ${cwd} && ${cmd} ${args.join(' ')}`);
+    process.exit(1);
+  }
+}
+
+ensureInstalled('tsx', 'npm', ['install', '--no-save', '--prefer-offline', 'tsx@^4.23.12'], root);
+ensureInstalled('opencode', 'npm', ['install', '--no-save', '--prefer-offline', 'opencode-ai@latest'], cliDir);
+ensureInstalled('client', 'npm', ['install', '--prefer-offline'], clientDir);
+}
 
 const args = process.argv.slice(2);
 if (args.length === 0) args.push('web'); // 默认 web 模式

@@ -16,9 +16,10 @@
  *   client → opencode 直连无中间代理（见 AGENTS.md）.
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -73,10 +74,24 @@ async function cleanupOrphans(): Promise<void> {
   }
 }
 
-// ---- 子进程: opencode serve ----
+// ---- 子进程: opencode serve (优先 cli/node_modules/.bin/opencode, 兜底 PATH 里的 opencode) ----
 function spawnOpencode(): ChildProcess {
   console.log(`[cli] 启动 opencode serve (透传参数: ${restArgs.join(' ') || '(无)'})...`);
-  const child = spawn('npx', ['--no-install', 'opencode', 'serve', ...restArgs], {
+  const localBin = join(__dirname, '..', 'node_modules', '.bin', 'opencode');
+  let cmd: string;
+  let cmdArgs: string[];
+  if (existsSync(localBin)) {
+    cmd = localBin;
+    cmdArgs = ['serve', ...restArgs];
+  } else if (spawnSync('which', ['opencode']).status === 0) {
+    // PATH 有 opencode, 复用 (任意版本, 不锁)
+    cmd = 'opencode';
+    cmdArgs = ['serve', ...restArgs];
+  } else {
+    console.error('[cli] 找不到 opencode 二进制; 请安装 opencode-ai 或确保 opencode 在 PATH');
+    process.exit(1);
+  }
+  const child = spawn(cmd, cmdArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
     env: process.env,
