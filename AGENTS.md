@@ -97,7 +97,9 @@
 | ext host 读 `pkgNlsJSON['zh-CN']` 崩溃 | 元数据缺 codeblitz 字段 | build 生成完整 IExtensionBasicMetadata |
 | 扩展资源 404 | kt-ext uri 拼了 /extension/dist 前缀 | uri = `kt-ext://<host>/<id>` (解压内容根) |
 | ERR_CERT_AUTHORITY_INVALID | 自签证书未系统信任 | 自签带 SAN + `sudo security add-trusted-cert` |
-| customEditor 不匹配 (.paper 用文本打开) | 无语言注册 | contributes.languages 注册扩展名; activationEvents 与 viewType 一致 |
+| customEditor 不匹配 (.paper 用文本打开) | 无语言注册 | contributes.languages 注册扩展名; activationEvents 与 viewType 一一致 |
+| chat agent dropdown 只有 build/plan, 漏掉 .opencode/agents/*.md 自定义 agent | aiListAgents 直接 `fetch /agent?directory=/` 不带 `x-opencode-directory` header, opencode 走 home 解析 | 改用全局 SDK `client.app.agents({query:{directory:cwd}})`; SDK 已带 cwdHeader |
+| opencode HTTP 调用绕过 SDK, 散落 fetch | 早期 chat/commands/api 5 处直接 fetch, dir 用 `window.location.pathname=/`, 漏 cwd | **所有 opencode HTTP 必须走全局 SDK** (`window.__APP_OPENCODE__`, service/agent 创建, 单实例); fetch 仅 SDK 不可用时兜底, 仍要带 cwd header; helper: `getAiDirectory()` / `getAiCwdHeader()` |
 
 ## 关键命令
 

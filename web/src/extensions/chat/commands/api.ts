@@ -19,6 +19,23 @@ function getGlobalOpencodeRuntime() {
   return (window as any).__APP_OPENCODE_RUNTIME__ || {};
 }
 
+/** 当前工作目录 (跟 service/env.effectiveCwd 同一逻辑) — 传给 SDK 的 directory query
+ *  SDK 已带 x-opencode-directory header, 显式传 directory 是冗余但更稳, 防止 SDK header
+ *  失效 (e.g. APP_CWD 未设, runtime.cwd 还没注入) 时 opencode 走 home 解析 */
+function getAiDirectory(): string {
+  if (typeof localStorage !== 'undefined') {
+    const v = localStorage.getItem('APP_CWD');
+    if (v) return v;
+  }
+  return getGlobalOpencodeRuntime().cwd || '.';
+}
+
+/** x-opencode-directory header (跟 service/env.cwdHeader 同一逻辑) — 备用, 给 fetch 兜底 */
+function getAiCwdHeader(): Record<string, string> {
+  const cwd = getAiDirectory();
+  return cwd && cwd !== '.' ? { 'x-opencode-directory': encodeURI(cwd) } : {};
+}
+
 export function getAiClient() {
   return getGlobalOpencodeClient();
 }
@@ -219,11 +236,10 @@ export interface SkillInfo {
 
 export async function aiListSkills(): Promise<SkillInfo[]> {
   await waitForAiReady();
-  const dir = typeof window !== 'undefined' && window.location?.pathname
-    ? window.location.pathname
-    : '.';
+  // SDK v2 没包装 /skill 端点 (它是 v1 端点), fetch 兜底; 带 cwd header
+  const dir = getAiDirectory();
   const url = `${buildOpencodeUrl('/skill')}?directory=${encodeURIComponent(dir)}`;
-  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  const res = await fetch(url, { headers: { Accept: 'application/json', ...getAiCwdHeader() } });
   if (!res.ok) throw new Error(`GET /skill failed: HTTP ${res.status}`);
   const list: any[] = await res.json();
   if (!Array.isArray(list)) return [];
@@ -246,22 +262,27 @@ export interface CommandInfo {
 
 export async function aiListCommands(): Promise<CommandInfo[]> {
   await waitForAiReady();
-  const dir = typeof window !== 'undefined' && window.location?.pathname
-    ? window.location.pathname
-    : '.';
-  const url = `${buildOpencodeUrl('/command')}?directory=${encodeURIComponent(dir)}`;
-  const res = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`GET /command failed: HTTP ${res.status}`);
-  const list: any[] = await res.json();
-  if (!Array.isArray(list)) return [];
+  const client = getAiClient();
+  if (!client) {
+    // 兜底: SDK 未就绪
+    const dir = getAiDirectory();
+    const url = `${buildOpencodeUrl('/command')}?directory=${encodeURIComponent(dir)}`;
+    const res = await fetch(url, { headers: { Accept: 'application/json', ...getAiCwdHeader() } });
+    if (!res.ok) throw new Error(`GET /command failed: HTTP ${res.status}`);
+    return mapCommands(await res.json());
+  }
+  const r = await (client as any).command.list({ query: { directory: getAiDirectory() } });
+  const list = (r as any)?.data ?? r;
+  return mapCommands(Array.isArray(list) ? list : []);
+}
+
+function mapCommands(list: any[]): CommandInfo[] {
   return list
     .filter((c) => c && c.name)
     .map((c) => ({
       name: String(c.name),
       description: c.description ? String(c.description) : '',
       source: c.source ? String(c.source) : 'command',
-      template: typeof c.template === 'string' ? c.template : undefined,
-      subtask: c.subtask === true,
     }));
 }
 
@@ -372,15 +393,13 @@ export interface ModelInfo {
   free?: boolean;
 }
 
-/** 模型列表 — 从 /provider 拿, 按规则过滤:
+/** 模型列表 — 用 SDK config.providers 拿, 按规则过滤:
  *  1. connected 的 provider (已配置 key): 显示其 models
  *  2. options.apiKey === 'public' 的 provider: 也显示, 标记 free
  *  其他不显示. status==='active' 的 model 才返回. */
 export async function aiListModels(): Promise<ModelInfo[]> {
   await waitForAiReady();
-  const res = await fetch(buildOpencodeUrl('/provider'), { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`GET /provider failed: HTTP ${res.status}`);
-  const json = await res.json();
+  const json = await fetchProvidersPayload();
   const all: any[] = Array.isArray(json?.all) ? json.all : [];
   const connected = new Set(Array.isArray(json?.connected) ? json.connected : []);
 
@@ -412,6 +431,29 @@ export async function aiListModels(): Promise<ModelInfo[]> {
   return result;
 }
 
+/** 拉取 /provider payload — 走 SDK, 兜底 fetch (带 cwd header)
+ *  返回 {all: Provider[], connected: string[]} */
+async function fetchProvidersPayload(): Promise<{ all: any[]; connected: string[] }> {
+  const client = getAiClient();
+  if (client) {
+    const r = await (client as any).config.providers({ query: { directory: getAiDirectory() } });
+    const json = (r as any)?.data ?? r;
+    return {
+      all: Array.isArray(json?.all) ? json.all : [],
+      connected: Array.isArray(json?.connected) ? json.connected : [],
+    };
+  }
+  const dir = getAiDirectory();
+  const url = `${buildOpencodeUrl('/provider')}?directory=${encodeURIComponent(dir)}`;
+  const res = await fetch(url, { headers: { Accept: 'application/json', ...getAiCwdHeader() } });
+  if (!res.ok) throw new Error(`GET /provider failed: HTTP ${res.status}`);
+  const json = await res.json();
+  return {
+    all: Array.isArray(json?.all) ? json.all : [],
+    connected: Array.isArray(json?.connected) ? json.connected : [],
+  };
+}
+
 export interface ProviderModelInfo {
   id: string;
   name: string;
@@ -434,13 +476,11 @@ export interface ProviderInfo {
   apiKey?: string;
 }
 
-/** 服务商列表 — 从 /provider 拿全量 catalog, 含每个 provider 声明的模型列表 + 连接状态
+/** 服务商列表 — 用 SDK config.providers 拿全量 catalog, 含每个 provider 声明的模型列表 + 连接状态
  *  注意: 返回全量 (含未连接), 供「连接服务商」选择; 模型选择器用 aiListModels 已过滤 connected */
 export async function aiListProviders(): Promise<ProviderInfo[]> {
   await waitForAiReady();
-  const res = await fetch(buildOpencodeUrl('/provider'), { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`GET /provider failed: HTTP ${res.status}`);
-  const json = await res.json();
+  const json = await fetchProvidersPayload();
   const all: any[] = Array.isArray(json?.all) ? json.all : (Array.isArray(json) ? json : []);
   const connected = new Set(Array.isArray(json?.connected) ? json.connected : []);
   return all
@@ -487,7 +527,7 @@ export async function aiDisconnectProvider(providerID: string): Promise<void> {
   if (error) throw error;
 }
 
-/** opencode 全局 config — 含 model/username/provider 等. 失败抛错让调用方降级 */
+/** opencode 全局 config — 用 SDK config.get, 失败抛错让调用方降级 */
 export interface OpencodeConfig {
   model?: string;
   username?: string;
@@ -495,9 +535,14 @@ export interface OpencodeConfig {
   [k: string]: any;
 }
 export async function aiGetConfig(): Promise<OpencodeConfig> {
-  const res = await fetch(buildOpencodeUrl('/config'), {
-    headers: { Accept: 'application/json' },
-  });
+  const client = getAiClient();
+  if (client) {
+    const r = await (client as any).config.get({ query: { directory: getAiDirectory() } });
+    return ((r as any)?.data ?? r) as OpencodeConfig;
+  }
+  const dir = getAiDirectory();
+  const url = `${buildOpencodeUrl('/config')}?directory=${encodeURIComponent(dir)}`;
+  const res = await fetch(url, { headers: { Accept: 'application/json', ...getAiCwdHeader() } });
   if (!res.ok) throw new Error(`GET /config failed: HTTP ${res.status}`);
   return res.json() as Promise<OpencodeConfig>;
 }
