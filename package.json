@@ -1,9 +1,9 @@
 {
-  "name": "magicbook",
+  "name": "numas",
   "version": "0.1.0",
-  "description": "AI 工作台 — codeblitz + opencode 一体化容器 (npx github:weizuxiao911/magicbook)",
+  "description": "Numas (牛马们) — 打工人首选工作模式 (npx github:weizuxiao911/numas)",
   "bin": {
-    "cli": "cli/bin/cli.cjs"
+    "numas": "cli/bin/cli.cjs"
   },
   "scripts": {
     "dev": "npm --prefix cli run web -- --port 3100 --hostname 127.0.0.1 --cors http://127.0.0.1:7788",
