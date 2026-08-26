@@ -1549,8 +1549,8 @@ export const Chat: React.FC = () => {
                   type="button"
                   className="chat__send"
                   onClick={onSend}
-                  disabled={!input.trim()}
-                  title="发送 (Enter)"
+                  disabled={!input.trim() && attachments.length === 0}
+                  title={attachments.length && !input.trim() ? `发送 ${attachments.length} 个附件` : '发送 (Enter)'}
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
                 </button>

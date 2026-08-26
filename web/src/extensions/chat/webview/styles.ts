@@ -613,7 +613,7 @@ export const styles = `
 .chat__modal-search input {
   flex: 1; background: transparent; border: none; outline: none;
   color: var(--ai-fg);
-  font-family: inherit; font-size: 14px;
+  font-family: inherit; font-size: 13px;
 }
 .chat__modal-search input::placeholder { color: var(--ai-fg-muted); }
 
