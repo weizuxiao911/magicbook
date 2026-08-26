@@ -18,9 +18,9 @@
 ## 品牌资产
 
 - 名称: **Numas** (无括号中文, 跟 `index.html` title 一致)
-- Logo: `web/src/assets/logo.svg` — 卡通牛头, **上弧 (脸轮廓) + Y 字 (两角 + 鼻梁) + 2 点 (眼) = 牛脸** (巧妙结构), 简笔单色暖橙, 透明背景
-- Favicon: `web/src/assets/favicon.ico` (16/32/48 PNG-in-ICO) + `favicon.png` (64x64) — 透明背景
-- 重生成: `.tmp/favicon-build/build.js` (依赖 `@resvg/resvg-js` 纯 node, 不用 ImageMagick)
+- Logo: `web/src/assets/logo.svg` — **🐮 emoji 原样** (Apple 系统 emoji 字体, 透明背景); chat webview 内通过 `brand.ts.logoChar='🐮'` 渲染
+- Favicon: `web/src/assets/favicon.ico` (16/32/48 PNG-in-ICO) + `favicon.png` (64x64) — 🐮 emoji 截图抠图 (sharp 去白底), 透明 RGBA
+- 重生成: `.tmp/favicon-build/build-cow.js` (用 playwright 截 Apple Color Emoji, sharp 抠图+拼 ICO)
 - 调试日志需要保留 (`web/src/extensions/chat/commands/api.ts` 的 `[meta] stat` 之类) 后续排除问题用
 
 ## 任务执行

@@ -13,7 +13,7 @@ export const APP_CHAT_CONFIG = {
     nameZh: 'AI 工作台',
     tagline: 'C/S 架构可交互工作台',
     greeting: '你好，我是 {nameZh}',
-    logoChar: '✦',
+    logoChar: '🐮',
   },
   suggestions: [
     { icon: '🚀', title: '帮我完成一个任务', desc: '告诉我目标，拆解并执行', prompt: '帮我完成一个任务' },
