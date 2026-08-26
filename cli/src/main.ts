@@ -124,11 +124,9 @@ function spawnClient(): ChildProcess {
 function spawnRegistry(): ChildProcess {
   const registryDir = resolve(__dirname, '../../registry');
   console.log(`[cli] 启动 registry (:${REGISTRY_PORT}, cwd: ${registryDir})...`);
-  // registry 走 node --experimental-strip-types (Node 22+ 内置 TS 支持), 跑 src/server.ts
-  const child = spawn('node', [
-    '--experimental-strip-types',
-    'src/server.ts',
-  ], {
+  // registry/src/server.js 预编译 (ESM), dev 跑纯 JS, 不依赖 --experimental-strip-types
+  // (npx clone 在 node_modules 下, Node 24 不支持 strip node_modules 文件)
+  const child = spawn('node', ['src/server.js'], {
     cwd: registryDir,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,

@@ -58,8 +58,8 @@ function ensureInstalled(label, cmd, args, cwd) {
     if (fs.existsSync(path.join(webDir, 'node_modules', 'webpack'))) return;
   }
   if (label === 'registry') {
-    // registry 跑要 adm-zip + typescript, 检查 typescript
-    if (fs.existsSync(path.join(registryDir, 'node_modules', 'typescript'))) return;
+    // registry 跑要 server.js 预编译 (避免 npx clone 在 node_modules 下 strip-types 失败)
+    if (fs.existsSync(path.join(registryDir, 'src', 'server.js'))) return;
   }
   console.log(`[cli] 首次运行, 装 ${label} ...`);
   // 网络抖动重试 2 次 (registry 抽风, ECONNRESET 等)
@@ -82,8 +82,8 @@ function ensureInstalled(label, cmd, args, cwd) {
 
 ensureInstalled('tsx', 'npm', ['install', '--no-save', '--prefer-offline', 'tsx'], root);
 ensureInstalled('opencode', 'npm', ['install', '--no-save', '--prefer-offline', 'opencode-ai'], cliDir);
-ensureInstalled('web', 'npm', ['install', '--include=dev', '--prefer-offline'], webDir);
-ensureInstalled('registry', 'npm', ['install', '--include=dev', '--prefer-offline'], registryDir);
+ensureInstalled('web', 'npm', ['run', 'build:config', '--include=dev', '--prefer-offline'], webDir);
+ensureInstalled('registry', 'npm', ['run', 'build:config', '--include=dev', '--prefer-offline'], registryDir);
 
 const args = process.argv.slice(2);
 if (args.length === 0) args.push('web'); // 默认 web 模式
