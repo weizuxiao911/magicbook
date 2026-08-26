@@ -61,9 +61,20 @@ function ensureInstalled(label, cmd, args, cwd) {
     if (fs.existsSync(path.join(registryDir, 'node_modules', 'typescript'))) return;
   }
   console.log(`[cli] 首次运行, 装 ${label} ...`);
-  const r = spawnSync(cmd, args, { cwd, stdio: 'inherit' });
+  // 网络抖动重试 2 次 (registry 抽风, ECONNRESET 等)
+  let r;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    r = spawnSync(cmd, args, { cwd, stdio: 'inherit' });
+    if (r.status === 0) break;
+    if (attempt < 3) {
+      console.warn(`[cli] ${label} 安装失败 (尝试 ${attempt}/3), 等 3s 重试...`);
+      spawnSync('sleep', ['3']);
+    }
+  }
   if (r.status !== 0) {
-    console.error(`[cli] ${label} 安装失败 (status=${r.status}), 请手动: cd ${cwd} && ${cmd} ${args.join(' ')}`);
+    console.error(`[cli] ${label} 安装失败 (status=${r.status})`);
+    console.error(`[cli] 网络可能抽风, 请手动: cd ${cwd} && ${cmd} ${args.join(' ')}`);
+    console.error(`[cli] 装好后重跑 npx 即可, bin 会跳过已装的`);
     process.exit(1);
   }
 }
