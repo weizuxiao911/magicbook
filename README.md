@@ -62,7 +62,14 @@ npm run dev
 
 > **升级时若行为异常**: npx 会 cache 旧 numas, 清掉重试:
 > ```bash
+> # macOS / Linux
 > rm -rf ~/.npm/_npx ~/.npm/_cacache
+>
+> # Windows (PowerShell)
+> Remove-Item -Recurse -Force ~\.npm\_npx,~\.npm\_cacache
+>
+> # Windows (CMD)
+> rmdir /S /Q %USERPROFILE%\.npm\_npx %USERPROFILE%\.npm\_cacache
 > ```
 
 | 服务 | 地址 |
