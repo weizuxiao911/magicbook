@@ -6,8 +6,9 @@
  *   GET /<id>/out/*.js       → vsix 资源 (kt-ext 协议)
  *   GET /<id>/package.json   → vsix 内的 package.json
  *
- * 证书存在 → 启 https (kt-ext 协议强制 https)
- * 证书缺失 → fallback http (仅 metadata.json 等可用)
+ * 协议: kt-ext 不强制 https, http 即可 (codeblitz 注册 StaticResourceProvider 时按 base scheme 走).
+ *   证书存在 → 启 https (推荐, 避免某些 strict-origin 环境拦截 http://127.0.0.1)
+ *   证书缺失 → fallback http (本地 dev 够用)
  */
 
 import http from 'node:http';
@@ -92,7 +93,7 @@ if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
     });
 } else {
   http.createServer(handler).listen(PORT, () => {
-    console.log(`[registry-server] listening http on :${PORT}, dist=${DIST_DIR}`);
-    console.warn(`[registry-server] certs missing, run "openssl req -x509 ..." to enable https`);
+    console.log(`[registry-server] listening http on :${PORT} (kt-ext 兼容, 本地 dev 够用), dist=${DIST_DIR}`);
+    console.log(`[registry-server] certs missing (registry/certs/key.pem + cert.pem), 用 http. 要 https 跑 'openssl req -x509 ...' 生成证书`);
   });
 }

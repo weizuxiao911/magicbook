@@ -30,6 +30,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '../..');  // cli/bin → 项目根
 const cliDir = path.resolve(__dirname, '..');    // cli/bin → cli/
 const webDir = path.join(root, 'web');
+const registryDir = path.join(root, 'registry');
 
 const tsxBin = path.join(root, 'node_modules', '.bin', 'tsx');
 const opencodeBin = path.join(cliDir, 'node_modules', '.bin', 'opencode');
@@ -55,6 +56,10 @@ function ensureInstalled(label, cmd, args, cwd) {
   if (label === 'web') {
     if (fs.existsSync(path.join(webDir, 'node_modules', 'webpack'))) return;
   }
+  if (label === 'registry') {
+    // registry 跑要 adm-zip + typescript, 检查 typescript
+    if (fs.existsSync(path.join(registryDir, 'node_modules', 'typescript'))) return;
+  }
   console.log(`[cli] 首次运行, 装 ${label} ...`);
   const r = spawnSync(cmd, args, { cwd, stdio: 'inherit' });
   if (r.status !== 0) {
@@ -65,8 +70,8 @@ function ensureInstalled(label, cmd, args, cwd) {
 
 ensureInstalled('tsx', 'npm', ['install', '--no-save', '--prefer-offline', 'tsx'], root);
 ensureInstalled('opencode', 'npm', ['install', '--no-save', '--prefer-offline', 'opencode-ai'], cliDir);
-// NODE_ENV=production (npx 默认传) 会让 npm install 跳 devDeps, 强制 include
 ensureInstalled('web', 'npm', ['install', '--include=dev', '--prefer-offline'], webDir);
+ensureInstalled('registry', 'npm', ['install', '--include=dev', '--prefer-offline'], registryDir);
 
 const args = process.argv.slice(2);
 if (args.length === 0) args.push('web'); // 默认 web 模式

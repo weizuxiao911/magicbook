@@ -38,4 +38,4 @@ client/.env.production
 .idea/
 .vscode/
 .playwright-mcp/
-.userData/
+.userData/registry/certs/

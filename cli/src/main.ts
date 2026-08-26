@@ -59,6 +59,7 @@ const PORT = (() => {
   return i >= 0 && restArgs[i + 1] ? parseInt(restArgs[i + 1], 10) : 24096;
 })();
 const CLIENT_PORT = 7788;
+const REGISTRY_PORT = 7790;
 
 // ---- 启动前清理: 同端口的残留进程 ----
 async function cleanupOrphans(): Promise<void> {
@@ -69,6 +70,10 @@ async function cleanupOrphans(): Promise<void> {
   if (mode === 'web') {
     await new Promise<void>((resolve) => {
       const cmd = `lsof -ti tcp:${CLIENT_PORT} 2>/dev/null | xargs -r kill -9; pgrep -f "webpack-dev-server" | xargs -r kill -9 2>/dev/null`;
+      spawn('sh', ['-c', cmd], { stdio: 'ignore' }).on('exit', () => resolve());
+    });
+    await new Promise<void>((resolve) => {
+      const cmd = `lsof -ti tcp:${REGISTRY_PORT} 2>/dev/null | xargs -r kill -9; pgrep -f "registry-server\\|src/server.ts" | xargs -r kill -9 2>/dev/null`;
       spawn('sh', ['-c', cmd], { stdio: 'ignore' }).on('exit', () => resolve());
     });
   }
@@ -112,6 +117,24 @@ function spawnClient(): ChildProcess {
     env: process.env,
   });
   pipeLines(child, 'web');
+  return child;
+}
+
+// ---- 子进程: registry (vsix 扩展分发, 仅 web 模式需要) ----
+function spawnRegistry(): ChildProcess {
+  const registryDir = resolve(__dirname, '../../registry');
+  console.log(`[cli] 启动 registry (HTTPS :${REGISTRY_PORT}, cwd: ${registryDir})...`);
+  // registry 走 node --experimental-strip-types (Node 22+ 内置 TS 支持), 跑 src/server.ts
+  const child = spawn('node', [
+    '--experimental-strip-types',
+    'src/server.ts',
+  ], {
+    cwd: registryDir,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
+    env: { ...process.env, PORT: String(REGISTRY_PORT) },
+  });
+  pipeLines(child, 'registry');
   return child;
 }
 
@@ -176,7 +199,7 @@ function installSignalHandlers(children: ChildProcess[]): void {
 // ---- 启动 ----
 async function main(): Promise<void> {
   console.log(`[cli] mode: ${mode}`);
-  console.log(`[cli] 启动前清理端口 ${PORT}${mode === 'web' ? ` + ${CLIENT_PORT}` : ''} 上的残留进程...`);
+  console.log(`[cli] 启动前清理端口 ${PORT}${mode === 'web' ? ` + ${CLIENT_PORT} + ${REGISTRY_PORT}` : ''} 上的残留进程...`);
   await cleanupOrphans();
 
   const children: ChildProcess[] = [];
@@ -185,12 +208,15 @@ async function main(): Promise<void> {
   if (mode === 'web') {
     const web = spawnClient();
     children.push(web);
+    const registry = spawnRegistry();
+    children.push(registry);
   }
 
   // 每个子进程: 退出时带走其他兄弟（peers 闭包捕获时已排除自己）
-  trackExit(opencode, 'opencode', mode === 'web' ? [children[1]] : []);
+  trackExit(opencode, 'opencode', mode === 'web' ? [children[1], children[2]] : []);
   if (mode === 'web') {
-    trackExit(children[1], 'web', [opencode]);
+    trackExit(children[1], 'web', [opencode, children[2]]);
+    trackExit(children[2], 'registry', [opencode, children[1]]);
   }
 
   installSignalHandlers(children);
