@@ -39,6 +39,8 @@ export interface ShellOps {
 /** POSIX (bash / zsh / sh) — macOS + Linux */
 const POSIX: ShellOps = {
   kind: 'posix',
+  // 写文件: 单次 exec, 4KB 以内 (分块由 service/fs.write 控)
+  // 4KB base64 远低于 ARG_MAX, 单次 OK
   writeFile: (p, b64) =>
     `mkdir -p $(dirname ${shellQuotePosix(p)}) && printf %s ${shellQuotePosix(b64)} | base64 -d > ${shellQuotePosix(p)}`,
   readFileBase64: (p) => `base64 ${shellQuotePosix(p)} 2>/dev/null`,

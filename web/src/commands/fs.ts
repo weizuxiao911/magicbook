@@ -37,7 +37,7 @@ export interface IFileSystem {
   /** 读文件为二进制（IDE 相对路径） */
   readBinary(idePath: string): Promise<Uint8Array>;
   /** 写文件（覆盖, 二进制安全: 字符串或 {base64}） */
-  write(idePath: string, content: string | { base64: string }): Promise<boolean>;
+  write(idePath: string, content: string | { base64: string }, onProgress?: (done: number, total: number) => void): Promise<boolean>;
   /** 删除文件/目录（递归） */
   rm(idePath: string): Promise<boolean>;
   /** mkdir -p */

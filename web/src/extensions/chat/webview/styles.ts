@@ -385,6 +385,7 @@ export const styles = `
   padding: 0 2px 8px;
 }
 .chat__attach-card {
+  position: relative;
   display: inline-flex; align-items: center; gap: 6px;
   max-width: 180px;
   padding: 4px 6px;
@@ -409,6 +410,16 @@ export const styles = `
 .chat__attach-thumb {
   width: 26px; height: 26px; object-fit: cover;
   border-radius: 5px; flex-shrink: 0;
+}
+.chat__attach-progress {
+  position: absolute; left: 4px; right: 4px; bottom: 4px;
+  height: 3px; background: color-mix(in srgb, var(--ai-fg) 12%, transparent);
+  border-radius: 2px; overflow: hidden;
+}
+.chat__attach-progress-bar {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, var(--ai-accent), color-mix(in srgb, var(--ai-accent) 60%, #ffffff));
+  transition: width 0.15s ease-out;
 }
 .chat__attach-ic {
   flex-shrink: 0; width: 26px; height: 26px;
@@ -523,6 +534,29 @@ export const styles = `
 .chat__stop-square {
   width: 9px; height: 9px;
   background: currentColor; border-radius: 2px;
+}
+
+/* 上传中 spinner (取代发送箭头, 表示正在上传) */
+.chat__send--uploading {
+  cursor: wait; opacity: 0.85;
+}
+.chat__upload-spinner {
+  display: block; width: 14px; height: 14px;
+  border: 2px solid var(--ai-accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: chat-spin 0.8s linear infinite;
+}
+@keyframes chat-spin {
+  to { transform: rotate(360deg); }
+}
+/* 附件卡: 上传中脉动 */
+.chat__attach-card.is-uploading {
+  animation: chat-pulse 1s ease-in-out infinite;
+}
+@keyframes chat-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ai-accent) 40%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--ai-accent) 12%, transparent); }
 }
 
 /* Model picker — 居中全局模态框 + 遮罩 */
@@ -713,10 +747,10 @@ export const styles = `
 }
 .chat__modal-catrow {
   width: 100%; display: flex; align-items: center; gap: 12px;
-  padding: 11px 14px;
+  padding: 8px 14px;
   background: transparent; border: none; border-radius: 8px;
   color: var(--ai-fg);
-  font-family: inherit; font-size: 15px;
+  font-family: inherit; font-size: 13px;
   cursor: pointer; text-align: left;
 }
 .chat__modal-catrow:hover { background: var(--ai-hover); }
@@ -732,7 +766,7 @@ export const styles = `
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--ai-fg-muted);
 }
-.chat__modal-catname { flex: 1; min-width: 0; }
+.chat__modal-catname { flex: 1; min-width: 0; font-size: 13px; }
 
 /* apikey view */
 .chat__modal-apikey-desc {

@@ -118,6 +118,8 @@ export const Chat: React.FC = () => {
     return unsub;
   }, []);
   const [attachments, setAttachments] = useState<Array<{ name: string; path: string; dataUrl?: string }>>([]);
+  /** 上传进度: { '<path>': 0..1 } — 上传中显示进度条 */
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [previewAttachment, setPreviewAttachment] = useState<{ name: string; path: string; dataUrl?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [modelQuery, setModelQuery] = useState('');
@@ -1100,12 +1102,25 @@ export const Chat: React.FC = () => {
     if (!files || !files.length) return;
     if (!fs?.write) { setError('沙箱文件系统未就绪'); return; }
     const added: Array<{ name: string; path: string }> = [];
+    const ts = Date.now();
+    const rnd = Math.random().toString(36).slice(2, 8);
+    let idx = 0;
     for (const f of Array.from(files)) {
       try {
         const buf = await f.arrayBuffer();
-        const safe = f.name.replace(/[^\w.\-\u4e00-\u9fa5]/g, '_');
-        const path = `/${safe}`;
-        await fs.write(path, { base64: bytesToBase64(new Uint8Array(buf)) });
+        // 路径: 原名-时间戳-随机-idx, 避免覆盖 (同名多次上传不盖)
+        const ext = (f.name.match(/\.[a-z0-9]{1,5}$/i)?.[0] || '').toLowerCase();
+        const base = f.name.replace(/\.[a-z0-9]{1,5}$/i, '').replace(/[^\w.\-\u4e00-\u9fa5]/g, '_').slice(0, 60);
+        const safe = base || 'file';
+        const path = `/${safe}-${ts}-${rnd}-${idx}${ext}`;
+        idx++;
+        // 上传时显示进度 (service/fs.write 按 4KB 分块回调 onProgress)
+        setUploadProgress((p) => ({ ...p, [path]: 0 }));
+        await fs.write(path, { base64: bytesToBase64(new Uint8Array(buf)) }, (done, total) => {
+          setUploadProgress((p) => ({ ...p, [path]: done / total }));
+        });
+        setUploadProgress((p) => ({ ...p, [path]: 1 }));
+        setTimeout(() => setUploadProgress((p) => { const { [path]: _, ...rest } = p; return rest; }), 1000);
         added.push({ name: f.name, path });
       } catch (e) { setError(`上传 ${f.name} 失败: ${String((e as any)?.message || e)}`); }
     }
@@ -1121,23 +1136,31 @@ export const Chat: React.FC = () => {
     e.preventDefault();
     if (!fs?.write) { setError('沙箱文件系统未就绪'); return; }
     const added: Array<{ name: string; path: string; dataUrl?: string }> = [];
+    const ts = Date.now();
+    const rnd = Math.random().toString(36).slice(2, 8);
+    let idx = 0;
     for (const it of fileItems) {
       try {
         const f = it.getAsFile();
         if (!f) continue;
-        // 文件名: 优先原始名, 无 type 时按 mime 推 ext
         const mime = f.type || 'application/octet-stream';
-        const extFromMime = mime.split('/')[1] || '';
-        const extFromName = (f.name?.split('.').pop() || '').toLowerCase();
-        const ext = (extFromName && extFromName.length <= 5) ? extFromName
-          : (extFromMime.split(';')[0].replace(/[^\w]/g, '') || 'bin');
-        const safeBase = (f.name || `paste-${Date.now()}-${Math.floor(Math.random() * 1000)}`)
-          .replace(/[^\w.\-\u4e00-\u9fa5]/g, '_');
-        const name = /\.[a-z0-9]{1,5}$/i.test(safeBase) ? safeBase : `${safeBase}.${ext}`;
-        const path = `/${name}`;
+        // 路径: 原名-时间戳-随机-idx 避免覆盖
+        const ext = (f.name?.match(/\.[a-z0-9]{1,5}$/i)?.[0]
+          || (mime.split('/')[1]?.split(';')[0].replace(/[^\w]/g, '') ? `.${mime.split('/')[1].split(';')[0].replace(/[^\w]/g, '')}` : '')).toLowerCase();
+        const base = (f.name || 'paste')
+          .replace(/\.[a-z0-9]{1,5}$/i, '')
+          .replace(/[^\w.\-\u4e00-\u9fa5]/g, '_')
+          .slice(0, 60) || 'paste';
+        const path = `/${base}-${ts}-${rnd}-${idx}${ext}`;
+        idx++;
         const buf = new Uint8Array(await f.arrayBuffer());
-        // 走 PTY shell 写文件 (service/fs.write → FsPty.exec → base64 写)
-        await fs.write(path, { base64: bytesToBase64(buf) });
+        // 走 PTY shell 写文件 (service/fs.write → FsPty.exec → base64 写), 按 4KB 分块回调进度
+        setUploadProgress((p) => ({ ...p, [path]: 0 }));
+        await fs.write(path, { base64: bytesToBase64(buf) }, (done, total) => {
+          setUploadProgress((p) => ({ ...p, [path]: done / total }));
+        });
+        setUploadProgress((p) => ({ ...p, [path]: 1 }));
+        setTimeout(() => setUploadProgress((p) => { const { [path]: _, ...rest } = p; return rest; }), 1000);
         // 预览图: 图片类型才生成 dataUrl, 其它只显示图标
         let dataUrl: string | undefined;
         if (mime.startsWith('image/')) {
@@ -1148,7 +1171,7 @@ export const Chat: React.FC = () => {
             fr.readAsDataURL(f);
           });
         }
-        added.push({ name: f.name || name, path, dataUrl });
+        added.push({ name: f.name || path, path, dataUrl });
       } catch (err) { setError(`粘贴文件失败: ${String((err as any)?.message || err)}`); }
     }
     if (added.length) setAttachments((prev) => [...prev, ...added]);
@@ -1415,9 +1438,11 @@ export const Chat: React.FC = () => {
                   <button
                     key={i}
                     type="button"
-                    className="chat__attach-card"
+                    className={`chat__attach-card${uploadProgress[a.path] !== undefined && uploadProgress[a.path] < 1 ? ' is-uploading' : ''}`}
                     onClick={() => setPreviewAttachment(a)}
-                    title="点击查看"
+                    title={uploadProgress[a.path] !== undefined && uploadProgress[a.path] < 1
+                      ? `上传中 ${Math.round((uploadProgress[a.path] || 0) * 100)}%`
+                      : '点击查看'}
                   >
                     {a.dataUrl ? (
                       <img className="chat__attach-thumb" src={a.dataUrl} alt={a.name} />
@@ -1427,6 +1452,11 @@ export const Chat: React.FC = () => {
                       </span>
                     )}
                     <span className="chat__attach-name">{a.name}</span>
+                    {uploadProgress[a.path] !== undefined && uploadProgress[a.path] < 1 && (
+                      <span className="chat__attach-progress" title={`上传中 ${Math.round(uploadProgress[a.path] * 100)}%`}>
+                        <span className="chat__attach-progress-bar" style={{ width: `${Math.round(uploadProgress[a.path] * 100)}%` }} />
+                      </span>
+                    )}
                     <span
                       role="button"
                       tabIndex={0}
@@ -1544,6 +1574,15 @@ export const Chat: React.FC = () => {
                 <button type="button" className="chat__send chat__send--stop" onClick={() => onAbort()} title="停止">
                   <span className="chat__stop-square" />
                 </button>
+              ) : Object.keys(uploadProgress).length > 0 ? (
+                <button
+                  type="button"
+                  className="chat__send chat__send--uploading"
+                  disabled
+                  title={`上传中 ${Object.keys(uploadProgress).length} 个文件`}
+                >
+                  <span className="chat__upload-spinner" />
+                </button>
               ) : (
                 <button
                   type="button"
@@ -1552,7 +1591,7 @@ export const Chat: React.FC = () => {
                   disabled={!input.trim() && attachments.length === 0}
                   title={attachments.length && !input.trim() ? `发送 ${attachments.length} 个附件` : '发送 (Enter)'}
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
                 </button>
               )}
             </div>

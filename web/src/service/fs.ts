@@ -394,12 +394,17 @@ export class FileSystemServiceImpl implements IFileSystem {
 
   /**
    * 写文件: base64 内容通过 FsPty 写到绝对路径, 父目录自动 mkdir -p.
-   *   大文件分块: 每块 ≤ CHUNK_BYTES (远低于 ARG_MAX ~256KB), 多次 exec 追加.
-   *   超时按块数线性算: 小文件 10s 够, 大文件按 KB 比例放宽.
+   *   大文件分块: 每块 ≤ CHUNK_BYTES, 多次 exec 追加.
+   *   超时: 5s 基础, 大文件按 KB 比例放宽 (上限 60s).
    *   POSIX: 每块 `printf %s ... | base64 -d >> path` (首块用 >)
    *   PowerShell: 单条 [IO.File]::WriteAllBytes (无 ARG_MAX 问题, 不分块)
+   *   onProgress?: (bytesWritten, totalBytes) 实时回调, 让 UI 显示进度
    */
-  async write(idePath: string, content: string | { base64: string }): Promise<boolean> {
+  async write(
+    idePath: string,
+    content: string | { base64: string },
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<boolean> {
     const ops = await this.ops();
     const abs = absPath(idePath);
     const b64 = typeof content === 'string' ? bytesToBase64(content) : content.base64;
@@ -407,41 +412,48 @@ export class FileSystemServiceImpl implements IFileSystem {
     // PowerShell: 单条命令, 无 ARG_MAX, 不分块
     if (kind === 'powershell') {
       const { ok } = await getFsPty().exec(ops.writeFile(abs, b64), this.writeTimeoutMs(b64.length));
-      if (ok) this.invalidateParent(idePath);
+      if (ok) {
+        this.invalidateParent(idePath);
+        onProgress?.(b64.length, b64.length);
+      }
       return ok;
     }
-    // POSIX: 分块写
-    const CHUNK = 4 * 1024; // 4KB 每块 (base64, 安全远低于 ARG_MAX)
+    // POSIX: 分块写 (4KB base64 / 块, 远低于 ARG_MAX, 25 块/100KB, 单次 50ms)
+    const CHUNK = 4 * 1024;
     const absQ = shellQuotePosix(abs);
     const dir = abs.replace(/\/[^/]+$/, '');
-    // 1) mkdir -p
     if (dir && dir !== abs) {
-      const { ok: ok1 } = await getFsPty().exec(`mkdir -p ${shellQuotePosix(dir)}`);
+      const { ok: ok1 } = await getFsPty().exec(`mkdir -p ${shellQuotePosix(dir)}`, 3000);
       if (!ok1) return false;
     }
-    // 2) 写首块 (> 覆盖)
+    // 写首块 (> 覆盖)
     const first = b64.slice(0, CHUNK);
     const { ok: ok2 } = await getFsPty().exec(
       `printf %s ${first} | base64 -d > ${absQ}`,
-      this.writeTimeoutMs(b64.length),
+      this.writeTimeoutMs(first.length),
     );
     if (!ok2) return false;
-    // 3) 写剩余块 (>> 追加)
+    onProgress?.(first.length, b64.length);
+    // 写剩余块 (>> 追加)
     for (let i = CHUNK; i < b64.length; i += CHUNK) {
       const chunk = b64.slice(i, i + CHUNK);
-      const { ok } = await getFsPty().exec(
+      const r = await getFsPty().exec(
         `printf %s ${chunk} | base64 -d >> ${absQ}`,
-        this.writeTimeoutMs(b64.length),
+        this.writeTimeoutMs(chunk.length),
       );
-      if (!ok) return false;
+      if (!r.ok) {
+        console.warn('[fs.write] chunk fail at', i, '/', b64.length, 'output:', r.output?.slice(0, 200));
+        return false;
+      }
+      onProgress?.(Math.min(i + chunk.length, b64.length), b64.length);
     }
     this.invalidateParent(idePath);
     return true;
   }
 
-  /** 写超时: 10s 基础 + 1s / KB base64 (≈0.75KB 原文), 至少 30s */
+  /** 写超时: 30s 基础 + 1s / KB base64, 上限 5min. 大文件能传完, 又不会无限挂 */
   private writeTimeoutMs(b64Len: number): number {
-    return Math.max(10000, 10000 + Math.ceil(b64Len / 1024) * 1000);
+    return Math.min(300000, 30000 + Math.ceil(b64Len / 1024) * 1000);
   }
 
   async rm(idePath: string): Promise<boolean> {
