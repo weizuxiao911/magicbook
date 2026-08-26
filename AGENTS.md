@@ -15,6 +15,14 @@
 
 架构: client → opencode 直连, 无中间层. 单一事实源是 cli 入口. 详图见 README.
 
+## 品牌资产
+
+- 名称: **Numas** (无括号中文, 跟 `index.html` title 一致)
+- Logo: `web/src/assets/logo.svg` — 戴耳机的牛骑在垮裤快掉被压扁的马 (打工人幽默)
+- Favicon: `web/src/assets/favicon.ico` (16/32/48 PNG-in-ICO) + `favicon.png` (64x64) — 透明背景
+- 重生成: `.tmp/favicon-build/build.js` (依赖 `@resvg/resvg-js` 纯 node, 不用 ImageMagick)
+- 调试日志需要保留 (`web/src/extensions/chat/commands/api.ts` 的 `[meta] stat` 之类) 后续排除问题用
+
 ## 任务执行
 
 按上级 `../AGENTS.md` (用户级) 的「核心决策规则」与「标准工作流程」执行. 本文件项目级约束优先.

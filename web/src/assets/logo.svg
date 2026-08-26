@@ -5,69 +5,105 @@
       <stop offset="55%" stop-color="#3b1d8f"/>
       <stop offset="100%" stop-color="#7c3aed"/>
     </linearGradient>
-    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#a78bfa"/>
-      <stop offset="100%" stop-color="#38bdf8"/>
+    <linearGradient id="horse" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fef3c7"/>
+      <stop offset="100%" stop-color="#fbbf24"/>
     </linearGradient>
-    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="1.6" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
+    <linearGradient id="cow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f5f5f4"/>
+      <stop offset="100%" stop-color="#d6d3d1"/>
+    </linearGradient>
+    <linearGradient id="hp" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="50%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
   </defs>
 
-  <!-- 底板 -->
-  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#bg)"/>
-  <rect x="3" y="3" width="58" height="58" rx="14" fill="none" stroke="url(#glow)" stroke-width="1" opacity="0.5"/>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bg)"/>
 
-  <!-- 全息电路线 -->
-  <g stroke="#38bdf8" stroke-width="1" fill="none" opacity="0.55">
-    <path d="M8 20h6l3-3 3 3h4"/>
-    <path d="M8 44h5l2 2h5"/>
-    <path d="M56 20h-5l-3-3-3 3h-4"/>
-    <path d="M56 44h-5l-2 2h-5"/>
-  </g>
-  <g fill="#38bdf8" opacity="0.8">
-    <circle cx="8" cy="20" r="1.3"/>
-    <circle cx="56" cy="20" r="1.3"/>
-    <circle cx="8" cy="44" r="1.3"/>
-    <circle cx="56" cy="44" r="1.3"/>
-  </g>
+  <!-- ============== 马 (底层, 被压扁 + 垮裤) ============== -->
+  <!-- 马身: 扁椭圆, 后半段比前半低 (被压弯) -->
+  <path d="M10 38 Q12 30 22 30 L40 32 Q48 33 50 36 L48 41 L14 42 Z" fill="url(#horse)"/>
+  <!-- 马鬃 (背上) -->
+  <path d="M14 32 L17 27 L19 30 L21 26 L23 30 L25 28 L20 33 Z" fill="#7c2d12" opacity="0.7"/>
 
-  <!-- 打开的书 (双层叠影 = 全息) -->
-  <g filter="url(#softGlow)">
-    <g opacity="0.35" transform="translate(-1.5 -1.5)">
-      <path d="M32 19c-3-2.4-7-3.2-10.5-2.6V44c3.5-.6 7.5.2 10.5 2.6V19z" fill="#38bdf8"/>
-      <path d="M32 19c3-2.4 7-3.2 10.5-2.6V44c-3.5-.6-7.5.2-10.5 2.6V19z" fill="#38bdf8"/>
-    </g>
-    <path d="M32 18c-3-2.4-7-3.2-10.5-2.6V45c3.5-.6 7.5.2 10.5 2.6V18z" fill="#fff" opacity="0.96"/>
-    <path d="M32 18c3-2.4 7-3.2 10.5-2.6V45c-3.5-.6-7.5.2-10.5 2.6V18z" fill="#ede9fe"/>
-  </g>
+  <!-- 马头 (前左下垂, 累) -->
+  <path d="M50 36 L58 32 L60 36 L60 42 L54 44 L50 41 Z" fill="url(#horse)"/>
+  <!-- 马耳朵 -->
+  <path d="M52 30 L51 27 L54 30 Z" fill="url(#horse)"/>
+  <path d="M55 30 L55 26 L57 30 Z" fill="url(#horse)"/>
+  <!-- 闭眼 + 累嘴 (两个倒 V) -->
+  <path d="M53 39 L55 38 L57 39" stroke="#1b1140" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+  <path d="M55 42 L57 41" stroke="#1b1140" stroke-width="1.2" stroke-linecap="round"/>
 
-  <!-- 书脊 + 光束 -->
-  <line x1="32" y1="18" x2="32" y2="47.6" stroke="#8b5cf6" stroke-width="1.6" stroke-linecap="round"/>
-  <line x1="32" y1="18" x2="32" y2="47.6" stroke="#38bdf8" stroke-width="0.6" stroke-linecap="round" opacity="0.7"/>
+  <!-- 马腿 (4条, 短, 撑地) -->
+  <rect x="14" y="42" width="3" height="11" rx="1" fill="url(#horse)"/>
+  <rect x="20" y="42" width="3" height="11" rx="1" fill="url(#horse)"/>
+  <rect x="42" y="42" width="3" height="11" rx="1" fill="url(#horse)"/>
+  <rect x="47" y="42" width="3" height="11" rx="1" fill="url(#horse)"/>
+  <!-- 蹄 -->
+  <rect x="13" y="52" width="5" height="2.5" rx="0.8" fill="#1b1140"/>
+  <rect x="19" y="52" width="5" height="2.5" rx="0.8" fill="#1b1140"/>
+  <rect x="41" y="52" width="5" height="2.5" rx="0.8" fill="#1b1140"/>
+  <rect x="46" y="52" width="5" height="2.5" rx="0.8" fill="#1b1140"/>
+  <!-- 马尾巴 (下垂) -->
+  <path d="M10 36 Q5 36 5 42 Q5 46 7 47 L9 44 L8 40 Z" fill="url(#horse)"/>
 
-  <!-- 左页文字 (发光蓝) -->
-  <g stroke="#7dd3fc" stroke-width="1.8" stroke-linecap="round">
-    <line x1="14" y1="24" x2="25" y2="24"/>
-    <line x1="14" y1="29" x2="25" y2="29"/>
-    <line x1="14" y1="34" x2="22" y2="34"/>
-  </g>
-  <!-- 右页文字 (紫) -->
-  <g stroke="#a78bfa" stroke-width="1.8" stroke-linecap="round">
-    <line x1="39" y1="24" x2="50" y2="24"/>
-    <line x1="39" y1="29" x2="50" y2="29"/>
-    <line x1="42" y1="34" x2="50" y2="34"/>
-  </g>
+  <!-- 垮裤: 腰在马腹, 裤腿掉到马小腿中段 -->
+  <!-- 裤腰 + 裤身 -->
+  <path d="M18 41 L42 41 L43 47 L40 53 L36 53 L36 47 L24 47 L24 53 L20 53 L17 47 Z" fill="#1e40af"/>
+  <!-- 裤腰带 -->
+  <rect x="17" y="40" width="26" height="2" fill="#0f172a"/>
+  <!-- 裤带扣 -->
+  <rect x="29" y="40" width="2" height="2" fill="#fbbf24"/>
+  <!-- 裤褶皱线 -->
+  <line x1="22" y1="44" x2="22" y2="50" stroke="#0f172a" stroke-width="0.6" opacity="0.5"/>
+  <line x1="30" y1="44" x2="30" y2="50" stroke="#0f172a" stroke-width="0.6" opacity="0.5"/>
+  <line x1="38" y1="44" x2="38" y2="50" stroke="#0f172a" stroke-width="0.6" opacity="0.5"/>
+  <!-- 裤子下滑 (露出马屁股一小段) -->
+  <rect x="11" y="38" width="4" height="3" fill="url(#horse)"/>
 
-  <!-- 魔法能量星 -->
-  <g filter="url(#softGlow)">
-    <path d="M48 7l1.7 4.1 4.1 1.7-4.1 1.7L48 18.6l-1.7-4.1-4.1-1.7 4.1-1.7L48 7z" fill="#fde047"/>
-  </g>
-  <circle cx="56" cy="20" r="1.6" fill="#fde047" opacity="0.9"/>
-  <circle cx="43" cy="5.5" r="1.2" fill="#38bdf8" opacity="0.85"/>
-  <circle cx="9" cy="10" r="1" fill="#fde047" opacity="0.7"/>
+  <!-- ============== 牛 (上层, 骑在马背上, 戴耳机) ============== -->
+  <!-- 牛身 (小, 只露前半身骑在马背) -->
+  <ellipse cx="28" cy="26" rx="9" ry="5" fill="url(#cow)"/>
+  <!-- 牛的斑纹 -->
+  <ellipse cx="25" cy="27" rx="2.5" ry="1.5" fill="#1b1140" opacity="0.7"/>
+  <ellipse cx="32" cy="25" rx="1.5" ry="1" fill="#1b1140" opacity="0.6"/>
+
+  <!-- 牛头 (前左上, 比马头高) -->
+  <circle cx="22" cy="22" r="7" fill="url(#cow)"/>
+  <!-- 牛角 (向上) -->
+  <path d="M18 18 Q16 12 19 14 Q20 16 21 17 Z" fill="#fef3c7" stroke="#92400e" stroke-width="0.6"/>
+  <path d="M26 18 Q28 12 25 14 Q24 16 23 17 Z" fill="#fef3c7" stroke="#92400e" stroke-width="0.6"/>
+  <!-- 牛耳 -->
+  <ellipse cx="16" cy="24" rx="2" ry="1.4" fill="#a8a29e" transform="rotate(-30 16 24)"/>
+  <ellipse cx="28" cy="24" rx="2" ry="1.4" fill="#a8a29e" transform="rotate(30 28 24)"/>
+  <!-- 牛眼 (专注) -->
+  <circle cx="20" cy="22" r="1.2" fill="#1b1140"/>
+  <circle cx="20.3" cy="21.7" r="0.4" fill="#fff"/>
+  <circle cx="25" cy="22" r="1.2" fill="#1b1140"/>
+  <circle cx="25.3" cy="21.7" r="0.4" fill="#fff"/>
+  <!-- 牛鼻 -->
+  <ellipse cx="22" cy="25" rx="2" ry="1.3" fill="#fda4af"/>
+  <ellipse cx="21.3" cy="25" rx="0.3" ry="0.5" fill="#1b1140"/>
+  <ellipse cx="22.7" cy="25" rx="0.3" ry="0.5" fill="#1b1140"/>
+
+  <!-- 牛腿 (前两条垂在马身侧) -->
+  <rect x="22" y="29" width="2.4" height="9" rx="0.8" fill="url(#cow)"/>
+  <rect x="30" y="29" width="2.4" height="9" rx="0.8" fill="url(#cow)"/>
+  <!-- 牛蹄 -->
+  <rect x="21.4" y="37" width="3.6" height="2" rx="0.5" fill="#1b1140"/>
+  <rect x="29.4" y="37" width="3.6" height="2" rx="0.5" fill="#1b1140"/>
+
+  <!-- ============== 耳机 (跨过牛头) ============== -->
+  <!-- 头带 (弧形, 跨过牛角上方) -->
+  <path d="M11 24 Q11 8 22 8 Q33 8 33 24" fill="none" stroke="url(#hp)" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- 左耳罩 -->
+  <rect x="8" y="20" width="5" height="8" rx="1.5" fill="#0f172a"/>
+  <rect x="9" y="21" width="3" height="6" rx="1" fill="url(#hp)" opacity="0.85"/>
+  <!-- 右耳罩 -->
+  <rect x="31" y="20" width="5" height="8" rx="1.5" fill="#0f172a"/>
+  <rect x="32" y="21" width="3" height="6" rx="1" fill="url(#hp)" opacity="0.85"/>
 </svg>
