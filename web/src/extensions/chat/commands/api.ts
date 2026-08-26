@@ -7,15 +7,25 @@
  *
  * v2 client 参数为平铺结构: SDK 的 buildClientParams 内部把 id/agent/model 等
  * 映射到 body, sessionID 等映射到 path.
+ *
+ * 端点策略:
+ *  - SDK 已包装: 走 client.xxx (单一事实源)
+ *  - SDK 未包装 (v1 端点 /skill, /config v1 shape, /agent v1 shape):
+ *    走 opencodeFetch, 但 baseUrl + cwdHeader 从 SDK client.config 拿 (配置同步, 不漂移)
  */
 
+import { opencodeFetch } from './opencodeFetch';
+
+// re-export 通用 fetch (让 chat 端只 import 一个 api 入口)
+export { opencodeFetch } from './opencodeFetch';
+
 /** 全局 opencode SDK 实例 (service/agent 创建后挂载) */
-function getGlobalOpencodeClient() {
+export function getGlobalOpencodeClient() {
   return (window as any).__APP_OPENCODE__;
 }
 
 /** 全局 opencode runtime 元信息 (baseUrl 等, service/agent 挂载) */
-function getGlobalOpencodeRuntime() {
+export function getGlobalOpencodeRuntime() {
   return (window as any).__APP_OPENCODE_RUNTIME__ || {};
 }
 
@@ -200,10 +210,9 @@ export async function aiListAgents(): Promise<any[]> {
   await waitForAiReady();
   const client = getAiClient();
   if (!client) {
-    // 兜底: SDK 未就绪, 直接 fetch (同原逻辑, 不带 header 也能拿到 native)
-    const res = await fetch(buildOpencodeUrl('/agent'), { headers: { Accept: 'application/json' } });
-    if (!res.ok) throw new Error(`GET /agent failed: HTTP ${res.status}`);
-    return filterPrimaryAgents(await res.json());
+    // 兜底: SDK 未就绪, 走 opencodeFetch (拿 SDK baseUrl + cwdHeader)
+    const list = await opencodeFetch<any[]>('/agent', { headers: { Accept: 'application/json' } });
+    return filterPrimaryAgents(list);
   }
   const cwd = (typeof localStorage !== 'undefined' ? localStorage.getItem('APP_CWD') : '')
     || (getGlobalOpencodeRuntime().cwd || '');
@@ -238,10 +247,8 @@ export async function aiListSkills(): Promise<SkillInfo[]> {
   await waitForAiReady();
   // SDK v2 没包装 /skill 端点 (它是 v1 端点), fetch 兜底; 带 cwd header
   const dir = getAiDirectory();
-  const url = `${buildOpencodeUrl('/skill')}?directory=${encodeURIComponent(dir)}`;
-  const res = await fetch(url, { headers: { Accept: 'application/json', ...getAiCwdHeader() } });
-  if (!res.ok) throw new Error(`GET /skill failed: HTTP ${res.status}`);
-  const list: any[] = await res.json();
+  const url = `/skill?directory=${encodeURIComponent(dir)}`;
+  const list: any[] = await opencodeFetch<any[]>(url, { headers: { Accept: 'application/json' } });
   if (!Array.isArray(list)) return [];
   return list
     .filter((s) => s && s.name)
@@ -264,12 +271,10 @@ export async function aiListCommands(): Promise<CommandInfo[]> {
   await waitForAiReady();
   const client = getAiClient();
   if (!client) {
-    // 兜底: SDK 未就绪
+    // 兜底: SDK 未就绪, 走 opencodeFetch
     const dir = getAiDirectory();
-    const url = `${buildOpencodeUrl('/command')}?directory=${encodeURIComponent(dir)}`;
-    const res = await fetch(url, { headers: { Accept: 'application/json', ...getAiCwdHeader() } });
-    if (!res.ok) throw new Error(`GET /command failed: HTTP ${res.status}`);
-    return mapCommands(await res.json());
+    const list = await opencodeFetch<any[]>(`/command?directory=${encodeURIComponent(dir)}`, { headers: { Accept: 'application/json' } });
+    return mapCommands(list);
   }
   const r = await (client as any).command.list({ query: { directory: getAiDirectory() } });
   const list = (r as any)?.data ?? r;
@@ -447,10 +452,7 @@ async function fetchProvidersPayload(): Promise<{ all: any[]; connected: string[
     };
   }
   const dir = getAiDirectory();
-  const url = `${buildOpencodeUrl('/provider')}?directory=${encodeURIComponent(dir)}`;
-  const res = await fetch(url, { headers: { Accept: 'application/json', ...getAiCwdHeader() } });
-  if (!res.ok) throw new Error(`GET /provider failed: HTTP ${res.status}`);
-  const json = await res.json();
+  const json = await opencodeFetch<any>(`/provider?directory=${encodeURIComponent(dir)}`, { headers: { Accept: 'application/json' } });
   return {
     all: Array.isArray(json?.all) ? json.all : [],
     connected: Array.isArray(json?.connected) ? json.connected : [],
@@ -544,8 +546,5 @@ export async function aiGetConfig(): Promise<OpencodeConfig> {
     return ((r as any)?.data ?? r) as OpencodeConfig;
   }
   const dir = getAiDirectory();
-  const url = `${buildOpencodeUrl('/config')}?directory=${encodeURIComponent(dir)}`;
-  const res = await fetch(url, { headers: { Accept: 'application/json', ...getAiCwdHeader() } });
-  if (!res.ok) throw new Error(`GET /config failed: HTTP ${res.status}`);
-  return res.json() as Promise<OpencodeConfig>;
+  return opencodeFetch<OpencodeConfig>(`/config?directory=${encodeURIComponent(dir)}`, { headers: { Accept: 'application/json' } });
 }
