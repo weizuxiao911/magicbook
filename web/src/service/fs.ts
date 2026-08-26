@@ -27,17 +27,7 @@ import type { FsEntry, FileMeta, IFileSystem } from '../commands/fs';
 import { FsToken } from '../commands/fs';
 import { getFsPty } from './fs-pty';
 import { detectPlatform, getShellOps } from './shell-ops';
-
-/** 服务地址（appBaseUrl 直连, server 端 = opencode serve; 不再有 /fs 前缀） */
-function fsBaseUrl(): string {
-  return ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
-}
-
-/** 当前 cwd → x-opencode-directory header（per-request 工作目录切换, APP_CWD 优先, 兜底 hostCwd; encodeURI 防中文路径 break header） */
-function cwdHeader(): Record<string, string> {
-  const cwd = localStorage.getItem('APP_CWD') || (window as any).__APP_CONFIG__?.cwd;
-  return cwd ? { 'x-opencode-directory': encodeURI(cwd) } : {};
-}
+import { appBaseUrl, cwdHeader, effectiveCwd } from './env';
 
 /** 通用 JSON fetch（带 cwd 头） */
 async function httpJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -76,7 +66,7 @@ function bytesToBase64(input: Uint8Array | string): string {
 
 /** IDE 相对路径 (/foo) → 绝对路径 (APP_CWD || hostCwd + / + rel) */
 function absPath(idePath: string): string {
-  const cwd = localStorage.getItem('APP_CWD') || (window as any).__APP_CONFIG__?.cwd || '';
+  const cwd = effectiveCwd();
   if (!cwd) throw new Error('fs: no cwd (APP_CWD unset and hostCwd not yet probed)');
   return cwd.replace(/\/+$/, '') + '/' + idePath.replace(/^\/+/, '');
 }
@@ -108,7 +98,7 @@ export class FileSystemServiceImpl implements IFileSystem {
   /** 容器启动: 挂全局单例 + 订阅 fs 事件（runtime 就绪后）+ explorer 刷新 + 恢复编辑器 tab */
   onStart(): void {
     (window as any).__APP_FS__ = this;
-    console.log('[filesystem] service ready, baseUrl:', fsBaseUrl() || '(unset)');
+    console.log('[filesystem] service ready, baseUrl:', appBaseUrl() || '(unset)');
     window.addEventListener('runtime-ready', () => {
       this.connectEvents();
       void this.verifyOpensumiLink();
@@ -116,7 +106,7 @@ export class FileSystemServiceImpl implements IFileSystem {
       this.watchEditorState();
       this.restoreOpenedEditors();
     });
-    if (fsBaseUrl()) this.connectEvents();
+    if (appBaseUrl()) this.connectEvents();
   }
 
   /** 验证 opensumi IFileServiceClient → BrowserFS → server fs 链路（拓展读文件的通道） */
@@ -221,7 +211,7 @@ export class FileSystemServiceImpl implements IFileSystem {
 
   /** 订阅 opencode 事件流: 过滤 file.* 类型转 opensumi fireFilesChange, 派发 fs:changed */
   private async connectEvents(): Promise<void> {
-    const base = fsBaseUrl();
+    const base = appBaseUrl();
     if (!base) return;
     if (this.eventAbort) return;
     const abort = new AbortController();
@@ -268,7 +258,7 @@ export class FileSystemServiceImpl implements IFileSystem {
 
   /** SDK 失败时降级: 原生 EventSource 订阅 /event (opencode 自身端点) */
   private fallbackEventSource(abort: AbortController): void {
-    const base = fsBaseUrl();
+    const base = appBaseUrl();
     if (!base) return;
     const es = new EventSource(`${base}/event`, { withCredentials: false });
     abort.signal.addEventListener('abort', () => es.close());
@@ -306,7 +296,7 @@ export class FileSystemServiceImpl implements IFileSystem {
   /** 懒建 SDK client（共享, 不重置 cwd header） */
   private ensureClient(): ReturnType<typeof createOpencodeClient> {
     if (this.fsClient) return this.fsClient;
-    const base = fsBaseUrl();
+    const base = appBaseUrl();
     if (!base) throw new Error('fs base url not ready');
     this.fsClient = createOpencodeClient({
       baseUrl: base,
@@ -324,7 +314,7 @@ export class FileSystemServiceImpl implements IFileSystem {
     // 空字符串 / "/" 视作 .
     const queryPath = !idePath || idePath === '/' ? '.' : idePath;
     const json = await httpJson<{ data: Array<{ path: string; type: string }> }>(
-      `${fsBaseUrl()}/api/fs/list?path=${encodeURIComponent(queryPath)}`,
+      `${appBaseUrl()}/api/fs/list?path=${encodeURIComponent(queryPath)}`,
     );
     return (json.data || []).map((e) => ({
       name: e.path.split('/').filter(Boolean).pop() || e.path,
@@ -365,7 +355,7 @@ export class FileSystemServiceImpl implements IFileSystem {
   async read(idePath: string): Promise<string> {
     // opencode /api/fs/read/<relpath> 返回 text/plain; 路径不能带前导 /
     const res = await fetch(
-      `${fsBaseUrl()}/api/fs/read/${relPathForRead(idePath)}`,
+      `${appBaseUrl()}/api/fs/read/${relPathForRead(idePath)}`,
       { headers: { ...cwdHeader() } },
     );
     if (!res.ok) throw new Error(`fs read ${res.status}: ${idePath}`);
@@ -427,7 +417,7 @@ export class FileSystemServiceImpl implements IFileSystem {
     const dir = !idePath || idePath === '/' ? '.' : idePath.replace(/^\/+/, '');
     const type = 'file';
     const json = await httpJson<string[]>(
-      `${fsBaseUrl()}/find/file?query=${encodeURIComponent(pattern)}&type=${type}&directory=${encodeURIComponent(dir)}`,
+      `${appBaseUrl()}/find/file?query=${encodeURIComponent(pattern)}&type=${type}&directory=${encodeURIComponent(dir)}`,
     );
     return Array.isArray(json) ? json : [];
   }

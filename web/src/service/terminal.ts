@@ -20,16 +20,7 @@ import {
   type ITerminalServiceClient,
 } from '@opensumi/ide-terminal-next/lib/common';
 
-/** opencode serve 地址（单一配置入口, appBaseUrl 直连, 无 /ai 前缀） */
-function opencodeBaseUrl(): string {
-  return ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
-}
-
-/** 当前 cwd → x-opencode-directory header（per-request 工作目录切换, APP_CWD 优先, 兜底 hostCwd; encodeURI 防中文路径 break header） */
-function cwdHeader(): Record<string, string> {
-  const cwd = localStorage.getItem('APP_CWD') || (window as any).__APP_CONFIG__?.cwd;
-  return cwd ? { 'x-opencode-directory': encodeURI(cwd) } : {};
-}
+import { appBaseUrl, cwdHeader } from './env';
 
 /** 默认 shell: 优先 applyRuntime 注入（宿主事实）; 未注入时先取默认值, ensureDefaultShell() 会从 server /platform 懒加载覆盖 */
 function defaultShell(): string {
@@ -61,10 +52,10 @@ export class RemoteTerminalService implements ITerminalNodeService {
 
   /** 等 opencode 地址就绪（app_base_url 注入即就绪; 终端可能在登录前被创建） */
   private async waitPtyReady(): Promise<void> {
-    if (opencodeBaseUrl()) return;
+    if (appBaseUrl()) return;
     await new Promise<void>((resolve) => {
       const onReady = () => {
-        if (opencodeBaseUrl()) {
+        if (appBaseUrl()) {
           window.removeEventListener('runtime-ready', onReady);
           resolve();
         }
@@ -81,7 +72,7 @@ export class RemoteTerminalService implements ITerminalNodeService {
   private async ensureDefaultShell(): Promise<void> {
     if ((window as any).__APP_CONFIG__?.defaultShell) return;
     try {
-      const base = opencodeBaseUrl();
+      const base = appBaseUrl();
       if (!base) return;
       // /pty/shells 列出 opencode 探测到的可用 shell; macOS 偏好 zsh（acceptable=true 优先）
       const res = await fetch(`${base}/pty/shells`, { headers: { Accept: 'application/json', ...cwdHeader() } });
@@ -99,7 +90,7 @@ export class RemoteTerminalService implements ITerminalNodeService {
 
   /** GET {opencode}/path 取宿主机绝对 cwd（pty 会话工作目录） */
   private async getPtyCwd(): Promise<string> {
-    const base = opencodeBaseUrl();
+    const base = appBaseUrl();
     const res = await fetch(`${base}/path`, { headers: { Accept: 'application/json', ...cwdHeader() } });
     if (!res.ok) throw new Error(`pty /path ${res.status}`);
     const json = await res.json();
@@ -109,7 +100,7 @@ export class RemoteTerminalService implements ITerminalNodeService {
 
   /** POST {opencode}/pty 创建会话（spawn shell, cwd=宿主机绝对 workspace; 默认 shell 按 macOS 事实） */
   private async createPty(launchConfig: IShellLaunchConfig, cwd: string): Promise<{ id: string; pid: number; command: string }> {
-    const base = opencodeBaseUrl();
+    const base = appBaseUrl();
     if (!base) throw new Error('opencode url not ready (appBaseUrl 未注入)');
     // 默认 shell（opencode /pty/shells 宿主事实, macOS zsh）优先: 前端可能在注入前就把 executable
     // 定为 bash（getDefaultSystemShell 早期调用）, 尊重它会导致刷新后 shell 变成 bash;
@@ -130,7 +121,7 @@ export class RemoteTerminalService implements ITerminalNodeService {
 
   private wsUrl(ptyId: string, cwd: string): string {
     // WS 端点吃 query param directory（与 x-opencode-directory header 等价, 浏览器 WS API 不便加 header）
-    return `${opencodeBaseUrl().replace(/^http/, 'ws')}/pty/${ptyId}/connect?directory=${encodeURIComponent(cwd)}`;
+    return `${appBaseUrl().replace(/^http/, 'ws')}/pty/${ptyId}/connect?directory=${encodeURIComponent(cwd)}`;
   }
 
   /** 创建终端会话（前端 sessionId = id） */

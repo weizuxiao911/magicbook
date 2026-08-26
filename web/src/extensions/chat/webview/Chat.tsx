@@ -5,6 +5,7 @@ import { SlotLocation } from '@opensumi/ide-core-browser';
 import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 
 import { FsToken, type IFileSystem } from '@/commands/fs';
+import { appBaseUrl, effectiveCwd } from '@/service/env';
 
 import {
   aiListAgents,
@@ -166,8 +167,8 @@ export const Chat: React.FC = () => {
   const client = (window as any).__APP_OPENCODE__;
   const isReady = () => {
     // 必须有 APP_CWD（已选工作目录）才可用
-    const hasCwd = !!localStorage.getItem('APP_CWD');
-    const base = (window as any).__APP_CONFIG__?.appBaseUrl;
+    const hasCwd = !!effectiveCwd();
+    const base = appBaseUrl();
     if (base && hasCwd) {
       try { getAiClient(); } catch { /* client 创建失败不阻塞面板 */ }
     }

@@ -18,6 +18,7 @@
  */
 
 import { detectPlatform, getShellOps, pickShellKind, type ShellKind, type ShellOps } from './shell-ops';
+import { appBaseUrl, cwdHeader, effectiveCwd } from './env';
 
 interface Pending {
   resolve: (out: { ok: boolean; output: string }) => void;
@@ -49,7 +50,7 @@ class FsPty {
   }
 
   private async doInit(): Promise<void> {
-    const base = baseUrl();
+    const base = appBaseUrl();
     if (!base) throw new Error('fs pty: app base url not ready');
     // cwd: APP_CWD (用户选择) || hostCwd (opencode /path 注入) || 报错
     const cwd = effectiveCwd();
@@ -59,7 +60,7 @@ class FsPty {
     let shellList: Array<{ name: string; path: string; acceptable: boolean }> = [];
     try {
       const res = await fetch(`${base}/pty/shells`, {
-        headers: { Accept: 'application/json', 'x-opencode-directory': cwd },
+        headers: { Accept: 'application/json', ...cwdHeader() },
       });
       if (res.ok) {
         const j = await res.json();
@@ -76,7 +77,7 @@ class FsPty {
     // 2. POST /pty 创建会话 (v1 端点, 跟 terminal.ts 一致)
     const createRes = await fetch(`${base}/pty`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-opencode-directory': cwd },
+      headers: { 'Content-Type': 'application/json', ...cwdHeader() },
       body: JSON.stringify({ command: shell, cwd }),
     });
     if (!createRes.ok) throw new Error(`fs pty: create pty failed: HTTP ${createRes.status}`);
@@ -181,15 +182,6 @@ class FsPty {
 }
 
 // ---- helpers ----
-
-function baseUrl(): string {
-  return ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
-}
-
-/** 有效 cwd: APP_CWD 优先, 兜底 hostCwd (agent.initRuntime 从 /path 注入到 __APP_CONFIG__.cwd) */
-export function effectiveCwd(): string {
-  return localStorage.getItem('APP_CWD') || (window as any).__APP_CONFIG__?.cwd || '';
-}
 
 function uuid(): string {
   // 不依赖 crypto.randomUUID (旧浏览器兜底)

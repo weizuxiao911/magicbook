@@ -59,6 +59,7 @@
 | --- | --- | --- |
 | cli's --port 改了, 客户端连不上 | .env 跟 cli 漂移 | cli 注入 process.env.APP_BASE_URL, webpack 优先读 process.env, .env 兜底 |
 | 中文路径 fetch header 报 non-ISO-8859-1 | HTTP header 限制 | `encodeURI()` 包裹 x-opencode-directory; opencode 自动 decode |
+| `__APP_OPENCODE__` 永远 undefined, chat 报 "opencode client not ready" | `agent.getClient()` 创 SDK 时 CJK cwd 没 encode, `createOpencodeClient` 抛错被 try/catch 吞 | `getClient()` line 126 也要 `encodeURI(cwd)` (跟 cwdHeader 同源; 不是 fetch 直连, 是 SDK 内部 mergeHeaders) |
 | 写文件 409 Conflict | opencode session 单 shell 限制 | FsPty 单例 PTY (全局) + promise chain 串行化 |
 | Explorer 500 (无 APP_CWD) | WorkspacePicker 默认 browse `~`, opencode 不展开 ~ | picker 拉 /path 拿 home + hostCwd, expandHome 展开 |
 | 切 client 端口 (--web-port 8000) 报 unknown arg | cli --web-port 透给 opencode | cli/bin/cli.cjs splice 掉 --web-port |

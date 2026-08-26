@@ -18,23 +18,14 @@ import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 import type { IAgent, AgentMessage, AgentModel, AgentSession } from '../commands/agent';
 import { AgentToken } from '../commands/agent';
+import { appBaseUrl, effectiveCwd, cwdHeader } from './env';
 
 let _client: any = null;
-
-function opencodeBaseUrl(): string {
-  return ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
-}
-
-/** 当前 cwd → x-opencode-directory header（per-request 工作目录切换） */
-function cwdHeader(): Record<string, string> {
-  const cwd = localStorage.getItem('APP_CWD');
-  return cwd ? { 'x-opencode-directory': cwd } : {};
-}
 
 /** 探测宿主机默认 shell: 从 /pty/shells 取 (多平台由宿主机 opencode 判定, 不猜浏览器 UA) */
 async function probeDefaultShell(base: string, cwd: string): Promise<string> {
   try {
-    const res = await fetch(`${base}/pty/shells`, { headers: { Accept: 'application/json', 'x-opencode-directory': cwd } });
+    const res = await fetch(`${base}/pty/shells`, { headers: { Accept: 'application/json', ...cwdHeader() } });
     if (!res.ok) return '';
     const list = (await res.json()) as Array<{ name: string; path: string; acceptable: boolean }>;
     if (!Array.isArray(list) || !list.length) return '';
@@ -69,9 +60,9 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
    */
   async initRuntime(): Promise<void> {
     if (this._runtime) return;
-    const base = opencodeBaseUrl();
+    const base = appBaseUrl();
     if (!base) return;
-    const cwd = localStorage.getItem('APP_CWD') || '';
+    const cwd = effectiveCwd();
     // 1. 探 /global/health（不阻塞, 失败按"未就绪"占位）
     let healthy = false;
     try {
@@ -118,13 +109,11 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
 
   getClient(): any {
     if (_client) return _client;
-    const base = opencodeBaseUrl();
+    const base = appBaseUrl();
     if (!base) return null;
     // 所有 SDK 请求带 x-opencode-directory → opencode 按 header 切换工作目录上下文
     // （per-request 路由, 无需重启服务; 直连 opencode, 无中间代理）
-    const cwd = localStorage.getItem('APP_CWD');
-    const headers = cwd ? { 'x-opencode-directory': cwd } : {};
-    _client = createOpencodeClient({ baseUrl: base, headers, responseStyle: 'fields', throwOnError: true });
+    _client = createOpencodeClient({ baseUrl: base, headers: cwdHeader(), responseStyle: 'fields', throwOnError: true });
     (window as any).__APP_OPENCODE__ = _client;
     (window as any).__APP_OPENCODE_RUNTIME__ = { baseUrl: base };
     return _client;
@@ -136,14 +125,14 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
   }
 
   isReady(): boolean {
-    return !!_client || !!opencodeBaseUrl();
+    return !!_client || !!appBaseUrl();
   }
 
   async waitForReady(timeoutMs = 8000): Promise<void> {
     if (this.isReady()) return;
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
-      if (opencodeBaseUrl()) {
+      if (appBaseUrl()) {
         this.getClient();
         return;
       }
@@ -219,7 +208,7 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
 
   async listAgents(): Promise<unknown[]> {
     await this.waitForReady();
-    const res = await fetch(`${opencodeBaseUrl()}/agent`, { headers: { Accept: 'application/json' } });
+    const res = await fetch(`${appBaseUrl()}/agent`, { headers: { Accept: 'application/json' } });
     if (!res.ok) throw new Error(`GET /agent failed: HTTP ${res.status}`);
     const list = await res.json();
     return Array.isArray(list) ? list : [];
@@ -227,7 +216,7 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
 
   async listModels(): Promise<AgentModel[]> {
     await this.waitForReady();
-    const res = await fetch(`${opencodeBaseUrl()}/provider`, { headers: { Accept: 'application/json' } });
+    const res = await fetch(`${appBaseUrl()}/provider`, { headers: { Accept: 'application/json' } });
     if (!res.ok) throw new Error(`GET /provider failed: HTTP ${res.status}`);
     const json = await res.json();
     const all: any[] = Array.isArray(json?.all) ? json.all : [];

@@ -1,15 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
-function appBaseUrl(): string {
-  return ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
-}
-
-function cwdHeader(): Record<string, string> {
-  const cwd = localStorage.getItem('APP_CWD') || (window as any).__APP_CONFIG__?.cwd;
-  // encodeURI: header 必须是 ISO-8859-1, 中文路径要 percent-encode
-  return cwd ? { 'x-opencode-directory': encodeURI(cwd) } : {};
-}
+import { appBaseUrl, cwdHeader, effectiveCwd } from '../../service/env';
 
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\"'\"'`)}'`;
@@ -127,9 +119,9 @@ const expandHome = (p: string): string => {
         inputRef.current?.focus();
         // 初始路径: APP_CWD (用户选) → hostCwd (opencode /path 注入) → 现拉一次 (兜底)
         // 顺便拿 home 展开 QUICK 里的 ~ 路径
-        let start = localStorage.getItem('APP_CWD') || (window as any).__APP_CONFIG__?.cwd || '';
+        let start = effectiveCwd();
         try {
-          const base = ((window as any).__APP_CONFIG__?.appBaseUrl || '').replace(/\/+$/, '');
+          const base = appBaseUrl();
           const res = await fetch(`${base}/path`, { headers: { Accept: 'application/json' } });
           if (res.ok) {
             const j = await res.json();
