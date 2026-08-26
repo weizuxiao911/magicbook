@@ -65,7 +65,8 @@ function ensureInstalled(label, cmd, args, cwd) {
 
 ensureInstalled('tsx', 'npm', ['install', '--no-save', '--prefer-offline', 'tsx'], root);
 ensureInstalled('opencode', 'npm', ['install', '--no-save', '--prefer-offline', 'opencode-ai'], cliDir);
-ensureInstalled('web', 'npm', ['install', '--prefer-offline'], webDir);
+// NODE_ENV=production (npx 默认传) 会让 npm install 跳 devDeps, 强制 include
+ensureInstalled('web', 'npm', ['install', '--include=dev', '--prefer-offline'], webDir);
 
 const args = process.argv.slice(2);
 if (args.length === 0) args.push('web'); // 默认 web 模式
