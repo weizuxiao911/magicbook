@@ -1,8 +1,8 @@
 {
-  "name": "numas-client",
+  "name": "numas-web",
   "version": "0.1.0",
   "private": true,
-  "description": "Numas client — opensumi/codeblitz 交互层（纯浏览器）",
+  "description": "Numas web — opensumi/codeblitz 交互层（纯浏览器）",
   "scripts": {
     "dev": "ts-node --transpile-only --project tsconfig.node.json node_modules/webpack-cli/bin/cli.js serve --config webpack.config.ts",
     "build": "cross-env NODE_ENV=production ts-node --transpile-only --project tsconfig.node.json node_modules/webpack-cli/bin/cli.js --config webpack.config.ts",

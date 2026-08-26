@@ -8,7 +8,7 @@
 | 端 | 目录 | 职责 |
 | --- | --- | --- |
 | 入口 | `cli/` | 进程编排器: npx bin + web/serve 路由 + opencode 进程组管理 |
-| 客户端 | `client/` | codeblitz 容器 + 8 service + 4 extension |
+| 客户端 | `web/` | codeblitz 容器 + 8 service + 4 extension |
 | 后端 | opencode (外部) | AI + 终端 PTY + 文件系统 |
 | 扩展 | `extensions/` | vsix 源码 |
 | 分发 | `registry/` | vsix 扩展分发 (独立) |
@@ -33,7 +33,7 @@
 
 **6. 依赖下沉**: root 只留 `tsx`, client 全套 react/codeblitz/webpack, cli 只 `tsx` + `typescript` (删了 opencode-ai 174M). 各管各, root node_modules 11M.
 
-**.env**: 搬到 `client/.env.development` (client 局部). webpack 优先 process.env, 兜底读 .env.
+**.env**: 搬到 `web/.env.development` (client 局部). webpack 优先 process.env, 兜底读 .env.
 
 ## 变更日志
 
@@ -45,8 +45,8 @@
 | 依赖清理 | root 装 500M webpack 工具链; cli 装 174M opencode-ai (不 import) | 下沉 + 删未用 | root 留 tsx; client 装 webpack; cli 删 opencode-ai |
 | npx 分发 | "别人怎么用" | 公开 GitHub 仓库走 npx github: | `cli/bin/cli.cjs` npx 入口 + `package.json:bin` |
 | 端口单一源 | `cli --port` 改了 webpack 不知道, 客户端连不上 | cli 设 process.env, webpack 优先读 env | `cli/bin/cli.cjs` 解析 `--port` → `process.env.APP_BASE_URL` → webpack DefinePlugin 注入 |
-| 加 client-port | "client 端口怎么改" | `--client-port` flag | cli 解析 → `process.env.CLIENT_PORT` → webpack `devServer.port`; CORS auto-derived |
-| env 搬迁 | .env 在项目根, webpack 读 `../.env` 跨目录 | 搬到 client/ | `client/.env.development`, webpack 读 `./.env`, project root 兜底 |
+| 加 client-port | "client 端口怎么改" | `--web-port` flag | cli 解析 → `process.env.WEB_PORT` → webpack `devServer.port`; CORS auto-derived |
+| env 搬迁 | .env 在项目根, webpack 读 `../.env` 跨目录 | 搬到 web/ | `web/.env.development`, webpack 读 `./.env`, project root 兜底 |
 | CJK 路径 | 中文路径 fetch header 报 non-ISO-8859-1 | `encodeURI` 包裹 header | 6 处 `cwdHeader` 全部 `encodeURI` |
 | 文档重写 | README/AGENTS 还提旧中间层架构 | 删旧架构全部引用 | README 讲终态架构 + 图表, AGENTS 讲过程决策 |
 | **品牌: Numas** | "对标腾讯 workbuddy, 打工人首选工作模式" | 改名 Numas (牛马们) | package name → `numas`, bin → `numas`, description + slogan 更新 |
@@ -61,8 +61,8 @@
 | 中文路径 fetch header 报 non-ISO-8859-1 | HTTP header 限制 | `encodeURI()` 包裹 x-opencode-directory; opencode 自动 decode |
 | 写文件 409 Conflict | opencode session 单 shell 限制 | FsPty 单例 PTY (全局) + promise chain 串行化 |
 | Explorer 500 (无 APP_CWD) | WorkspacePicker 默认 browse `~`, opencode 不展开 ~ | picker 拉 /path 拿 home + hostCwd, expandHome 展开 |
-| 切 client 端口 (--client-port 8000) 报 unknown arg | cli --client-port 透给 opencode | cli/bin/cli.cjs splice 掉 --client-port |
-| root node_modules 500M | 早期 root 装 client 全套 devDeps | root 只留 tsx, webpack 下沉 client/ (-98%) |
+| 切 client 端口 (--web-port 8000) 报 unknown arg | cli --web-port 透给 opencode | cli/bin/cli.cjs splice 掉 --web-port |
+| root node_modules 500M | 早期 root 装 client 全套 devDeps | root 只留 tsx, webpack 下沉 web/ (-98%) |
 | cli/node_modules 174M | cli 误列 opencode-ai, 实际 spawn 拉二进制 | 删 cli/package.json dependencies, 只留 devDeps |
 | npx 一行启动 | 没有 bin 入口 | `cli/bin/cli.cjs` (CommonJS, 44 行) + `package.json:bin:numas` |
 | core/ 嵌套冗余 | core/commands/ + core/config/ + core/styles/ | 平铺到 src/ 根, 删 core/ |
@@ -125,7 +125,7 @@ cd client && npm run typecheck    # tsc --noEmit
 - **单一职责**: 每个模块只做一件事.
 - **配置外置**: 敏感信息不入库.
 - **中文优先**: 文档/接口/文案中文为主.
-- **tsx 统一**: bin/cli.cjs + cli/src/main.ts + client/webpack.config.ts 全走 tsx.
+- **tsx 统一**: bin/cli.cjs + cli/src/main.ts + web/webpack.config.ts 全走 tsx.
 - **品牌**: Numas (牛马们) — 打工人首选工作模式. 文档/banner 体现这调性.
 
 ## 验证清单

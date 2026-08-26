@@ -100,18 +100,18 @@ function spawnOpencode(): ChildProcess {
   return child;
 }
 
-// ---- 子进程: codeblitz client (webpack-dev-server) ----
+// ---- 子进程: codeblitz web 前端 (webpack-dev-server) ----
 function spawnClient(): ChildProcess {
-  // main.ts 在 cli/src/, 兄弟目录 ../client 是 codeblitz 前端
-  const clientDir = resolve(__dirname, '../../client');
-  console.log(`[cli] 启动 client (webpack-dev-server, cwd: ${clientDir})...`);
-  // 直接调 npm 走 client 的 dev 脚本（dev 内部是 webpack-dev-server）
-  const child = spawn('npm', ['--prefix', clientDir, 'run', 'dev'], {
+  // main.ts 在 cli/src/, 兄弟目录 ../web 是 codeblitz 前端
+  const webDir = resolve(__dirname, '../../web');
+  console.log(`[cli] 启动 web (webpack-dev-server, cwd: ${webDir})...`);
+  // 直接调 npm 走 web 的 dev 脚本（dev 内部是 webpack-dev-server）
+  const child = spawn('npm', ['--prefix', webDir, 'run', 'dev'], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
     env: process.env,
   });
-  pipeLines(child, 'client');
+  pipeLines(child, 'web');
   return child;
 }
 
@@ -183,14 +183,14 @@ async function main(): Promise<void> {
   const opencode = spawnOpencode();
   children.push(opencode);
   if (mode === 'web') {
-    const client = spawnClient();
-    children.push(client);
+    const web = spawnClient();
+    children.push(web);
   }
 
   // 每个子进程: 退出时带走其他兄弟（peers 闭包捕获时已排除自己）
   trackExit(opencode, 'opencode', mode === 'web' ? [children[1]] : []);
   if (mode === 'web') {
-    trackExit(children[1], 'client', [opencode]);
+    trackExit(children[1], 'web', [opencode]);
   }
 
   installSignalHandlers(children);

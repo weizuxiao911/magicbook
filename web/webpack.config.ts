@@ -4,14 +4,14 @@ import webpack from 'webpack';
 import HtmlWebpackPlugin from 'html-webpack-plugin';
 import NodePolyfillPlugin from 'node-polyfill-webpack-plugin';
 
-// 配置在 client/ 内, 自身即 client 根; .env 在 client/, 显式 ./.env.${DEPLOY_ENV}
-const CLIENT = __dirname;
-const PROJECT_ROOT = path.resolve(CLIENT, '..');
+// 配置在 web/ 内, 自身即 web 根; .env 在 web/, 显式 ./.env.${DEPLOY_ENV}
+const WEB = __dirname;
+const PROJECT_ROOT = path.resolve(WEB, '..');
 
 function loadEnvVar(name: string, fallback = ''): string {
-  // 优先 client/.env, 兜底项目根 .env (兼容老配置)
+  // 优先 web/.env, 兜底项目根 .env (兼容老配置)
   const candidates = [
-    path.resolve(CLIENT, `.env.${process.env.DEPLOY_ENV || 'development'}`),
+    path.resolve(WEB, `.env.${process.env.DEPLOY_ENV || 'development'}`),
     path.resolve(PROJECT_ROOT, `.env.${process.env.DEPLOY_ENV || 'development'}`),
   ];
   for (const envFile of candidates) {
@@ -43,15 +43,15 @@ const isDev = process.env.NODE_ENV !== 'production';
 const config: webpack.Configuration = {
   mode: isDev ? 'development' : 'production',
   target: 'web',
-  entry: path.resolve(CLIENT, 'src/index.tsx'),
+  entry: path.resolve(WEB, 'src/index.tsx'),
   output: {
-    path: path.resolve(CLIENT, 'dist'),
+    path: path.resolve(WEB, 'dist'),
     filename: '[name].[contenthash:8].js',
     publicPath: '/',
   },
   cache: {
     type: 'filesystem',
-    cacheDirectory: path.resolve(CLIENT, '.webpack-cache'),
+    cacheDirectory: path.resolve(WEB, '.webpack-cache'),
     // monaco-editor 等大依赖单独缓存, 避免每次 dev rebuild 都全量转译
     buildDependencies: {
       config: [__filename],
@@ -106,8 +106,8 @@ const config: webpack.Configuration = {
   resolve: {
     extensions: ['.ts', '.tsx', '.js', '.json'],
     alias: {
-      '@': path.resolve(CLIENT, 'src'),
-      '@/': path.resolve(CLIENT, 'src') + path.sep,
+      '@': path.resolve(WEB, 'src'),
+      '@/': path.resolve(WEB, 'src') + path.sep,
     },
     fallback: {
       // 构建期 fallback: 供第三方库（opensumi/codeblitz）浏览器兼容, src 本身零 node 依赖
@@ -212,8 +212,8 @@ const config: webpack.Configuration = {
   },
   plugins: [
     new HtmlWebpackPlugin({
-      template: path.resolve(CLIENT, 'src/index.html'),
-      favicon: path.resolve(CLIENT, 'src/assets/favicon.ico'),
+      template: path.resolve(WEB, 'src/index.html'),
+      favicon: path.resolve(WEB, 'src/assets/favicon.ico'),
     }),
     // 纯前端: 编译期读 env var, DefinePlugin 注入为全局常量（产物无 process/node 引用）
     // 单一事实源: cli's --port 注入 process.env.APP_BASE_URL, 此处优先; .env 兜底
@@ -228,8 +228,8 @@ const config: webpack.Configuration = {
   devServer: {
     allowedHosts: 'all',
     host: '0.0.0.0',
-    // 端口由 cli 注入 (process.env.CLIENT_PORT), 兜底 7788 (直跑 client 时的默认)
-    port: parseInt(process.env.CLIENT_PORT || '7788', 10),
+    // 端口由 cli 注入 (process.env.WEB_PORT), 兜底 7788 (直跑 client 时的默认)
+    port: parseInt(process.env.WEB_PORT || '7788', 10),
     historyApiFallback: { disableDotRule: true },
     hot: true,
     client: {

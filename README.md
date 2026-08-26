@@ -7,7 +7,7 @@
 
 ```mermaid
 graph TB
-    Browser["浏览器 (client/)<br/>codeblitz 容器 + FsPty"]
+    Browser["浏览器 (web/)<br/>codeblitz 容器 + FsPty"]
     Opencode["opencode serve (3100)<br/>/api/fs/* + /api/pty + WS"]
     Registry["registry (7790)<br/>vsix 扩展分发"]
 
@@ -38,7 +38,7 @@ graph LR
 | 端 | 默认 | flag | env |
 | --- | --- | --- | --- |
 | opencode | 3100 | `--port` | `APP_BASE_URL` |
-| webpack-dev-server | 7788 | `--client-port` | `CLIENT_PORT` |
+| webpack-dev-server | 7788 | `--web-port` | `WEB_PORT` |
 
 ## 启动
 
@@ -46,7 +46,7 @@ graph LR
 # npx (推荐)
 npx github:weizuxiao911/numas                          # web 模式 (opencode + client)
 npx github:weizuxiao911/numas --port 4000              # opencode 4000
-npx github:weizuxiao911/numas --client-port 8000       # client 8000
+npx github:weizuxiao911/numas --web-port 8000       # client 8000
 npx github:weizuxiao911/numas serve                    # 只起 opencode
 
 # git clone (本地开发)
@@ -98,7 +98,7 @@ sequenceDiagram
 ```
 numas/
 ├── cli/              # 进程编排器: bin (npx 入口) + web/serve 路由
-├── client/           # codeblitz 容器 + 8 service + 4 extension
+├── web/           # codeblitz 容器 + 8 service + 4 extension
 ├── extensions/       # vsix 源码
 ├── registry/         # vsix 分发
 └── package.json      # bin: numas
