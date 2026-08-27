@@ -122,18 +122,20 @@ const expandHome = (p: string): string => {
       setRecent(getRecent()); // 打开时刷新一次
       setTimeout(async () => {
         inputRef.current?.focus();
-        // 初始路径: APP_CWD (用户选) → hostCwd (opencode /path 注入) → 现拉一次 (兜底)
+        // 初始路径: APP_CWD (用户选) 优先; 没设才走 hostCwd (opencode /path 注入) → 现拉一次 (兜底)
         // 顺便拿 home 展开 QUICK 里的 ~ 路径
         let start = effectiveCwd();
-        try {
-          const base = appBaseUrl();
-          const res = await fetch(`${base}/path`, { headers: { Accept: 'application/json' } });
-          if (res.ok) {
-            const j = await res.json();
-            if (j?.directory) start = j.directory;
-            if (j?.home) setHome(j.home);
-          }
-        } catch { /* ignore, 走 / 兜底 */ }
+        if (!start) {
+          try {
+            const base = appBaseUrl();
+            const res = await fetch(`${base}/path`, { headers: { Accept: 'application/json' } });
+            if (res.ok) {
+              const j = await res.json();
+              if (j?.directory) start = j.directory;
+              if (j?.home) setHome(j.home);
+            }
+          } catch { /* ignore, 走 / 兜底 */ }
+        }
         doBrowse(start || '/');
       }, 100);
     };
