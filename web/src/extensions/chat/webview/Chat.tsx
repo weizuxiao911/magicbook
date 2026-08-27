@@ -21,7 +21,7 @@ import {
   isAiReady,
 } from '@/extensions/chat/commands/api';
 import { modelPrefs } from '@/extensions/chat/commands/modelPrefs';
-import { getCwd, subscribeCwd, requestShowPicker } from '@/service/workspace';
+import { getCwd, subscribeCwd, requestShowPicker } from '@/service/env';
 import { secureUrl } from '@/service/env';
 import { PartRenderer } from './parts/PartRenderer';
 import { PermissionModal } from './parts/PermissionModal';

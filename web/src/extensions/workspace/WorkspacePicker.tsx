@@ -3,7 +3,7 @@ import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 import { notification } from '@opensumi/ide-components/lib/notification';
 
 import { appBaseUrl, cwdHeader, effectiveCwd } from '../../service/env';
-import { setCwd } from '../../service/workspace';
+import { setCwd } from '../../service/env';
 import { getRecent, removeRecent } from './recent';
 
 function shellQuote(s: string): string {

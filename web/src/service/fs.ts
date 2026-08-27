@@ -1,18 +1,20 @@
 /**
- * filesystem 实现 — service/fs.ts
+ * filesystem + FsPty + watcher — service/fs.ts
  *
- * implements core/commands/fs 的 IFileSystem（相对路径 + 简单方法）:
+ * 合并: 文件系统主类 + 写操作 PTY 单例 + 独立 fs watcher
+ *
+ * 职责:
  *   - list / read / find: opencode 全局 API (/api/fs/list, /api/fs/read/*, /find/file), 走 x-opencode-directory 切工作目录
- *   - write / rm / mkdirp / move / readBinary / meta: opencode 全局 PTY (单例 FsPty), 跨平台命令构造器 (mac/linux=POSIX, win=PowerShell)
- *   - 事件: SDK client.event.subscribe (SSE, 过滤 file.* 类型)
- *   - 单实例: BrowserFS backend (core/config/bfs.ts, RemoteFS) 内部调用本实例,
+ *   - write / rm / mkdirp / move / readBinary: opencode 全局 PTY (单例 FsPty), 跨平台命令构造器
+ *   - 事件: 独立 fs watcher (PTY 跑 node:fs.watch recursive:true) + 兜底 SDK /global/event SSE
+ *   - 单实例: BrowserFS backend (config/bfs.ts, RemoteFS) 内部调用本实例,
  *     opensumi 容器与业务代码共用同一文件系统实例
  *
- * 路径: 一律 IDE 相对路径 (/foo), server 在 cwd 下操作（x-opencode-directory 切 cwd）.
+ * 路径: 一律 IDE 相对路径 (/foo), server 在 cwd 下操作.
  *
  * 设计: 全局交互不依赖 session; session 只服务 chat agent 工具调用.
  *   原实现 write/rm/mkdir/move 走 /session/{id}/shell, 单 session 一次只能跑一个 shell → 并发 409.
- *   现统一走 service/fs-pty.ts 单例 PTY, 串行化由 promise chain 兜底.
+ *   现统一走 FsPty 单例 PTY, 串行化由 promise chain 兜底.
  */
 
 import { Injectable, Autowired } from '@opensumi/di';
@@ -25,9 +27,24 @@ import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 import type { FsEntry, FileMeta, IFileSystem } from '../commands/fs';
 import { FsToken } from '../commands/fs';
-import { getFsPty } from './fs-pty';
-import { detectPlatform, getShellOps, shellQuotePosix } from './shell-ops';
-import { appBaseUrl, cwdHeader, effectiveCwd, secureUrl } from './env';
+import {
+  appBaseUrl,
+  cwdHeader,
+  effectiveCwd,
+  secureUrl,
+} from './env';
+import {
+  detectPlatform,
+  getShellOps,
+  pickShellKind,
+  pickFsPtyShell,
+  shellQuotePosix,
+  wrapFsPtyCommand,
+  type ShellKind,
+  type ShellOps,
+} from './terminal';
+
+// ---- 工具函数 ----
 
 /** IDE 相对路径 → opencode /api/fs/read 用的相对路径（去前导 /, 跟 opencode 端约定一致） */
 function relPathForRead(idePath: string): string {
@@ -37,7 +54,6 @@ function relPathForRead(idePath: string): string {
 /** 文本 → base64（浏览器端, 分块避免栈溢出） */
 function bytesToBase64(input: Uint8Array | string): string {
   if (typeof input === 'string') {
-    // 文本: 先 utf-8 编码再 base64
     const bytes = new TextEncoder().encode(input);
     let bin = '';
     const chunk = 0x8000;
@@ -61,6 +77,344 @@ function absPath(idePath: string): string {
   return cwd.replace(/\/+$/, '') + '/' + idePath.replace(/^\/+/, '');
 }
 
+// ---- FsPty (合并自 service/fs-pty.ts) ----
+
+interface Pending {
+  resolve: (out: { ok: boolean; output: string }) => void;
+  reject: (e: Error) => void;
+  buffer: string;
+  marker: string;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+class FsPty {
+  private ptyId: string | null = null;
+  private ws: WebSocket | null = null;
+  private shellKind: ShellKind | null = null;
+  private ops: ShellOps | null = null;
+  /** 串行化: 上一个 exec 的 promise */
+  private queue: Promise<unknown> = Promise.resolve();
+  /** 等待中的命令 (marker 匹配前) */
+  private pending: Pending | null = null;
+  /** 累积输出 (marker 匹配前所有 ws.onmessage 拼起来) */
+  private accum = '';
+
+  private initPromise: Promise<void> | null = null;
+
+  /** 懒初始化: probe shell + create pty + connect ws. 幂等. */
+  private async init(): Promise<void> {
+    if (this.initPromise) return this.initPromise;
+    this.initPromise = this.doInit();
+    return this.initPromise;
+  }
+
+  private async doInit(): Promise<void> {
+    const base = appBaseUrl();
+    if (!base) throw new Error('fs pty: app base url not ready');
+    const cwd = effectiveCwd();
+    if (!cwd) throw new Error('fs pty: no cwd (APP_CWD unset and hostCwd not yet probed)');
+
+    const sdk = createOpencodeClient({
+      baseUrl: base,
+      headers: cwdHeader(),
+      responseStyle: 'fields',
+      throwOnError: true,
+    });
+
+    // 1. SDK pty.shells 探测可用 shell
+    let shellList: Array<{ name: string; path: string; acceptable: boolean }> = [];
+    try {
+      const { data, error } = await sdk.pty.shells({ directory: cwd });
+      if (!error && Array.isArray(data)) shellList = data as any;
+    } catch { /* 兜底 */ }
+    this.shellKind = pickShellKind(shellList, detectPlatform());
+    this.ops = getShellOps(this.shellKind);
+    (window as any).__APP_FS_PTY_OPS__ = this.ops;
+    const shell = pickFsPtyShell(shellList, this.shellKind);
+    console.log('[fs-pty] init: shellKind=', this.shellKind, 'command=', shell);
+
+    // 2. SDK pty.create 创建会话
+    const { data: createData, error: createErr } = await sdk.pty.create({ directory: cwd, command: shell, cwd });
+    if (createErr || !createData) throw new Error(`fs pty: create pty failed: ${(createErr as any)?.message || 'no data'}`);
+    this.ptyId = (createData as any).id;
+    if (!this.ptyId) throw new Error('fs pty: create pty returned no id');
+
+    // 3. WS 连接 (SDK 无 WS, 直连 opencode; secureUrl 让 https 页面下 wss)
+    const wsBase = secureUrl(base).replace(/^http/, 'ws');
+    const ws = new WebSocket(`${wsBase}/pty/${this.ptyId}/connect?directory=${encodeURIComponent(cwd)}`);
+    this.ws = ws;
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('fs pty: ws connect timeout')), 5000);
+      ws.onopen = () => { clearTimeout(timer); resolve(); };
+      ws.onerror = (e) => { clearTimeout(timer); reject(new Error('fs pty: ws connect error')); };
+    });
+
+    // 4. 装消息处理: 累积 → 匹配 pending marker
+    ws.onmessage = (e) => {
+      const data = typeof e.data === 'string' ? e.data : '';
+      const trimmed = data.replace(/^\u0000+/, '');
+      if (
+        trimmed.startsWith('{"cursor"') ||
+        trimmed.startsWith('{"type":"cursor"') ||
+        trimmed.startsWith('{"type":"resize"') ||
+        (trimmed.startsWith('{') && trimmed.includes('"method"'))
+      ) {
+        return;
+      }
+      this.accum += trimmed;
+      this.matchMarker();
+    };
+    ws.onclose = () => {
+      if (this.pending) {
+        this.pending.reject(new Error('fs pty: ws closed'));
+        this.pending = null;
+      }
+      this.ws = null;
+      this.ptyId = null;
+      this.initPromise = null;
+    };
+  }
+
+  /** 执行一条命令, 返回 { ok, output }. 串行化 (promise chain). */
+  async exec(body: string, timeoutMs = 10000): Promise<{ ok: boolean; output: string }> {
+    const next = this.queue.then(async () => {
+      await this.init();
+      if (!this.ops || !this.ws) throw new Error('fs pty: not initialized');
+      const marker = `__FSM_${uuid()}_${Date.now()}__`;
+      const fullCmd = wrapFsPtyCommand(body, this.ops, marker);
+      this.accum = '';
+      this.pending = {
+        resolve: () => {},
+        reject: () => {},
+        buffer: '',
+        marker,
+        timer: null,
+      };
+      const p = new Promise<{ ok: boolean; output: string }>((resolve, reject) => {
+        this.pending!.resolve = resolve;
+        this.pending!.reject = reject;
+        this.pending!.timer = setTimeout(() => {
+          if (this.pending) {
+            const cur = this.pending;
+            this.pending = null;
+            cur.reject(new Error(`fs pty: exec timeout (${timeoutMs}ms)`));
+          }
+        }, timeoutMs);
+      });
+      this.ws!.send(`\r${fullCmd}\r`);
+      try {
+        const out = await p;
+        return out;
+      } finally {
+        if (this.pending?.timer) clearTimeout(this.pending.timer);
+        this.pending = null;
+      }
+    }) as Promise<{ ok: boolean; output: string }>;
+    this.queue = next;
+    return next;
+  }
+
+  /** 累积里匹配 pending marker; 命中 → resolve pending, 清空 accum */
+  private matchMarker(): void {
+    if (!this.pending) return;
+    const idx = this.accum.indexOf(this.pending.marker);
+    if (idx < 0) return;
+    const output = this.accum.slice(0, idx);
+    const okMarker = this.ops?.successMarker().trim() || '';
+    const ok = okMarker ? output.includes(okMarker) : true;
+    const cur = this.pending;
+    this.pending = null;
+    this.accum = '';
+    if (cur.timer) clearTimeout(cur.timer);
+    cur.resolve({ ok, output: stripOkMarker(output, okMarker) });
+  }
+}
+
+function uuid(): string {
+  if (typeof crypto !== 'undefined' && (crypto as any).randomUUID) return (crypto as any).randomUUID();
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function stripOkMarker(output: string, okMarker: string): string {
+  if (!okMarker) return output;
+  const i = output.lastIndexOf(okMarker);
+  if (i < 0) return output;
+  return output.slice(0, i) + output.slice(i + okMarker.length);
+}
+
+let _fsPty: FsPty | null = null;
+function getFsPty(): FsPty {
+  if (!_fsPty) _fsPty = new FsPty();
+  return _fsPty;
+}
+
+// ---- FsWatcher (合并自 service/watcher.ts) ----
+//
+// 独立 PTY 跑 node:fs.watch 监听 cwd 全树 (recursive: true), 把事件推给 opensumi.
+// 覆盖 opencode 自身文件操作 + 外部修改 (macOS Finder / vim / git pull 等).
+//
+// 协议: pty 跑 `node -e "inline script"`, script 用 fs.watch + console.log 输出 JSON lines.
+//   {"e": "change", "p": "relative/path"}  e=rename|change  p=相对 cwd 路径
+//
+// 生命周期: 跟随 cwd, setCwd 后启, 切 cwd 停 + 重启; 断线指数退避 1s→2s→…→30s, 3 次后放弃.
+// 兜底: cwd 不存在/启不动 → console.warn 不阻塞 setCwd, 依赖 opencode SSE 兜底 (fs.ts 暂未删 file.* 处理).
+/** 1 + 2 + 4 + 8 = 1|2|4|8 fs.ts 里 OpenSumi 用的 FileChangeType 编码 (ADDED=1 UPDATED=2 DELETED=3) */
+const TYPE_MAP: Record<string, FileChangeType> = {
+  add: 1 as FileChangeType,
+  change: 2 as FileChangeType,
+  unlink: 3 as FileChangeType,
+};
+
+let watcherPtyId: string | null = null;
+let watcherWs: WebSocket | null = null;
+let watcherRetryCount = 0;
+let watcherStopped = false;
+let watcherCwd = '';
+let watcherStdoutBuf = '';
+let watcherFireFn: ((changes: Array<{ uri: string; type: FileChangeType }>) => void) | null = null;
+
+export function bindWatcherFireFilesChange(fn: typeof watcherFireFn): void {
+  watcherFireFn = fn;
+}
+
+/**
+ * 启 fs watcher PTY (跑 node -e 'inline fs.watch script')
+ * @param cwd 监听根目录
+ */
+export async function startFsWatcher(cwd: string): Promise<void> {
+  stopFsWatcher();
+  if (!cwd) return;
+  const base = appBaseUrl();
+  if (!base) {
+    console.warn('[watcher] no baseUrl, skip');
+    return;
+  }
+  // 连接前确认 cwd 存在
+  try {
+    const sdk = createOpencodeClient({ baseUrl: base, headers: cwdHeader(), responseStyle: 'fields', throwOnError: true });
+    const { error } = await sdk.file.list({ path: '.', directory: cwd });
+    if (error) {
+      console.warn('[watcher] cwd check fail, skip:', cwd, error);
+      return;
+    }
+  } catch (e) {
+    console.warn('[watcher] cwd check exception, skip:', cwd, e);
+    return;
+  }
+
+  watcherCwd = cwd;
+  watcherStopped = false;
+  // inline node 脚本: fs.watch recursive=true, 监听 cwd
+  const nodeScript = `
+const fs = require('node:fs');
+const path = require('node:path');
+const ROOT = process.argv[1];
+let bufWatchers = [];
+try {
+  const w = fs.watch(ROOT, { recursive: true, persistent: true }, (event, filename) => {
+    const rel = filename || '';
+    try { process.stdout.write(JSON.stringify({ e: event, p: rel }) + '\\n'); } catch {}
+  });
+  bufWatchers.push(w);
+} catch (e) {
+  process.stderr.write('watcher err: ' + e.message + '\\n');
+}
+process.on('SIGTERM', () => { try { bufWatchers.forEach(w => w.close()); } catch {} process.exit(0); });
+process.on('SIGINT',  () => { try { bufWatchers.forEach(w => w.close()); } catch {} process.exit(0); });
+`.trim();
+  const command = ['node', '-e', nodeScript, cwd];
+  console.log('[watcher] start, cwd=', cwd);
+
+  try {
+    const sdk = createOpencodeClient({ baseUrl: base, headers: cwdHeader(), responseStyle: 'fields', throwOnError: true });
+    const { data, error } = await sdk.pty.create({ directory: cwd, command: command.join(' '), cwd });
+    if (error || !data) {
+      console.warn('[watcher] pty.create failed:', (error as any)?.message);
+      scheduleWatcherRetry();
+      return;
+    }
+    watcherPtyId = (data as any).id;
+    if (!watcherPtyId) {
+      console.warn('[watcher] no ptyId returned');
+      scheduleWatcherRetry();
+      return;
+    }
+    console.log('[watcher] pty created, id=', watcherPtyId);
+
+    const wsBase = secureUrl(base).replace(/^http/, 'ws');
+    const socket = new WebSocket(`${wsBase}/pty/${watcherPtyId}/connect?directory=${encodeURIComponent(cwd)}`);
+    watcherWs = socket;
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('watcher ws connect timeout')), 5000);
+      socket.onopen = () => { clearTimeout(timer); console.log('[watcher] ws open'); resolve(); };
+      socket.onerror = (e) => { clearTimeout(timer); reject(new Error('watcher ws connect error')); };
+    });
+    socket.onmessage = (msg) => {
+      watcherStdoutBuf += String(msg.data || '');
+      let nl = watcherStdoutBuf.indexOf('\n');
+      while (nl >= 0) {
+        const line = watcherStdoutBuf.slice(0, nl).trim();
+        watcherStdoutBuf = watcherStdoutBuf.slice(nl + 1);
+        handleWatcherLine(line);
+        nl = watcherStdoutBuf.indexOf('\n');
+      }
+    };
+    socket.onclose = (ev) => {
+      console.log('[watcher] ws close', ev?.code);
+      if (!watcherStopped) scheduleWatcherRetry();
+    };
+    socket.onerror = (e) => {
+      console.warn('[watcher] ws error', e);
+    };
+    watcherRetryCount = 0;
+  } catch (e: any) {
+    console.warn('[watcher] start failed:', e?.message);
+    scheduleWatcherRetry();
+  }
+}
+
+function handleWatcherLine(line: string): void {
+  if (!line) return;
+  let evt: { e: string; p: string };
+  try { evt = JSON.parse(line); } catch { return; }
+  if (!evt.e || !evt.p) return;
+  const type = TYPE_MAP[evt.e];
+  if (type === undefined) return;
+  const uri = `file://${WORKSPACE_ROOT}/${evt.p}`.replace(/\/+/g, '/');
+  if (watcherFireFn) {
+    watcherFireFn([{ uri, type }]);
+  }
+}
+
+export function stopFsWatcher(): void {
+  if (!watcherPtyId && !watcherWs) return;
+  watcherStopped = true;
+  watcherRetryCount = 0;
+  watcherStdoutBuf = '';
+  if (watcherWs) {
+    try { watcherWs.close(); } catch { /* */ }
+    watcherWs = null;
+  }
+  watcherPtyId = null;
+  console.log('[watcher] stopped, cwd was=', watcherCwd);
+  watcherCwd = '';
+}
+
+function scheduleWatcherRetry(): void {
+  if (watcherStopped) return;
+  watcherRetryCount++;
+  if (watcherRetryCount > 3) {
+    console.warn('[watcher] retry exhausted, give up');
+    stopFsWatcher();
+    return;
+  }
+  const delay = Math.min(30000, 1000 * Math.pow(2, watcherRetryCount - 1));
+  console.log(`[watcher] retry #${watcherRetryCount} in ${delay}ms`);
+  setTimeout(() => { if (!watcherStopped) void startFsWatcher(watcherCwd); }, delay);
+}
+
+// ---- FileSystemService 主类 ----
+
 @Injectable()
 @Domain(ClientAppContribution)
 export class FileSystemServiceImpl implements IFileSystem {
@@ -75,9 +429,9 @@ export class FileSystemServiceImpl implements IFileSystem {
   @Autowired(WorkbenchEditorService)
   private readonly editorService!: WorkbenchEditorService;
 
-  /** SDK client (仅用于 event.subscribe SSE; 写操作走 FsPty, 不再需要 session) */
+  /** SDK client (用于 event.subscribe SSE 兜底; 写走 FsPty) */
   private fsClient: ReturnType<typeof createOpencodeClient> | null = null;
-  /** SDK 事件流（file.* 类型过滤后转 opensumi fireFilesChange） */
+  /** SDK 事件流 (SSE, 用于 file.* 兜底) */
   private eventAbort: AbortController | null = null;
 
   constructor() {
@@ -85,18 +439,34 @@ export class FileSystemServiceImpl implements IFileSystem {
     (window as any).__APP_FS__ = this;
   }
 
-  /** 容器启动: 挂全局单例 + 订阅 fs 事件（runtime 就绪后）+ explorer 刷新 + 恢复编辑器 tab */
+  /** 容器启动: 挂全局单例 + 订阅 fs 事件（runtime 就绪后）+ 启 fs watcher + explorer 刷新 + 恢复编辑器 tab */
   onStart(): void {
     (window as any).__APP_FS__ = this;
     console.log('[filesystem] service ready, baseUrl:', appBaseUrl() || '(unset)');
+    // 把 fireFilesChange 注入到 watcher 模块 (避免循环 import)
+    bindWatcherFireFilesChange((changes) => this.fileService.fireFilesChange({ changes }));
     window.addEventListener('runtime-ready', () => {
       this.connectEvents();
+      void this.startWatcher();
       void this.verifyOpensumiLink();
       void this.refreshExplorer();
       this.watchEditorState();
       this.restoreOpenedEditors();
     });
-    if (appBaseUrl()) this.connectEvents();
+    if (appBaseUrl()) {
+      this.connectEvents();
+      void this.startWatcher();
+    }
+  }
+
+  /** 启 fs watcher (PTY 跑 node:fs.watch), 跟随 cwd */
+  private async startWatcher(): Promise<void> {
+    const cwd = effectiveCwd();
+    if (!cwd) {
+      console.log('[filesystem] no cwd, skip watcher');
+      return;
+    }
+    await startFsWatcher(cwd);
   }
 
   /** 验证 opensumi IFileServiceClient → BrowserFS → server fs 链路（拓展读文件的通道） */
@@ -199,7 +569,10 @@ export class FileSystemServiceImpl implements IFileSystem {
     }
   }
 
-  /** 订阅 opencode 事件流: 过滤 file.* 类型转 opensumi fireFilesChange, 派发 fs:changed */
+  /**
+   * 订阅 opencode 事件流 (兜底). 内部 PTY watcher 已覆盖 file.* 事件, 这里只订阅其他 event
+   * 类型 (message.* / a2ui.* 等). 简化: 暂时只 log 一下, 后续如需 SSE 推非 fs 事件再展开.
+   */
   private async connectEvents(): Promise<void> {
     const base = appBaseUrl();
     if (!base) return;
@@ -209,78 +582,20 @@ export class FileSystemServiceImpl implements IFileSystem {
     try {
       const client = this.ensureClient();
       const events = await client.event.subscribe(undefined, { signal: abort.signal });
-      console.log('[filesystem] event.subscribe ok');
-      const typeMap: Record<string, FileChangeType> = {
-        add: FileChangeType.ADDED,
-        change: FileChangeType.UPDATED,
-        unlink: FileChangeType.DELETED,
-      };
+      console.log('[filesystem] event.subscribe ok (非 fs 事件保留通道)');
       for await (const evt of events.stream) {
         const t = (evt as any).type as string;
         if (!t) continue;
-        // opencode 事件类型: file.edited / file.watcher.updated（add|change|unlink）
-        let changeType: string | null = null;
-        let relPath = '';
-        if (t === 'file.edited') {
-          changeType = 'change';
-          relPath = ((evt as any).properties?.file || '').toString();
-        } else if (t === 'file.watcher.updated') {
-          changeType = ((evt as any).properties?.event || '').toString();
-          relPath = ((evt as any).properties?.file || '').toString();
-        }
-        if (!changeType || !relPath) continue;
-        const rel = relPath.startsWith('/') ? relPath : `/${relPath}`;
-        const uri = `file://${WORKSPACE_ROOT}${rel}`;
-        console.log('[filesystem] fs event:', t, rel, '→ fireFilesChange', uri);
-        this.fileService.fireFilesChange({
-          changes: [{ uri, type: typeMap[changeType] ?? FileChangeType.UPDATED }],
-        });
-        window.dispatchEvent(new CustomEvent('fs:changed', { detail: { type: changeType, path: rel } }));
+        // 跳过 file.* 事件 (PTY watcher 接管)
+        if (t === 'file.edited' || t === 'file.watcher.updated') continue;
+        // 其他事件类型 (message.* / a2ui.* / ...) 当前不处理, 仅 log 留扩展点
+        console.log('[filesystem] event:', t, (evt as any).properties);
       }
     } catch (e) {
-      // abort 时正常, 其它错误降级为 EventSource 备用流
       if ((e as Error)?.name !== 'AbortError') {
-        console.warn('[filesystem] event.subscribe 失败, 降级 EventSource:', e);
-        this.fallbackEventSource(abort);
+        console.warn('[filesystem] event.subscribe 失败:', e);
       }
     }
-  }
-
-  /** SDK 失败时降级: 原生 EventSource 订阅 /event (opencode 自身端点) */
-  private fallbackEventSource(abort: AbortController): void {
-    const base = appBaseUrl();
-    if (!base) return;
-    const es = new EventSource(secureUrl(`${base}/event`), { withCredentials: false });
-    abort.signal.addEventListener('abort', () => es.close());
-    const typeMap: Record<string, FileChangeType> = {
-      add: FileChangeType.ADDED,
-      change: FileChangeType.UPDATED,
-      unlink: FileChangeType.DELETED,
-    };
-    es.onmessage = (msg) => {
-      try {
-        const evt = JSON.parse(msg.data);
-        const t = evt?.type as string;
-        if (!t) return;
-        let changeType: string | null = null;
-        let relPath = '';
-        if (t === 'file.edited') {
-          changeType = 'change';
-          relPath = (evt.properties?.file || '').toString();
-        } else if (t === 'file.watcher.updated') {
-          changeType = (evt.properties?.event || '').toString();
-          relPath = (evt.properties?.file || '').toString();
-        }
-        if (!changeType || !relPath) return;
-        const rel = relPath.startsWith('/') ? relPath : `/${relPath}`;
-        const uri = `file://${WORKSPACE_ROOT}${rel}`;
-        this.fileService.fireFilesChange({
-          changes: [{ uri, type: typeMap[changeType] ?? FileChangeType.UPDATED }],
-        });
-        window.dispatchEvent(new CustomEvent('fs:changed', { detail: { type: changeType, path: rel } }));
-      } catch { /* ignore bad frame */ }
-    };
-    es.onerror = () => console.warn('[filesystem] /event SSE 断线, 等待重连');
   }
 
   /** 懒建 SDK client（共享, 不重置 cwd header） */

@@ -5,7 +5,7 @@ import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 import { PreferenceService } from '@opensumi/ide-core-browser/lib/preferences';
 import { PreferenceScope } from '@opensumi/ide-core-common/lib/preferences/preference-scope';
 
-import { getCwd, subscribeCwd } from '../../service/workspace';
+import { getCwd, subscribeCwd } from '../../service/env';
 
 const THEME_DARK = 'opensumi-design-dark-theme';
 const THEME_LIGHT = 'opensumi-design-light-theme';

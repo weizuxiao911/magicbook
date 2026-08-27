@@ -1,12 +1,21 @@
 /**
- * env — 单一事实源: 运行环境能力 + 全局 helper
+ * env + workspace — service/env.ts
  *
- * 三组 helper, 全部 export, 业务代码统一 import 此处:
+ * 合并: 单一事实源: 运行环境能力 + 全局 helper + 工作目录 manager
+ *
+ * env 三组 helper, 业务代码统一 import 此处:
  *   - appBaseUrl():  opencode serve 地址 (去尾 /, 直连, 无中间层)
  *   - effectiveCwd(): 当前有效工作目录 (APP_CWD 优先 → __APP_CONFIG__.cwd 兜底)
  *   - cwdHeader():   x-opencode-directory header (encodeURI 防 CJK 破 ISO-8859-1)
+ *   - secureUrl():   https 页面下 http→https / ws→wss (mixed content 浏览器拒绝)
  *
- * EnvServiceImpl 内部用同一组 helper, 保持 class 接口兼容老调用.
+ * workspace 单一变更入口 + pub/sub:
+ *   - getCwd()           读当前 APP_CWD
+ *   - setCwd(dir)        唯一写入口: 写 APP_CWD + 记 recent + 派 workspace:changed + reload
+ *   - subscribeCwd(cb)   订阅变更
+ *   - requestShowPicker() 派 workspace:request-show (chat 触发 picker)
+ *
+ * EnvServiceImpl / EnvModule 保留, 跟 IFileSystem 等 token 配合, 兼容老调用.
  *
  * 历史教训: 之前 helper 散落 6+ 文件, agent/fs/terminal/fs-pty/WorkspacePicker/Chat 各自复制.
  * 漏一处就报 "String contains non ISO-8859-1" → 统一在此, 改一处生效全部.
@@ -17,6 +26,7 @@ import { BrowserModule } from '@opensumi/ide-core-browser';
 
 import type { IEnvService, Platform } from '../commands/env';
 import { EnvToken } from '../commands/env';
+import { getRecent, addRecent } from '../extensions/workspace/recent';
 
 // ---- 共享 helper (纯函数, 全局唯一) ----
 
@@ -56,11 +66,9 @@ function detectPlatform(): Platform {
   try {
     const uaData: any = (navigator as any).userAgentData;
     const p: string = typeof uaData?.platform === 'string' ? uaData.platform : '';
-    if (p) {
-      if (/win/i.test(p)) return 'windows';
-      if (/mac/i.test(p)) return 'mac';
-      if (/linux/i.test(p)) return 'linux';
-    }
+    if (/win/i.test(p)) return 'windows';
+    if (/mac/i.test(p)) return 'mac';
+    if (/linux/i.test(p)) return 'linux';
   } catch { /* ignore */ }
   const ua = navigator.userAgent;
   if (/Windows/i.test(ua)) return 'windows';
@@ -119,4 +127,52 @@ export function getEnvService(): IEnvService {
 @Injectable()
 export class EnvModule extends BrowserModule {
   providers = [{ token: EnvToken, useFactory: () => getEnvService() }];
+}
+
+// ---- workspace manager (合并自 service/workspace.ts) ----
+
+const APP_CWD_KEY = 'APP_CWD';
+
+/** 读 APP_CWD, 没设则返回 '' (用 hostCwd 兜底) */
+export function getCwd(): string {
+  if (typeof localStorage === 'undefined') return '';
+  return localStorage.getItem(APP_CWD_KEY) || '';
+}
+
+/**
+ * 切到 dir. 唯一变更入口.
+ * - 写 APP_CWD
+ * - 加 recent
+ * - 派 workspace:changed
+ * - 刷新页面 (reload 让所有拓展重新 init; 后续可改 in-place 增量更新)
+ */
+export function setCwd(dir: string): void {
+  if (!dir) return;
+  const prev = getCwd();
+  if (prev === dir) return;
+  localStorage.setItem(APP_CWD_KEY, dir);
+  addRecent(dir);
+  // 派事件 (reload 前通知, 让在挂拓展有机会保存状态)
+  notifyChanged(dir, prev);
+  // 刷新: 简方案, 后续切 in-place 时再去掉
+  window.location.reload();
+}
+
+/** 订阅 cwd 变更, 返回 unsubscribe. cb(newCwd, oldCnd) */
+export function subscribeCwd(cb: (next: string, prev: string) => void): () => void {
+  const handler = (e: Event) => {
+    const detail = (e as CustomEvent<{ next: string; prev: string }>).detail;
+    if (detail) cb(detail.next, detail.prev);
+  };
+  window.addEventListener('workspace:changed', handler);
+  return () => window.removeEventListener('workspace:changed', handler);
+}
+
+function notifyChanged(next: string, prev: string): void {
+  window.dispatchEvent(new CustomEvent('workspace:changed', { detail: { next, prev } }));
+}
+
+/** chat 触发 WorkspacePicker 用 */
+export function requestShowPicker(): void {
+  window.dispatchEvent(new CustomEvent('workspace:request-show'));
 }
