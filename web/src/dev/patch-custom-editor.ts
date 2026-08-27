@@ -133,11 +133,22 @@ export function installCustomEditorPatch(): void {
       state.handlersRegistered = true;
       const tryMount = () => (this as any).__paperTryMountAllPending();
       // 切到 paper 时挂载, 切走时卸载
+      // 同时扫 mountedMap (已挂) + pendingMounts (隐藏/待挂),
+      // 否则 paper 切走再切回就找不到 info 了 (sync 看不到 → 永不恢复)
+      // 检测激活 tab 走 DOM (workbenchEditorService.currentResource.uri 对 customEditor
+      // 返回 undefined, 不可用)
       const sync = () => {
-        const activeUri = this.workbenchEditorService?.currentEditorGroup?.currentResource?.uri?.toString();
-        for (const [key, info] of Array.from(state.mountedMap.entries())) {
+        const activeTab = document.querySelector(
+          '.kt_editor_tab___LLmhN.kt_editor_tab_current___A2OZc',
+        ) as HTMLElement | null;
+        const activeUri = activeTab?.getAttribute('data-uri') || '';
+        const all = new Map<string, PendingMount>([
+          ...state.mountedMap.entries(),
+          ...state.pendingMounts.entries(),
+        ]);
+        for (const [key, info] of Array.from(all.entries())) {
           if (activeUri === info.uri.toString()) {
-            // 当前就是 paper, 确保挂载
+            // 当前就是 paper, 确保挂载/恢复显示
             (this as any).__paperTryMount(key);
           } else {
             // 切走了, 隐藏 (切回时复用)
@@ -185,6 +196,8 @@ export function installCustomEditorPatch(): void {
       if (target && info.onWindowResize) {
         window.addEventListener('resize', info.onWindowResize);
       }
+      // eslint-disable-next-line no-console
+      console.log(TAG, '__paperTryMount: reshow', { key });
       state.pendingMounts.delete(key);
       state.mountedMap.set(key, info);
       return;
@@ -340,7 +353,8 @@ export function installCustomEditorPatch(): void {
     }
     // 从 mountedMap 移出, 但 info.webview 保持活着
     state.mountedMap.delete(key);
-    // 保留在 pendingMounts, 这样切回时 tryMount 能找到
+    // 关键: re-add 到 pendingMounts, 否则 sync 扫不到 → 切回时 __paperTryMount 永不触发
+    state.pendingMounts.set(key, info);
   };
 
   // 彻底卸载 (关闭 tab 时) — 完全清理
