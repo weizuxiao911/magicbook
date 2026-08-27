@@ -1580,7 +1580,7 @@ export const Chat: React.FC = () => {
               onChange={onInput}
               onKeyDown={onKeyDown}
               onPaste={onPaste}
-              placeholder="有什么我可以帮忙的吗? 可以输入/召唤魔法; 输入@选择智能体 🎉"
+              placeholder="输入/ 可以召唤魔法; 输入@ 可以选择智能体 🎉"
               rows={1}
             />
             <div className="chat__input-bar">
