@@ -11,6 +11,8 @@ out/
 !registry/vsix/*.vsix
 extensions/*/dist/*.vsix
 extensions/*/*.vsix
+# registry/vsix/ 只放要发布的 vsix (会被 registry build 自动拾起生成 metadata).
+# 参考用的 vsix 放别处 (e.g. /tmp/ 或 docs/), 不要放这里, 否则会被误发布.
 
 # 环境配置（仅 .env.example 提交到 git，其它 gitignore）
 .env
