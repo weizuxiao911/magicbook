@@ -27,6 +27,9 @@ const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
+/** 跨平台 win 判定 (cli 启动时用) */
+function isWin() { return process.platform === 'win32'; }
+
 const root = path.resolve(__dirname, '../..');  // cli/bin → 项目根
 const cliDir = path.resolve(__dirname, '..');    // cli/bin → cli/
 const webDir = path.join(root, 'web');
@@ -37,9 +40,13 @@ const tsxBin = path.join(root, 'node_modules', '.bin', isWin() ? 'tsx.cmd' : 'ts
 const opencodeBin = path.join(cliDir, 'node_modules', '.bin', isWin() ? 'opencode.cmd' : 'opencode');
 const cliEntry = path.join(cliDir, 'src', 'main.ts');  // cli/bin → cli/src/main.ts
 
-/** 缺啥装啥, idempotent; opencode/tsx 优先用 PATH 里用户全局装的 (任意版本, 不锁) */
-function isWin() {
-  return process.platform === 'win32';
+/** 跨平台 npm script runner (win: npm.cmd + shell, posix: 直接 npm) */
+function runNpmScript(cwd, script) {
+  const r = spawnSync(isWin() ? 'npm.cmd' : 'npm', ['run', script], { cwd, stdio: 'inherit', shell: isWin() });
+  if (r.status !== 0) {
+    console.error(`[cli] ${script} 失败 (status=${r.status})`);
+    process.exit(1);
+  }
 }
 
 /** 跨平台 sleep (win: powershell, posix: sleep) */
@@ -82,9 +89,12 @@ function ensureInstalled(label, cmd, args, cwd) {
   }
   console.log(`[cli] 首次运行, 装 ${label} ...`);
   // 网络抖动重试 2 次 (registry 抽风, ECONNRESET 等)
+  // Windows: npm 命令是 npm.cmd, 需要 shell: true
+  const finalCmd = isWin() ? 'npm.cmd' : cmd;
+  const finalArgs = isWin() && cmd === 'npm' ? args : args;
   let r;
   for (let attempt = 1; attempt <= 3; attempt++) {
-    r = spawnSync(cmd, args, { cwd, stdio: 'inherit', shell: isWin() });
+    r = spawnSync(finalCmd, finalArgs, { cwd, stdio: 'inherit', shell: isWin() });
     if (r.status === 0) break;
     if (attempt < 3) {
       console.warn(`[cli] ${label} 安装失败 (尝试 ${attempt}/3), 等 3s 重试...`);
@@ -144,17 +154,6 @@ if (!useLocalTsx && !whichCmd('tsx')) {
   console.error('[cli] 找不到 tsx; 请 npm i -g tsx');
   process.exit(1);
 }
-
-// build:config 预编译 (webpack.config.ts / server.ts → JS), 跨平台 npm
-function runNpmScript(cwd, script) {
-  const r = spawnSync(isWin() ? 'npm.cmd' : 'npm', ['run', script], { cwd, stdio: 'inherit', shell: isWin() });
-  if (r.status !== 0) {
-    console.error(`[cli] ${script} 失败 (status=${r.status})`);
-    process.exit(1);
-  }
-}
-runNpmScript(webDir, 'build:config');
-runNpmScript(registryDir, 'build:config');
 
 const child = spawn(tsxCmd, [cliEntry, ...args], {
   stdio: 'inherit',
