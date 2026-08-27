@@ -27,17 +27,7 @@ import type { FsEntry, FileMeta, IFileSystem } from '../commands/fs';
 import { FsToken } from '../commands/fs';
 import { getFsPty } from './fs-pty';
 import { detectPlatform, getShellOps, shellQuotePosix } from './shell-ops';
-import { appBaseUrl, cwdHeader, effectiveCwd } from './env';
-
-/** 通用 JSON fetch（带 cwd 头） */
-async function httpJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...cwdHeader(), ...(init?.headers || {}) },
-    ...init,
-  });
-  if (!res.ok) throw new Error(`fs API ${res.status}: ${url}`);
-  return res.json() as Promise<T>;
-}
+import { appBaseUrl, cwdHeader, effectiveCwd, secureUrl } from './env';
 
 /** IDE 相对路径 → opencode /api/fs/read 用的相对路径（去前导 /, 跟 opencode 端约定一致） */
 function relPathForRead(idePath: string): string {
@@ -260,7 +250,7 @@ export class FileSystemServiceImpl implements IFileSystem {
   private fallbackEventSource(abort: AbortController): void {
     const base = appBaseUrl();
     if (!base) return;
-    const es = new EventSource(`${base}/event`, { withCredentials: false });
+    const es = new EventSource(secureUrl(`${base}/event`), { withCredentials: false });
     abort.signal.addEventListener('abort', () => es.close());
     const typeMap: Record<string, FileChangeType> = {
       add: FileChangeType.ADDED,

@@ -22,6 +22,7 @@ import {
 } from '@/extensions/chat/commands/api';
 import { modelPrefs } from '@/extensions/chat/commands/modelPrefs';
 import { getCwd, subscribeCwd, requestShowPicker } from '@/service/workspace';
+import { secureUrl } from '@/service/env';
 import { PartRenderer } from './parts/PartRenderer';
 import { PermissionModal } from './parts/PermissionModal';
 import { ModelPicker } from './parts/ModelPicker';
@@ -482,7 +483,7 @@ export const Chat: React.FC = () => {
     const subscribeV1Events = async (): Promise<AsyncIterableIterator<{ type: string; properties: any }>> => {
       const base = (window as any).__APP_OPENCODE_RUNTIME__?.baseUrl;
       if (!base) throw new Error('opencode baseUrl missing');
-      const source = new EventSource(`${base}/global/event`, { withCredentials: false });
+      const source = new EventSource(secureUrl(`${base}/global/event`), { withCredentials: false });
       es = source;
       const queue: Array<{ type: string; properties: any }> = [];
       let resolveNext: ((v: IteratorResult<{ type: string; properties: any }>) => void) | null = null;

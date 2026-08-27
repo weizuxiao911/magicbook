@@ -100,19 +100,10 @@ export const WorkspacePicker: React.FC = () => {
       setRecent(getRecent()); // 打开时刷新一次
       setTimeout(async () => {
         inputRef.current?.focus();
-        // 初始路径: APP_CWD (用户选) 优先; 没设才走 hostCwd (opencode /path.directory 注入)
-        let start = effectiveCwd();
-        if (!start) {
-          try {
-            const base = appBaseUrl();
-            const res = await fetch(`${base}/path`, { headers: { Accept: 'application/json' } });
-            if (res.ok) {
-              const j = await res.json();
-              if (j?.directory) start = j.directory;
-            }
-          } catch { /* ignore, 走 / 兜底 */ }
-        }
-        doBrowse(start || '/');
+        // 初始路径: APP_CWD (用户选) 优先; 没设才走 __APP_CONFIG__.cwd (agent.initRuntime 注入的 hostCwd)
+        // 不自己 fetch /path — 探测职责在 service/agent, 这里只读已注入的全局配置
+        const start = effectiveCwd() || (window as any).__APP_CONFIG__?.cwd || '/';
+        doBrowse(start);
       }, 100);
     };
     window.addEventListener('workspace:request-show', h);

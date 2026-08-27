@@ -23,11 +23,10 @@ import { appBaseUrl, effectiveCwd, cwdHeader } from './env';
 let _client: any = null;
 
 /** 探测宿主机默认 shell: 从 /pty/shells 取 (多平台由宿主机 opencode 判定, 不猜浏览器 UA) */
-async function probeDefaultShell(base: string, cwd: string): Promise<string> {
+async function probeShells(sdk: any, cwd: string): Promise<string> {
   try {
-    const res = await fetch(`${base}/pty/shells`, { headers: { Accept: 'application/json', ...cwdHeader() } });
-    if (!res.ok) return '';
-    const list = (await res.json()) as Array<{ name: string; path: string; acceptable: boolean }>;
+    const { data } = await sdk.pty.shells({ directory: cwd });
+    const list = (data as any) as Array<{ name: string; path: string; acceptable: boolean }>;
     if (!Array.isArray(list) || !list.length) return '';
     return list.find((s) => s.acceptable)?.path || '';
   } catch {
@@ -63,13 +62,15 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
     const base = appBaseUrl();
     if (!base) return;
     const cwd = effectiveCwd();
+    // 启动期先建 SDK (用 cwdHeader 即使 stale 也行, 探测用), 后续探测都走 SDK
+    let sdk: any = null;
+    try { sdk = this.getClient(); } catch { /* opencode 未起, 占位即可 */ }
     // 1. 探 /global/health（不阻塞, 失败按"未就绪"占位）
     let healthy = false;
     try {
-      const res = await fetch(`${base}/global/health`, { headers: { Accept: 'application/json' } });
-      if (res.ok) {
-        const j = await res.json();
-        healthy = !!j?.healthy;
+      if (sdk) {
+        const { data } = await sdk.global.health();
+        healthy = !!(data as any)?.healthy;
       }
     } catch { /* opencode 未起, 占位即可 */ }
     // 2. 探 /path + /pty/shells 拿宿主 cwd + 默认 shell（per-request 用 cwdHeader 切目录）
@@ -77,12 +78,12 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
     let hostCwd = '';
     let defaultShell = '';
     try {
-      const res = await fetch(`${base}/path`, { headers: { Accept: 'application/json', ...cwdHeader() } });
-      if (res.ok) {
-        const j = await res.json();
-        if (j?.directory) hostCwd = j.directory;
+      if (sdk) {
+        const { data } = await sdk.path.get({ directory: cwd });
+        if ((data as any)?.directory) hostCwd = (data as any).directory;
+        const shells = await probeShells(sdk, cwd);
+        defaultShell = shells;
       }
-      defaultShell = await probeDefaultShell(base, cwd);
     } catch { /* 忽略, 走默认 */ }
 
     this._runtime = {
@@ -90,6 +91,21 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
       defaultShell: defaultShell || '/bin/bash',
       healthy,
     };
+    // 2.5 APP_CWD 校验: 用户选的目录可能被删/移走, 留着会导致后续 file/pty 全 500
+    //    走 SDK client.file.list 校验 (跟 AGENTS.md 铁律: 走 SDK, 不直 fetch)
+    //    SDK throwOnError=true → 错误抛, 用 try/catch 抓
+    if (cwd && cwd !== hostCwd) {
+      try {
+        const c = this.getClient();
+        if (c) {
+          await c.file.list({ path: '.', directory: cwd });
+        }
+      } catch {
+        console.warn('[agent] APP_CWD stale, 移除并降级到 hostCwd:', cwd, '→', hostCwd);
+        localStorage.removeItem('APP_CWD');
+        this._runtime.cwd = hostCwd;
+      }
+    }
     // 注入全局配置（env / fs/uri / terminal 读这里）
     (window as any).__APP_CONFIG__ = {
       ...((window as any).__APP_CONFIG__ || {}),

@@ -20,7 +20,7 @@ import {
   type ITerminalServiceClient,
 } from '@opensumi/ide-terminal-next/lib/common';
 
-import { appBaseUrl, cwdHeader, effectiveCwd } from './env';
+import { appBaseUrl, cwdHeader, effectiveCwd, secureUrl } from './env';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 /** 默认 shell: 优先 applyRuntime 注入（宿主事实）; 未注入时先取默认值, ensureDefaultShell() 会从 server /platform 懒加载覆盖 */
@@ -125,7 +125,9 @@ export class RemoteTerminalService implements ITerminalNodeService {
 
   private wsUrl(ptyId: string, cwd: string): string {
     // WS 端点吃 query param directory（与 x-opencode-directory header 等价, 浏览器 WS API 不便加 header）
-    return `${appBaseUrl().replace(/^http/, 'ws')}/pty/${ptyId}/connect?directory=${encodeURIComponent(cwd)}`;
+    // secureUrl 先升级 base 协议 (https 页面下 http→https), 再 http→ws; 最终 https→wss
+    const wsBase = secureUrl(appBaseUrl()).replace(/^http/, 'ws');
+    return `${wsBase}/pty/${ptyId}/connect?directory=${encodeURIComponent(cwd)}`;
   }
 
   /** 创建终端会话（前端 sessionId = id） */

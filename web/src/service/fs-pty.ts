@@ -18,7 +18,7 @@
  */
 
 import { detectPlatform, getShellOps, pickShellKind, type ShellKind, type ShellOps } from './shell-ops';
-import { appBaseUrl, cwdHeader, effectiveCwd } from './env';
+import { appBaseUrl, cwdHeader, effectiveCwd, secureUrl } from './env';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 interface Pending {
@@ -83,8 +83,8 @@ class FsPty {
     this.ptyId = (createData as any).id;
     if (!this.ptyId) throw new Error('fs pty: create pty returned no id');
 
-    // 3. WS 连接 (SDK 无 WS, 直连 opencode)
-    const wsBase = base.replace(/^http/, 'ws');
+    // 3. WS 连接 (SDK 无 WS, 直连 opencode; secureUrl 让 https 页面下 wss)
+    const wsBase = secureUrl(base).replace(/^http/, 'ws');
     const ws = new WebSocket(`${wsBase}/pty/${this.ptyId}/connect?directory=${encodeURIComponent(cwd)}`);
     this.ws = ws;
     await new Promise<void>((resolve, reject) => {

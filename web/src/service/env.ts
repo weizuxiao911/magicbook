@@ -37,6 +37,16 @@ export function cwdHeader(): Record<string, string> {
   return cwd ? { 'x-opencode-directory': encodeURI(cwd) } : {};
 }
 
+/**
+ * URL 协议升级: 页面 https 时, http→https / ws→wss (mixed content 浏览器拒绝)
+ * 单一 helper, 所有自建 ws/sse 入口统一走, 避免散落
+ */
+export function secureUrl(url: string): string {
+  if (typeof window === 'undefined' || !url) return url;
+  if (window.location.protocol !== 'https:') return url;
+  return url.replace(/^http:/i, 'https:').replace(/^ws:/i, 'wss:');
+}
+
 // ---- platform 探测 (兼容老 API) ----
 
 let _cachedPlatform: Platform | null = null;
