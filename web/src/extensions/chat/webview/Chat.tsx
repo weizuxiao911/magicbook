@@ -414,6 +414,7 @@ export const Chat: React.FC = () => {
     void refreshSessionStatuses();
     let stopped = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let es: EventSource | null = null;
     const upsertRow = (id: string, role: Row['role'], parts: any[], time?: { created?: number; completed?: number }) => {
       setRows((prev) => {
         const idx = prev.findIndex((r) => r.id === id);
@@ -423,10 +424,62 @@ export const Chat: React.FC = () => {
         return next;
       });
     };
+    /** v1 SSE 订阅: EventSource('/global/event') → async iterable {type, properties}.
+     *  v2 SDK 的 event.subscribe() (/api/event) 事件用 `data` 字段, 而 chat 按 v1 读 `properties`,
+     *  v1 → v2 切换时静默丢光. 直接走 v1 端点 (跟 fs.ts fallback 一致). */
+    const subscribeV1Events = async (): Promise<AsyncIterableIterator<{ type: string; properties: any }>> => {
+      const base = (window as any).__APP_OPENCODE_RUNTIME__?.baseUrl;
+      if (!base) throw new Error('opencode baseUrl missing');
+      const source = new EventSource(`${base}/global/event`, { withCredentials: false });
+      es = source;
+      const queue: Array<{ type: string; properties: any }> = [];
+      let resolveNext: ((v: IteratorResult<{ type: string; properties: any }>) => void) | null = null;
+      let closed = false;
+      source.onmessage = (msg) => {
+        if (closed) return;
+        try {
+          const raw = JSON.parse(msg.data);
+          // v1 Global 格式: {"payload":{"id","type","properties"}}; v1 Event 格式: 顶层 id/type/properties
+          const ev = (raw && raw.payload) || raw;
+          const { type, properties: props, data } = ev || {};
+          const properties = props || data; // 兜底 v2
+          if (!type || !properties) return;
+          const item = { type, properties };
+          if (resolveNext) {
+            const r = resolveNext; resolveNext = null; r({ value: item, done: false });
+          } else {
+            queue.push(item);
+          }
+        } catch { /* ignore bad frame */ }
+      };
+      source.onerror = () => {
+        if (closed) return;
+        // EventSource 浏览器自动重连, 不需要手动 reconnect
+        console.warn('[chat] /global/event SSE 异常, 浏览器自动重连');
+      };
+      const it: AsyncIterableIterator<{ type: string; properties: any }> = {
+        [Symbol.asyncIterator]() { return this; },
+        next(): Promise<IteratorResult<{ type: string; properties: any }>> {
+          if (queue.length > 0) return Promise.resolve({ value: queue.shift()!, done: false });
+          if (closed) return Promise.resolve({ value: undefined, done: true });
+          return new Promise((resolve) => { resolveNext = resolve; });
+        },
+        return(): Promise<IteratorResult<{ type: string; properties: any }>> {
+          closed = true;
+          try { source.close(); } catch { /* */ }
+          if (resolveNext) {
+            const r = resolveNext; resolveNext = null;
+            r({ value: undefined, done: true });
+          }
+          return Promise.resolve({ value: undefined, done: true });
+        },
+      };
+      return it;
+    };
     const run = async () => {
       try {
-        const evt = await c.event.subscribe();
-        for await (const ev of evt.stream) {
+        const evt = await subscribeV1Events();
+        for await (const ev of evt) {
           if (stopped) break;
           const { type, properties } = ev || {};
           if (!type || !properties) continue;
@@ -589,6 +642,7 @@ export const Chat: React.FC = () => {
     return () => {
       stopped = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (es) { try { es.close(); } catch { /* */ } es = null; }
     };
   }, [ready, loadMessages, refreshSessionStatuses]);
 
