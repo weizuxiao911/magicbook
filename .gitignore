@@ -45,3 +45,4 @@ client/.env.production
 .playwright-mcp/
 .userData/registry/certs/
 *.tsbuildinfo
+extensions/pdf/node_modules/

@@ -10,7 +10,7 @@ import { ActionsModule } from '../extensions/actions';
 import { WelcomeModule } from '../extensions/welcome';
 import { ChatModule } from '../extensions/chat';
 import { WorkspaceModule } from '../extensions/workspace';
-import { PdfReaderModule } from '../extensions/pdf';
+// import { PdfReaderModule } from '../extensions/pdf';  // 内置 PDF 暂不启用, 改用 extensions/pdf vsix 走 registry 分发
 import { HtmlModule } from '../extensions/html';
 import { AgentModule } from '../service/agent';
 import { RegistryModule } from '../service/registry';
@@ -33,7 +33,7 @@ export function getBuiltinModules(_opts?: { vsixMetadata?: any[] }): any[] {
     WelcomeModule,
     ChatModule,
     WorkspaceModule,
-    PdfReaderModule,
+    // PdfReaderModule,  // 内置 PDF 不启用, registry/vsix/numas.pdf-0.1.0.vsix 替代
     HtmlModule,
   ];
 }

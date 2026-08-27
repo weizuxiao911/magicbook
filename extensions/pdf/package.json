@@ -1,0 +1,62 @@
+{
+  "name": "pdf",
+  "displayName": "PDF Viewer",
+  "description": "PDF 阅读器 (vscode 自定义编辑器 + pdf.js 流式分页渲染, 通过 CDN 加载 PDF.js 不打包 3MB lib)",
+  "version": "0.1.0",
+  "publisher": "numas",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCustomEditor:pdfViewer",
+    "onCommand:pdf.open"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "pdfViewer",
+        "displayName": "PDF Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.pdf"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "languages": [
+      {
+        "id": "pdf",
+        "extensions": [
+          ".pdf"
+        ],
+        "aliases": [
+          "PDF"
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "pdf.open",
+        "title": "Open PDF",
+        "category": "PDF"
+      }
+    ]
+  },
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "compile:bundle": "node esbuild.config.mjs",
+    "build": "npm run clean && npm run compile:bundle",
+    "package": "npm run build && node scripts/package.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/vscode": "^1.75.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.4"
+  }
+}
