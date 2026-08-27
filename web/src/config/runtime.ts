@@ -47,14 +47,13 @@ export const runtimeConfig: IAppRendererProps['runtimeConfig'] = {
     onDidSaveTextDocument: ({ filepath, content }) => {
       syncToFs('write', filepath, content);
     },
-    // 注意: onDidChangeFiles / onDidCreateFiles 由 IFileServiceClient.onFilesChanged 驱动,
-    // 而 onFilesChanged 会收到我们 fireFilesChange 的"外部变化"事件 → 写回旧内容/覆盖新建, 形成循环。
+    // 注意: onDidChangeFiles / onDidCreateFiles / onDidDeleteFiles 由 IFileServiceClient.onFilesChanged 驱动,
+    // 而 onFilesChanged 会收到我们 fireFilesChange 的"外部变化"事件 → 写回旧内容/覆盖新建/重复删除, 形成循环。
     // backend 已把浏览器侧读写直落 opencode, 无需这些钩子; 保存由 onDidSaveTextDocument 兜底。
     onDidChangeTextDocument: (_args) => {
       // 实时变更不即时同步 (防抖由保存触发)
     },
-    onDidDeleteFiles: (files) => {
-      (files || []).forEach((f) => syncToFs('delete', f));
-    },
+    // onDidDeleteFiles 也会被 fireFilesChange 误触, 真的删 server 文件 → 循环. 不挂.
+    // (onDidCreateFiles / onDidChangeFiles 同样不挂, 跟注释一致)
   },
 } as any;

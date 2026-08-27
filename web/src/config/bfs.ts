@@ -29,10 +29,11 @@ function workspaceRel(path: string): string {
   return p || '/';
 }
 
-/** opencode FileMeta → BrowserFS Stats（mtime 取 server 值: 保存时 lastModification 稳定, 不误报 out-of-sync） */
+/** opencode FileMeta → BrowserFS Stats（mtime 固定 0: OpenSumi shadow-file-system 也用 lastModification: 0,
+ *  checkInSync 用 stat.lastModification === file.lastModification 对比, 固定 0 永远一致 → 不报 out-of-sync) */
 function toStats(meta: FileMeta): Stats {
   const type = meta.type === 'directory' ? FileType.DIRECTORY : FileType.FILE;
-  const t = meta.mtime ? Date.parse(meta.mtime) : Date.now();
+  const t = meta.mtime ? Date.parse(meta.mtime) : 0;
   return new Stats(type, meta.size, 0x16d, t, t, t);
 }
 
@@ -129,10 +130,24 @@ export class RemoteFS extends BaseFileSystem {
   }
 
   unlink(p: string, cb: Cb): void {
+    // 区分文件/目录: unlink 只删文件, 目录走 rmdir (ENOTSUP 否则报 "Operation is not supported")
     getFileSystemService()
-      .rm(workspaceRel(p))
+      .meta(workspaceRel(p))
+      .then((meta) => {
+        if (meta.type === 'directory') {
+          return getFileSystemService().rmdir(workspaceRel(p));
+        }
+        return getFileSystemService().rm(workspaceRel(p));
+      })
       .then(() => cb(null))
       .catch((e: Error) => cb(ApiError.FileError(e as never, e?.message || 'unlink failed')));
+  }
+
+  rmdir(p: string, cb: Cb): void {
+    getFileSystemService()
+      .rmdir(workspaceRel(p))
+      .then(() => cb(null))
+      .catch((e: Error) => cb(ApiError.FileError(e as never, e?.message || 'rmdir failed')));
   }
 
   mkdir(p: string, _mode: number, cb: Cb): void {

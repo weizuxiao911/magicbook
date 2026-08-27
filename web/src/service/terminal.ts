@@ -41,8 +41,10 @@ export interface ShellOps {
   writeFile(absPath: string, base64Content: string): string;
   /** 读文件 base64 (供 readBinary 用) */
   readFileBase64(absPath: string): string;
-  /** rm -rf 强制删除 */
+  /** rm -rf 强制删除 (文件/目录都可用) */
   rm(absPath: string): string;
+  /** rmdir -p 删空目录 (unlink 删目录 ENOTSUP, 区分走 rmdir) */
+  rmdir(absPath: string): string;
   /** mkdir -p 递归建目录 */
   mkdirp(absPath: string): string;
   /** 移动/重命名 */
@@ -62,6 +64,7 @@ const POSIX: ShellOps = {
     `mkdir -p $(dirname ${shellQuotePosix(p)}) && printf %s ${shellQuotePosix(b64)} | base64 -d > ${shellQuotePosix(p)}`,
   readFileBase64: (p) => `base64 ${shellQuotePosix(p)} 2>/dev/null`,
   rm: (p) => `rm -rf ${shellQuotePosix(p)}`,
+  rmdir: (p) => `rmdir ${shellQuotePosix(p)}`,
   mkdirp: (p) => `mkdir -p ${shellQuotePosix(p)}`,
   move: (f, t) => `mv ${shellQuotePosix(f)} ${shellQuotePosix(t)}`,
   stat: (p) =>
@@ -78,6 +81,7 @@ const POWERSHELL: ShellOps = {
     `[System.IO.File]::WriteAllBytes(${psQuote(p)}, [System.Convert]::FromBase64String(${psQuote(b64)}))`,
   readFileBase64: (p) => `[Convert]::ToBase64String([System.IO.File]::ReadAllBytes(${psQuote(p)}))`,
   rm: (p) => `Remove-Item -Recurse -Force ${psQuote(p)}`,
+  rmdir: (p) => `Remove-Item -Force ${psQuote(p)}`,
   mkdirp: (p) => `New-Item -ItemType Directory -Force -Path ${psQuote(p)} | Out-Null`,
   move: (f, t) => `Move-Item -Force ${psQuote(f)} ${psQuote(t)}`,
   stat: (p) =>
@@ -93,6 +97,7 @@ const CMD: ShellOps = {
   writeFile: (_p, _b64) => { throw new Error('cmd.exe not implemented for write (install PowerShell)'); },
   readFileBase64: (_p) => { throw new Error('cmd.exe not implemented for readBinary'); },
   rm: (p) => `rmdir /S /Q ${cmdQuote(p)} 2>NUL & exit /B 0`,
+  rmdir: (p) => `rmdir ${cmdQuote(p)} 2>NUL & exit /B 0`,
   mkdirp: (p) => `mkdir ${cmdQuote(p)} 2>NUL`,
   move: (f, t) => `move /Y ${cmdQuote(f)} ${cmdQuote(t)}`,
   stat: (_p) => { throw new Error('cmd.exe not implemented for stat'); },

@@ -66,8 +66,11 @@ export const App: React.FC = () => {
       appConfig={{
         workspaceDir: '/',
         ...buildSlots(),
+        // monaco worker CDN: alipay (gw.alipayobjects.com) 404 缺失 editor.worker.bundle.js
+        //   → 编辑器 fallback 主线程 "现在无法访问编辑器". jsdelivr / npmmirror 有文件.
+        componentCDNType: 'jsdelivr',
         defaultPreferences: preferences,
-extensionMetadata: extensionMetadata as any,
+        extensionMetadata: extensionMetadata as any,
         modules: [
           ...defaultModules,
           ...getBuiltinModules(),

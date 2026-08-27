@@ -40,6 +40,8 @@ export interface IFileSystem {
   write(idePath: string, content: string | { base64: string }, onProgress?: (done: number, total: number) => void): Promise<boolean>;
   /** 删除文件/目录（递归） */
   rm(idePath: string): Promise<boolean>;
+  /** 删除空目录 (rmdir) — 区分 rm 避免 unlink 删目录 ENOTSUP */
+  rmdir(idePath: string): Promise<boolean>;
   /** mkdir -p */
   mkdirp(idePath: string): Promise<boolean>;
   /** 移动/重命名（server /fs/move, body {from,to}） */

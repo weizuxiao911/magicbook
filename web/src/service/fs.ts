@@ -46,9 +46,11 @@ import {
 
 // ---- 工具函数 ----
 
-/** IDE 相对路径 → opencode /api/fs/read 用的相对路径（去前导 /, 跟 opencode 端约定一致） */
+/** IDE 路径 → opencode /api/fs/read 用的相对路径（去前导 / 和 /workspace 前缀, 跟 opencode 端 cwd 拼接） */
 function relPathForRead(idePath: string): string {
-  return idePath.replace(/^\/+/, '');
+  let p = idePath.replace(/^\/+/, '');
+  if (p.startsWith('workspace/')) p = p.slice('workspace/'.length);
+  return p;
 }
 
 /** 文本 → base64（浏览器端, 分块避免栈溢出） */
@@ -750,7 +752,7 @@ export class FileSystemServiceImpl implements IFileSystem {
     if (cached) {
       entry = cached.find((e) => e.name === name);
     }
-    // 未命中: list 父目录一次 (注意: 这次 list 会顺便回填缓存)
+    // 未命中: list 父目录拿 entry (opencode SDK /file 不返 mtime, mtime 由 OpenSumi 内部 currentTime 兜底)
     if (!entry) {
       const entries = await this.list(base);
       this.listCache.set(base, entries);
@@ -891,6 +893,13 @@ export class FileSystemServiceImpl implements IFileSystem {
   async rm(idePath: string): Promise<boolean> {
     const ops = await this.ops();
     const { ok } = await getFsPty().exec(ops.rm(absPath(idePath)));
+    if (ok) this.invalidateParent(idePath);
+    return ok;
+  }
+
+  async rmdir(idePath: string): Promise<boolean> {
+    const ops = await this.ops();
+    const { ok } = await getFsPty().exec(ops.rmdir(absPath(idePath)));
     if (ok) this.invalidateParent(idePath);
     return ok;
   }
