@@ -15,12 +15,6 @@ export const preferences: IAppRendererProps['appConfig']['defaultPreferences'] =
   'editor.enablePreviewFromCodeNavigation': false,
   'editor.autoSave': 'afterDelay',
   'editor.autoSaveDelay': 100,
-  // 扩展名为 *.html / *.paper 的文件默认用 customEditor 打开（html 有内置文本编辑器,
-  // 默认会被 findSuitableOpenType 选为文本 → customEditor 组件不渲染; editorAssociations 强制 viewType）
-  'workbench.editorAssociations': {
-    '*.html': 'htmlPreview',
-    '*.paper': 'paperEditor',
-  },
   // 文件树: 第一层与分组标题完全左对齐(baseIndent 负补偿) + 每层缩进 16 让父子层级明显
   'explorer.fileTree.baseIndent': -12,
   'explorer.fileTree.indent': 16,

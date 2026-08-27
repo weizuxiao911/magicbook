@@ -11,13 +11,6 @@ function shellQuote(s: string): string {
 
 interface DirEntry { name: string; path: string; }
 
-const QUICK = [
-  { name: '用户', path: '~' },
-  { name: '桌面', path: '~/Desktop' },
-  { name: '文档', path: '~/Documents' },
-  { name: '下载', path: '~/Downloads' },
-];
-
 async function browseDir(path: string): Promise<{ path: string; directories: DirEntry[] }> {
   // SDK client.file.list: 返回 FileNode[] (name, path, type, ...), 用 path 字段名直接取
   const client = await getFsClient();
@@ -86,17 +79,6 @@ export const WorkspacePicker: React.FC = () => {
   const [active, setActive] = useState(0);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [recent, setRecent] = useState<string[]>(() => getRecent());
-  // 监听 recent 变化 (e.g. 切到某条 recent 后 addRecent 触发)
-// 用户家目录: opencode /path 返回, 用于展开 QUICK 里的 ~ 路径 (opencode 不展开 ~, 必须给绝对路径)
-const [home, setHome] = useState('');
-
-/** ~ → 实际家目录, 给 opencode 绝对路径 (opencode 不展开 ~) */
-const expandHome = (p: string): string => {
-  if (!home) return p;
-  if (p === '~') return home;
-  if (p.startsWith('~/')) return home + p.slice(1);
-  return p;
-};
   const inputRef = useRef<HTMLInputElement>(null);
   const mkRef = useRef<HTMLInputElement>(null);
 
@@ -118,8 +100,7 @@ const expandHome = (p: string): string => {
       setRecent(getRecent()); // 打开时刷新一次
       setTimeout(async () => {
         inputRef.current?.focus();
-        // 初始路径: APP_CWD (用户选) 优先; 没设才走 hostCwd (opencode /path 注入) → 现拉一次 (兜底)
-        // 顺便拿 home 展开 QUICK 里的 ~ 路径
+        // 初始路径: APP_CWD (用户选) 优先; 没设才走 hostCwd (opencode /path.directory 注入)
         let start = effectiveCwd();
         if (!start) {
           try {
@@ -128,7 +109,6 @@ const expandHome = (p: string): string => {
             if (res.ok) {
               const j = await res.json();
               if (j?.directory) start = j.directory;
-              if (j?.home) setHome(j.home);
             }
           } catch { /* ignore, 走 / 兜底 */ }
         }
@@ -217,44 +197,32 @@ const expandHome = (p: string): string => {
           )}
         </div>
         <div className="wp-body">
-          <div className="wp-side">
-            <div className="wp-side-title">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
-              快速访问
+          {recent.filter((p) => p !== currentPath).slice(0, 5).length > 0 && (
+            <div className="wp-side">
+              <div className="wp-side-title">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>
+                最近
+              </div>
+              {recent
+                .filter((p) => p !== currentPath)
+                .slice(0, 5)
+                .map((p) => {
+                  const name = p.split('/').filter(Boolean).pop() || p;
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      className="wp-side-item wp-side-item--recent"
+                      title={p}
+                      onClick={() => setCwd(p)}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                      <span>{name}</span>
+                    </button>
+                  );
+                })}
             </div>
-            {QUICK.map((q) => (
-              <button key={q.path} type="button" className="wp-side-item" onClick={() => doBrowse(expandHome(q.path))}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                <span>{q.name}</span>
-              </button>
-            ))}
-            {recent.filter((p) => p !== currentPath).slice(0, 5).length > 0 && (
-              <>
-                <div className="wp-side-title" style={{ marginTop: 10 }}>
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>
-                  最近
-                </div>
-                {recent
-                  .filter((p) => p !== currentPath)
-                  .slice(0, 5)
-                  .map((p) => {
-                    const name = p.split('/').filter(Boolean).pop() || p;
-                    return (
-                      <button
-                        key={p}
-                        type="button"
-                        className="wp-side-item wp-side-item--recent"
-                        title={p}
-                        onClick={() => setCwd(p)}
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                        <span>{name}</span>
-                      </button>
-                    );
-                  })}
-              </>
-            )}
-          </div>
+          )}
           <div className="wp-main" onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}>
             {loading && <div className="wp-loading">加载中…</div>}
             {error && <div className="wp-err">{error}</div>}
