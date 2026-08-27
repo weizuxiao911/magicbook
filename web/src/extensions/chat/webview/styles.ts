@@ -1446,4 +1446,7 @@ export const styles = `
 .chat__suggest-title { font-size: 12px; font-weight: 500; }
 .chat__suggest-desc { font-size: 10.5px; color: var(--ai-fg-muted); line-height: 1.4; }
 
+/* 隐藏 chat 输入框底部的 agent mode 选择按钮 (data-ai-pop="agents") — 用户禁用, 暂不开启 */
+[data-ai-pop="agents"] { display: none !important; }
+
 `;

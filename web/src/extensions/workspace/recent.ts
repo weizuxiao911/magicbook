@@ -40,3 +40,12 @@ export function addRecent(dir: string): string[] {
   window.dispatchEvent(new CustomEvent('workspace:recent-changed', { detail: next }));
   return next;
 }
+
+/** 从最近列表移除 dir (UI × 按钮调用). 返回更新后列表. */
+export function removeRecent(dir: string): string[] {
+  if (!dir) return read();
+  const next = read().filter((p) => p !== dir);
+  write(next);
+  window.dispatchEvent(new CustomEvent('workspace:recent-changed', { detail: next }));
+  return next;
+}

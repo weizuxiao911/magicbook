@@ -189,9 +189,12 @@ export const Chat: React.FC = () => {
     const refresh = () => setWsCwd(getCwd());
     const unsub = subscribeCwd(refresh);
     window.addEventListener('storage', refresh);
+    // runtime-ready 时再刷一次 (处理 chat mount 后才 setCwd / reload 时序)
+    window.addEventListener('runtime-ready', refresh);
     return () => {
       unsub();
       window.removeEventListener('storage', refresh);
+      window.removeEventListener('runtime-ready', refresh);
     };
   }, []);
   const wsName = useMemo(() => {
@@ -1586,14 +1589,23 @@ export const Chat: React.FC = () => {
             </div>
           )}
 
-          <div className="chat__input-wrap">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.md,.json,.js,.ts,.tsx,.py,.sh,.html,.css,.zip,.tar,.gz"
-              style={{ display: 'none' }}
-              onChange={(e) => { void onUploadFile(e.target.files); e.target.value = ''; }}
+          <div className="chat__input-wrap"
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const files = e.dataTransfer?.files;
+              if (files && files.length) void onUploadFile(files);
+            }}
+          >
+            <textarea
+              ref={taRef}
+              className="chat__input"
+              value={input}
+              onChange={onInput}
+              onKeyDown={onKeyDown}
+              onPaste={onPaste}
+              placeholder="输入/ 可以召唤魔法; 输入@ 可以选择智能体 🎉"
+              rows={1}
             />
             {attachments.length > 0 && (
               <div className="chat__attach">
@@ -1632,23 +1644,46 @@ export const Chat: React.FC = () => {
                 ))}
               </div>
             )}
-            <textarea
-              ref={taRef}
-              value={input}
-              onChange={onInput}
-              onKeyDown={onKeyDown}
-              onPaste={onPaste}
-              placeholder="输入/ 可以召唤魔法; 输入@ 可以选择智能体 🎉"
-              rows={1}
-            />
             <div className="chat__input-bar">
-              {/* 1. 上传附件 (第一位, 点击弹原生文件选择器, 走跟粘贴上传一样的 onUploadFile 逻辑) */}
-              <button type="button" className="chat__bar-btn chat__bar-plus" title="上传附件" onClick={() => fileInputRef.current?.click()}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
+              {/* 上传附件: 用 File System Access API (localhost 支持) 绕开 CodeBlitz 对原生 file chooser 的拦截 */}
+              {wsCwd && (
+                <button
+                  type="button"
+                  className="chat__bar-btn chat__bar-plus"
+                  title="上传附件"
+                  onClick={async () => {
+                    console.log('[chat] + clicked, try showOpenFilePicker');
+                    try {
+                      // @ts-ignore — showOpenFilePicker 在 TS 5 之前不一定有类型
+                      const w: any = window;
+                      if (typeof w.showOpenFilePicker === 'function') {
+                        const handles = await w.showOpenFilePicker({ multiple: true });
+                        const files = await Promise.all(handles.map((h: any) => h.getFile()));
+                        const dt = new DataTransfer();
+                        files.forEach((f: File) => dt.items.add(f));
+                        await onUploadFile(dt.files);
+                      } else {
+                        // 兜底: 仍用原生 input click (在 CodeBlitz 容器内可能仍被拦)
+                        let fb = document.getElementById('chat-file-input') as HTMLInputElement | null;
+                        if (!fb) {
+                          fb = document.createElement('input');
+                          fb.type = 'file'; fb.multiple = true;
+                          fb.id = 'chat-file-input';
+                          fb.style.display = 'none';
+                          fb.addEventListener('change', () => { void onUploadFile(fb!.files); fb!.value = ''; });
+                          document.body.appendChild(fb);
+                        }
+                        fb.click();
+                      }
+                    } catch (e: any) { console.warn('[chat] picker error:', e?.message); }
+                  }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </button>
+              )}
 
               {/* 2. 工作目录选择器: 全局唯一切换入口, 点击直接开居中模态 (workspace:request-show → WorkspacePicker) */}
               <button
@@ -1808,6 +1843,7 @@ export const Chat: React.FC = () => {
           </div>
         </div>
       )}
+
     </div>
   );
 };
