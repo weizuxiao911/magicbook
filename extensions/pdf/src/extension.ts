@@ -218,23 +218,51 @@ function bytesToB64(bytes: Uint8Array): string {
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('[pdf] activate (vsix, 独立实现, 不复用 web/src/extensions/pdf)')
+  console.log('[pdf]   context.extensionPath:', context.extensionPath)
+  console.log('[pdf]   context.subscriptions 已注入数 (初始):', context.subscriptions.length)
+  // 主动探测 VSCode API 可用性
+  console.log('[pdf]   vscode.window:', typeof vscode.window, 'vscode.workspace:', typeof vscode.workspace)
+  console.log('[pdf]   vscode.workspace.fs:', typeof (vscode as any).workspace?.fs, 'readFile:', typeof (vscode as any).workspace?.fs?.readFile)
 
   const provider: vscode.CustomTextEditorProvider = {
     async resolveCustomTextEditor(document, webviewPanel, _token) {
       console.log('[pdf] resolve:', document.uri.toString())
+      console.log('[pdf]   document.languageId:', document.languageId)
+      console.log('[pdf]   document.getText 长度:', document.getText().length)
 
       webviewPanel.webview.options = {
         enableScripts: true,
       }
+      console.log('[pdf]   webview options 设置完毕')
 
       // 读取 PDF 二进制: TextDocument 默认 UTF-8 字符串, 不可靠 → workspace.fs 直读 raw bytes
       const readBytes = async (): Promise<Uint8Array | null> => {
+        console.log('[pdf]   readBytes 启动, uri:', document.uri.toString())
+        // 1) 优先 document.getText (VSCode 已经做了 URI 解码) — PDF 是二进制, 这里会是损坏字符串, 只做兜底
         try {
-          const buf = await vscode.workspace.fs.readFile(document.uri)
+          const t = document.getText()
+          if (t && t.startsWith('%PDF-')) {
+            console.log('[pdf]   readBytes via document.getText 拿到 %PDF- 字符串, 转 bytes')
+            const enc = new TextEncoder()
+            return enc.encode(t)
+          }
+        } catch (e) {
+          console.warn('[pdf] document.getText 失败:', e)
+        }
+        // 2) 走 workspace.fs.readFile (opensumi 通常不暴露此 API, 看错误)
+        try {
+          const ws = (vscode as any).workspace;
+          if (!ws?.fs?.readFile) {
+            console.warn('[pdf]   workspace.fs.readFile 不可用 (opensumi 不支持)');
+            return null;
+          }
+          const buf = await ws.fs.readFile(document.uri)
+          console.log('[pdf]   workspace.fs.readFile 返回, 长度:', buf.length, '字节')
           // PDF 魔数: %PDF- (0x25 0x50 0x44 0x46 0x2d)
           if (buf.length >= 5 && buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46 && buf[4] === 0x2d) {
             return new Uint8Array(buf)
           }
+          console.warn('[pdf]   fs.readFile 读到的内容 %PDF- 魔数校验失败, 前 8 字节:', Array.from(buf.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' '))
         } catch (e) {
           console.warn('[pdf] fs.readFile 失败:', e)
         }
@@ -242,20 +270,27 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       const push = (html: string) => {
-        try { webviewPanel.webview.html = html } catch (_) { /* ignore */ }
+        console.log('[pdf]   push html 长度:', html.length, 'preview:', html.substring(0, 100))
+        try { webviewPanel.webview.html = html } catch (e) { console.warn('[pdf]   webview.html 赋值失败:', e) }
       }
 
       const renderPdf = async () => {
+        console.log('[pdf]   renderPdf 启动')
         const bytes = await readBytes()
         if (!bytes) {
+          console.error('[pdf]   readBytes 返回 null, 无法渲染')
           push(`<!DOCTYPE html><html><body style="font-family:system-ui;padding:40px;background:#1e1e1e;color:#ccc">
 <h2>无法读取 PDF</h2><p>URI: ${esc(document.uri.toString())}</p>
-<p>文件可能为空, 或权限不足.</p></body></html>`)
+<p>文件可能为空, 或权限不足.</p>
+<p>opencode workspace.fs.readFile 不可用 — opensumi 可能限制了 vscode.workspace.fs 的访问.</p>
+</body></html>`)
           return
         }
         const b64 = bytesToB64(bytes)
         const name = document.uri.fsPath.split(/[\\/]/).pop() || 'document.pdf'
+        console.log('[pdf]   渲染文件:', name, '大小:', (bytes.length / 1024).toFixed(1), 'KB')
         push(buildHtml(b64, name))
+        console.log('[pdf]   renderPdf 完成, html 已 push 到 webview')
       }
 
       // 监听文件变化 (用户重新加载时触发)
@@ -263,6 +298,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (e.document === document) void renderPdf()
       })
       webviewPanel.onDidDispose(() => {
+        console.log('[pdf]   webview dispose:', document.uri.toString())
         changeSub.dispose()
       })
 
@@ -270,13 +306,18 @@ export function activate(context: vscode.ExtensionContext) {
     },
   }
 
-  context.subscriptions.push(
-    vscode.window.registerCustomEditorProvider(PDF_VIEW_TYPE, provider, {
+  console.log('[pdf]   准备调用 registerCustomEditorProvider, viewType:', PDF_VIEW_TYPE)
+  try {
+    const disposeReg = vscode.window.registerCustomEditorProvider(PDF_VIEW_TYPE, provider, {
       webviewOptions: {
         retainContextWhenHidden: true,
       },
-    }),
-  )
+    })
+    context.subscriptions.push(disposeReg)
+    console.log('[pdf]   registerCustomEditorProvider OK')
+  } catch (e) {
+    console.error('[pdf]   registerCustomEditorProvider 失败:', e)
+  }
 
   // 注册命令: 主动用 PDF viewer 打开当前文件
   context.subscriptions.push(
@@ -286,6 +327,7 @@ export function activate(context: vscode.ExtensionContext) {
       void vscode.commands.executeCommand('vscode.openWith', ed.document.uri, PDF_VIEW_TYPE)
     }),
   )
+  console.log('[pdf]   registerCommand pdf.open OK, 激活完成')
 }
 
 export function deactivate() { }
