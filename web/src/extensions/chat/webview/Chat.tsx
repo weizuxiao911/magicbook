@@ -5,7 +5,6 @@ import { SlotLocation } from '@opensumi/ide-core-browser';
 import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 
 import { FsToken, type IFileSystem } from '@/commands/fs';
-import { appBaseUrl, effectiveCwd } from '@/service/env';
 
 import {
   aiListAgents,
@@ -19,7 +18,7 @@ import {
   aiListModels,
   aiListProviders,
   aiGetConfig,
-  getAiClient,
+  isAiReady,
 } from '@/extensions/chat/commands/api';
 import { modelPrefs } from '@/extensions/chat/commands/modelPrefs';
 import { PartRenderer } from './parts/PartRenderer';
@@ -149,13 +148,6 @@ export const Chat: React.FC = () => {
     else setError(text);
   }, [showNotice]);
   const [ready, setReady] = useState<boolean>(false);
-  // 可用态: 有 APP_CWD 才可用, 否则提示先选择工作目录
-  const [usable, setUsable] = useState<boolean>(() => !!localStorage.getItem('APP_CWD'));
-  useEffect(() => {
-    const refresh = () => setUsable(!!localStorage.getItem('APP_CWD'));
-    window.addEventListener('runtime-ready', refresh);
-    return () => window.removeEventListener('runtime-ready', refresh);
-  }, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
@@ -166,23 +158,21 @@ export const Chat: React.FC = () => {
     return rt ? { userId: rt.userId, tenantId: rt.tenantId, deployEnv: rt.deployEnv } : null;
   }, []);
 
-// chat 可用性: appBaseUrl 已注入（agent runtime 就绪）即视为可用,
-// 不强制创建 SDK client（opencode 服务未起时面板仍可用, 请求时再失败提示）.
+  // chat 可用性: 只看 opencode SDK 是否已初始化 (agent runtime 派发 runtime-ready 后
+  // 把 client 挂到 window.__APP_OPENCODE__). 不依赖 APP_CWD —— 选了工作目录只是影响
+  // SDK 请求里的 x-opencode-directory header, 没选时 SDK 走 __APP_CONFIG__.cwd (hostCwd) 兜底.
   const client = (window as any).__APP_OPENCODE__;
-  const isReady = () => {
-    // 必须有 APP_CWD（已选工作目录）才可用
-    const hasCwd = !!effectiveCwd();
-    const base = appBaseUrl();
-    if (base && hasCwd) {
-      try { getAiClient(); } catch { /* client 创建失败不阻塞面板 */ }
-    }
-    return !!base && hasCwd;
-  };
+  const isReady = () => isAiReady();
   useEffect(() => {
     const check = () => setReady(isReady());
     check();
-    const id = window.setInterval(check, 1500);
-    return () => window.clearInterval(id);
+    const id = window.setInterval(check, 500);
+    const onReady = () => check();
+    window.addEventListener('runtime-ready', onReady);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('runtime-ready', onReady);
+    };
   }, []);
 
   // 就绪后自动聚焦输入框
@@ -380,8 +370,9 @@ export const Chat: React.FC = () => {
     else setRows([]);
   }, [sessionID, loadMessages]);
 
-  // sessionID 持久化到 sessionStorage (绑定 cwd: 切换工作目录后不复用旧 session)
-  const SESSION_KEY = 'chat.sessionID.' + (localStorage.getItem('APP_CWD') || 'default').replace(/[^a-zA-Z0-9]/g, '_');
+  // sessionID 持久化到 sessionStorage (与具体工作目录解耦, chat 只跟 SDK 走, 切换 cwd
+  // 后 session 归属由 SDK 内部 x-opencode-directory header 决定, UI 端不按 cwd 隔离)
+  const SESSION_KEY = 'chat.sessionID';
   // 仅启动时恢复一次上次会话. 注意: 不能依赖 sessionID 重跑 (restore 读 storage + write 写
   // storage 会形成 A↔B 乒乓 → applySessionToUI 反复 session.get → 请求洪流).
   useEffect(() => {
@@ -1228,7 +1219,7 @@ export const Chat: React.FC = () => {
           {getBrand() && <span className="chat__logo">{getBrand()!.logoChar}</span>}
           <span className="chat__brand-name">{
             (() => {
-              if (!usable) return 'AI 助手';
+              if (!ready) return 'AI 助手';
               if (!sessionID) return '新会话';
               const t = currentTitle
                 || sessions.find((s: any) => s.id === sessionID)?.title
@@ -1237,22 +1228,20 @@ export const Chat: React.FC = () => {
             })()
           }</span>
         </div>
-        {!usable ? null : (
-          ready && (
-            <div className="chat__top-actions">
-              <button
-                data-ai-pop="sessions"
-                className="chat__icon-btn"
-                title="历史会话"
-                onClick={() => { setShowSessions((v) => !v); if (!showSessions) loadSessions(); }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              </button>
-              <button className="chat__icon-btn" title="新会话" onClick={onNewSession}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-              </button>
-            </div>
-          )
+        {ready && (
+          <div className="chat__top-actions">
+            <button
+              data-ai-pop="sessions"
+              className="chat__icon-btn"
+              title="历史会话"
+              onClick={() => { setShowSessions((v) => !v); if (!showSessions) loadSessions(); }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </button>
+            <button className="chat__icon-btn" title="新会话" onClick={onNewSession}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          </div>
         )}
       </header>
 
@@ -1309,12 +1298,7 @@ export const Chat: React.FC = () => {
       )}
 
       <div className="chat__messages" ref={scrollRef}>
-        {!usable ? (
-          <div className="chat__login-gate">
-            <div className="chat__login-title">{getBrand()?.nameZh || 'AI 助手'}</div>
-            <div className="chat__login-desc">请先在工作目录面板选择工作目录</div>
-          </div>
-        ) : !ready ? (
+        {!ready ? (
           <ConnectingView user={globalUser} />
         ) : rows.length === 0 ? (
           <WelcomeScreen
