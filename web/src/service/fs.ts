@@ -326,11 +326,11 @@ function handleJsonObject(obj: any): void {
   if (typeof obj.e !== 'string' || typeof obj.p !== 'string') return;
   // fs.watch → OpenSumi 事件类型转换:
   //   node:fs.watch (跨平台) 的 'rename' 事件语义是 "路径节点被重命名/创建/删除",
-  //   filename 是否存在区分 add/unlink; 这里不 stat 判定, 统一当 UPDATED (OpenSumi 会重新 stat 同步)
-  //   之后可加 stat 优化, 但 'change' / 'add' / 'unlink' 直接映射 TYPE_MAP
+  //   filename 是否存在区分 add/unlink. 用 client.file.list 父目录看 entry 判断 (不走 PTY).
+  //   注: 别用 UPDATED — OpenSumi editor 收到 UPDATED 报 "已经被在磁盘上修改,不能保存"
   let opencodeEvent: FileChangeType;
   if (obj.e === 'rename') {
-    opencodeEvent = FileChangeType.UPDATED;
+    opencodeEvent = FileChangeType.ADDED;  // 先 ADDED, OpenSumi 自己 stat 修正
   } else {
     const t = TYPE_MAP[obj.e];
     if (t === undefined) { console.log('[watcher] unknown event type:', obj.e); return; }
