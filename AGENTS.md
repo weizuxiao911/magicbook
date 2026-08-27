@@ -15,13 +15,13 @@
 
 | 端 | 目录 | 职责 |
 | --- | --- | --- |
-| 入口 | `cli.js` (根) | npx bin 入口: 装 web deps + spawn `npm run dev` (detached), webpack 内部启 opencode |
-| 客户端 | `web/` | codeblitz 容器 + 8 service + 4 extension; webpack.config.js 内置启 opencode + 清理 |
-| 后端 | opencode (外部) | AI + 终端 PTY + 文件系统; webpack spawn `opencode serve` |
+| 入口 | `dev.js` (根) | npx bin 入口: 装 web deps + spawn `npm run dev` (detached), 同步启 opencode |
+| 客户端 | `web/` | codeblitz 容器 + 8 service + 4 extension; webpack 只 build, 不管 opencode |
+| 后端 | opencode (外部) | AI + 终端 PTY + 文件系统; dev.js spawn `opencode serve` |
 | 扩展 | `extensions/` | vsix 源码 |
 | 分发 | `registry/` | vsix 扩展分发 (代码保留, dev 不启动) |
 
-架构: client → opencode 直连, 无中间层. 进程树: cli.js → npm run dev → webpack → opencode (同进程组, cli.js 退出时整组杀). 详图见 README.
+架构: client → opencode 直连, 无中间层. 进程树: dev.js → { opencode, webpack } (两个独立 detached 进程组, dev.js 退出时整组杀). 详图见 README.
 
 ## 品牌资产
 
@@ -45,7 +45,7 @@
 
 **4. 平铺 `core/` → `commands/` `config/` `styles/`**: 历史 core/commands/ + core/config/ + core/styles/ 三层嵌套冗余, 拍平到 src/ 根, 删 core/. 0 行逻辑改动.
 
-**5. npx 一行启动 (根 `cli.js`)**: 公开 GitHub 仓库, `npx github:user/repo` 自动拉 tarball + install + 跑 bin. 零发布成本. bin 单文件, 不需要 cli/ 子目录编排.
+**5. npx 一行启动 (根 `dev.js`)**: 公开 GitHub 仓库, `npx github:user/repo` 自动拉 tarball + install + 跑 bin. 零发布成本. bin 单文件 (dev.js), 不需要 cli/ 子目录编排. dev.js 持有 opencode + webpack 两组进程, SIGINT 杀整组.
 
 **6. 依赖下沉**: root 只留 `opencode-ai` (opencode 二进制, 提供给 webpack 启), client 全套 react/codeblitz/webpack. root node_modules 0M (opencode-ai 装在 web/node_modules).
 

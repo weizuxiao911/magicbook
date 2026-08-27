@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * numas cli.js — 根目录 npx 入口 (替代 cli/ 子目录)
+ * numas dev.js — 根目录 dev 启动入口 (= npx bin 入口)
  *
- * 仓库根 package.json#bin = "./cli.js", `npx github:user/repo` 调此文件.
+ * 仓库根 package.json#bin = "./dev.js", `npx github:user/repo` 调此文件.
+ *   启动 dev = 启动整个 numas (web + opencode), 一行命令用户无需关注子项目.
  *
  * 流程:
  *   1. 检查 web deps 完整性 (web/node_modules/.bin/webpack), 没装就 npm install
@@ -11,9 +12,13 @@
  *   4. 注入 env (APP_BASE_URL / OPENCODE_PORT / WEB_PORT) → spawn npm run dev
  *   5. 父进程 SIGINT/SIGTERM → kill 两组子进程 (opencode + webpack)
  *
+ * 命令行 flag (覆盖默认端口):
+ *   --server-port <n>    opencode 端口 (默认 24096)
+ *   --web-port <n>       webpack 端口 (默认 7788)
+ *
  * 设计: 单文件入口, 跨平台, 不依赖额外进程编排器.
  *   npx tarball 装 numas, deps 走 web/ 一次性 install (~30s 首次).
- *   进程树: cli.js → { opencode, webpack } (两个独立 detached 进程组).
+ *   进程树: dev.js → { opencode, webpack } (两个独立 detached 进程组).
  */
 
 const { spawn, spawnSync } = require('node:child_process');

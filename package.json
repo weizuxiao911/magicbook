@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "description": "Numas (牛马们) — 打工人首选工作模式 (npx github:weizuxiao911/numas)",
   "bin": {
-    "numas": "./cli.js"
+    "numas": "./dev.js"
   },
   "scripts": {
-    "dev": "node cli.js"
+    "dev": "node dev.js"
   },
   "dependencies": {
     "opencode-ai": "^1.18.11"

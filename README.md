@@ -10,14 +10,14 @@ graph TB
     Browser["浏览器 (web/)<br/>codeblitz 容器 + FsPty"]
     Opencode["opencode serve (24096)<br/>/api/fs/* + /api/pty + WS"]
     Registry["registry (7790)<br/>vsix 扩展分发 (代码保留, dev 不启)"]
-    Cli["cli.js (根 npx 入口)<br/>装 web deps + spawn npm run dev"]
+    Cli["dev.js (根 npx 入口)<br/>装 web deps + spawn npm run dev<br/>同步 spawn opencode serve"]
 
     Cli ==>|"spawn detached"| Browser
     Browser ==>|"webpack 内置启"| Opencode
     Browser -.->|"启动时拉 metadata"| Registry
 ```
 
-进程树: `cli.js → npm run dev → webpack → opencode` (同进程组, cli.js 退出时整组杀)。
+进程树: `dev.js → { opencode, webpack }` (两个独立 detached 进程组).
 
 ## 端口 (单一事实源: webpack env)
 
@@ -41,7 +41,9 @@ cd numas && npm install
 npm run dev
 ```
 
-`cli.js` 首次会:
+`dev.js` = npx 入口, 也可直接 `node dev.js` (跳过 npm 启动开销). 接受 flag:
+- `--server-port <n>` opencode 端口 (默认 24096)
+- `--web-port <n>` webpack 端口 (默认 7788)`dev.js` 首次会:
 1. 检查 `web/node_modules/.bin/webpack` — 没装则 `npm install --include=dev` (react + codeblitz + webpack)
 2. 检查 `web/node_modules/.bin/opencode` — 没装则 `npm install --no-save opencode-ai` (~50MB 二进制)
 3. spawn `npm run dev --prefix web` (detached + 进程组, 退出 cli 杀整组)
@@ -98,8 +100,8 @@ sequenceDiagram
 
 ```
 numas/
-├── cli.js              # npx 入口: 装 web deps + spawn npm run dev
-├── package.json        # bin: numas → ./cli.js
+├── dev.js              # npx 入口: 装 web deps + spawn opencode + npm run dev
+├── package.json        # bin: numas → ./dev.js
 ├── web/                # codeblitz 容器 + 8 service + 4 extension
 │   ├── webpack.config.js  # 内置启 opencode + 清理
 │   └── package.json
