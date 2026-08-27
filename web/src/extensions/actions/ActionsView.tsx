@@ -5,6 +5,8 @@ import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 import { PreferenceService } from '@opensumi/ide-core-browser/lib/preferences';
 import { PreferenceScope } from '@opensumi/ide-core-common/lib/preferences/preference-scope';
 
+import { getCwd, subscribeCwd } from '../../service/workspace';
+
 const THEME_DARK = 'opensumi-design-dark-theme';
 const THEME_LIGHT = 'opensumi-design-light-theme';
 const THEME_KEY = 'general.theme';
@@ -34,6 +36,22 @@ export const ActionsView: React.FC = () => {
     const cfg = (window as any).__APP_CONFIG__;
     return cfg?.chatConfig?.brand || { name: 'AI 工作台', logoChar: '' };
   }, []);
+
+  // 当前工作目录 (read-only 显示, 切换入口在 chat 输入框底部)
+  const [cwd, setCwd] = useState<string>(() => getCwd());
+  useEffect(() => {
+    const refresh = () => setCwd(getCwd());
+    const unsub = subscribeCwd(refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      unsub();
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+  const cwdName = useMemo(() => {
+    if (!cwd) return '未选择';
+    return cwd.split('/').filter(Boolean).pop() || cwd;
+  }, [cwd]);
 
   useEffect(() => {
     const current = preferenceService.get<string>(THEME_KEY, THEME_DARK);
@@ -212,12 +230,15 @@ export const ActionsView: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', height: '100%', padding: '0 12px', fontSize: 13 }}>
-      <span style={{
-        display: 'inline-flex', alignItems: 'center', gap: 10,
-        fontSize: 13, fontWeight: 700, letterSpacing: 0.2,
-        color: 'var(--editor-foreground, var(--vscode-editor-foreground, #e5e7eb))',
-        paddingLeft: 4, userSelect: 'none',
-      }}>
+      <span
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 10,
+          fontSize: 13, fontWeight: 700, letterSpacing: 0.2,
+          color: 'var(--editor-foreground, var(--vscode-editor-foreground, #e5e7eb))',
+          paddingLeft: 4, userSelect: 'none', cursor: 'default',
+        }}
+        title={cwd || '尚未选择工作目录'}
+      >
         {brand.logoChar ? (
           <span style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }}>{brand.logoChar}</span>
         ) : (
@@ -225,7 +246,9 @@ export const ActionsView: React.FC = () => {
             <path d="M5 6 L12 18 L19 6" />
           </svg>
         )}
-        {brand.name}
+        <span style={{
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 240,
+        }}>{cwdName}</span>
       </span>
       <span style={{ flex: 1 }} />
       <button type="button" title={isDark ? '切换到浅色主题' : '切换到深色主题'} onClick={toggleTheme} style={iconBtnStyle}>
