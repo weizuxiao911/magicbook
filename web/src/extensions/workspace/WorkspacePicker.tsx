@@ -166,6 +166,11 @@ export const WorkspacePicker: React.FC = () => {
   const confirm = useCallback(async (dir: string) => {
     setLoading(true);
     try {
+      // 当前已是同一目录, 只关 picker 不 reload (setCwd 对相同路径早返回会显得无反应)
+      if (effectiveCwd() === dir) {
+        setOpen(false);
+        return;
+      }
       // 唯一变更入口 (写 APP_CWD + recent + 派 workspace:changed + reload)
       setCwd(dir);
     } catch (e: any) { notifyError(e?.message || '切换失败'); }
@@ -341,7 +346,7 @@ export const WorkspacePicker: React.FC = () => {
             {selected ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>{selected}</span></>
               : <span style={{ color: 'var(--foreground,#666)' }}>选择一个目录</span>}
           </div>
-          <button type="button" className="wp-btn" onClick={() => selected && confirm(selected)} disabled={!selected || loading}>
+          <button type="button" className="wp-btn" onClick={() => confirm(selected || currentPath)} disabled={loading || !(selected || currentPath)}>
             {loading ? '切换中…' : '打开'}
           </button>
         </div>
