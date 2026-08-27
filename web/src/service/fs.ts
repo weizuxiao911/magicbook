@@ -274,6 +274,59 @@ let watcherStopped = false;
 let watcherCwd = '';
 let watcherStdoutBuf = '';
 let watcherFireFn: ((changes: Array<{ uri: string; type: FileChangeType }>) => void) | null = null;
+/** 已同步路径 → 内容 hash (fs.watch 事件对比: 一致 = 自己写/无变化, 跳过不 fire; 不一致 = 外部改, fire) */
+const watcherSyncedHashes = new Map<string, string | null>();
+
+/** 内容 hash (SHA-256 hex, 浏览器 crypto.subtle) */
+async function contentHash(bytes: Uint8Array): Promise<string> {
+  try {
+    const buf = await crypto.subtle.digest('SHA-256', bytes as unknown as ArrayBuffer);
+    return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch {
+    // crypto.subtle 不可用 (http 非 localhost) fallback: 简单 hash
+    let h = 0;
+    for (let i = 0; i < Math.min(bytes.length, 65536); i++) {
+      h = ((h << 5) - h + bytes[i]) | 0;
+    }
+    return `f${h}`;
+  }
+}
+
+/** 读路径内容 hash (浏览器 fs.read → SDK /file/content) */
+async function readPathHash(relPath: string): Promise<string | null> {
+  try {
+    const fsApi = (window as any).__APP_FS__;
+    if (!fsApi?.read) return null;
+    const bytes = await fsApi.read(relPath);
+    if (!bytes || bytes.length === 0) return await contentHash(new Uint8Array(0));
+    return await contentHash(bytes as Uint8Array);
+  } catch {
+    return null;  // 文件不存在 (删除/目录)
+  }
+}
+
+/** fs.write 成功后记录已同步 hash (从写的内容直接算, 不用再读) */
+function recordWriteHash(relPath: string, content: string | { base64: string }): void {
+  void (async () => {
+    let bytes: Uint8Array;
+    if (typeof content === 'string') {
+      bytes = new TextEncoder().encode(content);
+    } else {
+      // base64 → bytes
+      const b64 = content.base64.replace(/\s+/g, '');
+      const bin = atob(b64);
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    }
+    const h = await contentHash(bytes);
+    watcherSyncedHashes.set(relPath, h);
+  })();
+}
+
+/** fs.rm/rmdir/mkdirp 成功后记录 (文件不存在/目录 → null, 事件对比 null 一致跳过) */
+function recordRemoveHash(relPath: string): void {
+  watcherSyncedHashes.set(relPath, null);
+}
 
 export function bindWatcherFireFilesChange(fn: typeof watcherFireFn): void {
   watcherFireFn = fn;
@@ -342,10 +395,23 @@ function handleJsonObject(obj: any): void {
   const rawUri = `file://${WORKSPACE_ROOT}/${obj.p}`;
   const tmp = rawUri.replace('://', '\u0000\u0000\u0000').replace(/\/+/g, '/').replace('\u0000\u0000\u0000', '://');
   const uri = tmp;
-  console.log('[watcher] → fireFilesChange', uri, opencodeEvent);
-  if (watcherFireFn) {
-    watcherFireFn([{ uri, type: opencodeEvent }]);
-  }
+  // 内容 hash 对比: 自己写 (fs.write 记录 hash) / 无变化 → 跳过不 fire (断循环)
+  //   外部修改 → hash 不同 → fire + 更新已同步 hash
+  void (async () => {
+    const h = await readPathHash(obj.p);
+    const synced = watcherSyncedHashes.get(obj.p);
+    if (h === synced) {
+      // 一致: 自己写 / 内容没变 (或文件被删且我们自己删了) → 跳过
+      console.log('[watcher] skip (hash same)', obj.p, h);
+      return;
+    }
+    console.log('[watcher] → fireFilesChange', uri, opencodeEvent, { old: synced, now: h });
+    if (watcherFireFn) {
+      watcherFireFn([{ uri, type: opencodeEvent }]);
+    }
+    // 更新已同步 hash (文件存在 → hash; 不存在 → 空)
+    watcherSyncedHashes.set(obj.p, h ?? '');
+  })();
 }
 
 /**
@@ -759,7 +825,16 @@ export class FileSystemServiceImpl implements IFileSystem {
       entry = entries.find((e) => e.name === name);
     }
     if (!entry) throw new Error(`stat: not found ${idePath}`);
-    return { path: idePath, type: entry.type, size: 0 };
+    // size: OpenSumi checkInSync 用 stat.size === file.size 对比, 必须真实字节数 (文件; 目录 0)
+    //   SDK list 返 FileNode 无 size, 只能 read 一次拿长度 (缓存 read 结果)
+    let size = 0;
+    if (entry.type === 'file') {
+      try {
+        const bytes = await this.read(idePath);
+        size = bytes.length;
+      } catch { /* 读不到 size=0 */ }
+    }
+    return { path: idePath, type: entry.type, size };
   }
 
   async read(idePath: string): Promise<Uint8Array> {
@@ -848,6 +923,7 @@ export class FileSystemServiceImpl implements IFileSystem {
       const { ok } = await getFsPty().exec(ops.writeFile(abs, b64), this.writeTimeoutMs(b64.length));
       if (ok) {
         this.invalidateParent(idePath);
+        recordWriteHash(idePath.replace(/^\/+/, ''), content);
         onProgress?.(b64.length, b64.length);
       }
       return ok;
@@ -882,6 +958,7 @@ export class FileSystemServiceImpl implements IFileSystem {
       onProgress?.(Math.min(i + chunk.length, b64.length), b64.length);
     }
     this.invalidateParent(idePath);
+    recordWriteHash(idePath.replace(/^\/+/, ''), content);
     return true;
   }
 
@@ -893,21 +970,30 @@ export class FileSystemServiceImpl implements IFileSystem {
   async rm(idePath: string): Promise<boolean> {
     const ops = await this.ops();
     const { ok } = await getFsPty().exec(ops.rm(absPath(idePath)));
-    if (ok) this.invalidateParent(idePath);
+    if (ok) {
+      this.invalidateParent(idePath);
+      recordRemoveHash(idePath.replace(/^\/+/, ''));
+    }
     return ok;
   }
 
   async rmdir(idePath: string): Promise<boolean> {
     const ops = await this.ops();
     const { ok } = await getFsPty().exec(ops.rmdir(absPath(idePath)));
-    if (ok) this.invalidateParent(idePath);
+    if (ok) {
+      this.invalidateParent(idePath);
+      recordRemoveHash(idePath.replace(/^\/+/, ''));
+    }
     return ok;
   }
 
   async mkdirp(idePath: string): Promise<boolean> {
     const ops = await this.ops();
     const { ok } = await getFsPty().exec(ops.mkdirp(absPath(idePath)));
-    if (ok) this.invalidateParent(idePath);
+    if (ok) {
+      this.invalidateParent(idePath);
+      recordRemoveHash(idePath.replace(/^\/+/, ''));
+    }
     return ok;
   }
 
