@@ -887,8 +887,8 @@ export const Chat: React.FC = () => {
     setRows([]);
     // 切换后对账 busy (事件流可能有遗漏)
     void refreshSessionStatuses();
-    // 切完会话回 input, 继续输入
-    requestAnimationFrame(() => taRef.current?.focus());
+    // 切完会话回 input, 继续输入 (双 rAF 避开 React 提交 + Portal 卸载)
+    requestAnimationFrame(() => requestAnimationFrame(() => taRef.current?.focus()));
   }, [cleanupDraft, refreshSessionStatuses]);
 
   const onDeleteSession = useCallback(async (sid: string) => {
@@ -912,6 +912,8 @@ export const Chat: React.FC = () => {
     if (sessionID) {
       try { await aiSwitchAgent(sessionID, agent); } catch (e) { setApiError(e); }
     }
+    // 选完 agent 回 input 继续输入 (双 rAF 避开 React 提交 + Portal 卸载)
+    requestAnimationFrame(() => requestAnimationFrame(() => taRef.current?.focus()));
   }, [sessionID, setApiError]);
 
   const commandList = useMemo(() => {
@@ -1423,7 +1425,7 @@ export const Chat: React.FC = () => {
             onDelete={onDeleteSession}
             onClose={() => {
               setShowSessions(false);
-              requestAnimationFrame(() => taRef.current?.focus());
+              requestAnimationFrame(() => requestAnimationFrame(() => taRef.current?.focus()));
             }}
           />
         </Portal>
@@ -1434,7 +1436,10 @@ export const Chat: React.FC = () => {
           <SkillsModal
             skills={skills}
             onSelect={onSelectSkill}
-            onClose={() => setShowSkills(false)}
+            onClose={() => {
+              setShowSkills(false);
+              requestAnimationFrame(() => requestAnimationFrame(() => taRef.current?.focus()));
+            }}
           />
         </Portal>
       )}
@@ -1750,12 +1755,15 @@ export const Chat: React.FC = () => {
                       onSelect={(id, providerID) => {
                         setCurrentModel(id);
                         setCurrentProvider(providerID);
-                        modelPrefs.setDefault(id, providerID);
-                        setShowModels(false);
-                        // 选完模型回到 input, 光标放末尾继续输入
-                        requestAnimationFrame(() => taRef.current?.focus());
-                      }}
-                      onClose={() => setShowModels(false)}
+                         modelPrefs.setDefault(id, providerID);
+                         setShowModels(false);
+                         // 选完模型回到 input, 光标放末尾继续输入
+                         requestAnimationFrame(() => requestAnimationFrame(() => taRef.current?.focus()));
+                       }}
+                       onClose={() => {
+                         setShowModels(false);
+                         requestAnimationFrame(() => requestAnimationFrame(() => taRef.current?.focus()));
+                       }}
                       onProvidersChanged={async () => {
                         try {
                           const m = await aiListModels();
