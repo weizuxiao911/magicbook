@@ -1137,21 +1137,33 @@ export const Chat: React.FC = () => {
     await runClientCmd(c.cmd);
   }, [runClientCmd]);
 
+  /** 选中 popover item 后, 替换 input + 聚焦 + 光标移到末尾.
+   *  一次写完, 避免 setTimeout 0 在 Portal 点击后失效. */
+  const focusAndMoveCaretToEnd = useCallback((value: string) => {
+    const el = taRef.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    // 下一帧再设光标 (等 React 提交新 value 后)
+    requestAnimationFrame(() => {
+      const len = value.length;
+      try { el.setSelectionRange(len, len); } catch { /* ignore */ }
+    });
+  }, []);
+
   const applyMention = useCallback((m: { id: string; name: string; type: string }) => {
     const trigger = input.match(/[@#]\S*$/)?.[0]?.[0] || '@';
-    // agent / 目录 / 文件: 统一补全 (目录也补全路径)
     const replaced = input.replace(/[@#]\S*$/, `${trigger}${m.name} `);
     setInput(replaced);
     setShowMentions(false);
-    setTimeout(() => taRef.current?.focus(), 0);
-  }, [input]);
+    focusAndMoveCaretToEnd(replaced);
+  }, [input, focusAndMoveCaretToEnd]);
 
   const onSelectSkill = useCallback((s: { name: string; description?: string; location?: string }) => {
     const replaced = input.replace(/(?:^|\s)\/(\S*)$/, ` #${s.name} `);
     setInput(replaced);
     setShowSkills(false);
-    setTimeout(() => taRef.current?.focus(), 0);
-  }, [input]);
+    focusAndMoveCaretToEnd(replaced);
+  }, [input, focusAndMoveCaretToEnd]);
 
   const onReplyQuestion = useCallback(async (sid: string, rid: string, answers: string[][]) => {
     await aiReplyQuestion(sid, rid, answers);
