@@ -260,9 +260,9 @@ function getFsPty(): FsPty {
 // 兜底: cwd 不存在/启不动 → console.warn 不阻塞 setCwd, 依赖 opencode SSE 兜底 (fs.ts 暂未删 file.* 处理).
 /** 1 + 2 + 4 + 8 = 1|2|4|8 fs.ts 里 OpenSumi 用的 FileChangeType 编码 (ADDED=1 UPDATED=2 DELETED=3) */
 const TYPE_MAP: Record<string, FileChangeType> = {
-  add: 1 as FileChangeType,
-  change: 2 as FileChangeType,
-  unlink: 3 as FileChangeType,
+  add: FileChangeType.ADDED,
+  change: FileChangeType.UPDATED,
+  unlink: FileChangeType.DELETED,
 };
 
 let watcherPtyId: string | null = null;
@@ -275,6 +275,70 @@ let watcherFireFn: ((changes: Array<{ uri: string; type: FileChangeType }>) => v
 
 export function bindWatcherFireFilesChange(fn: typeof watcherFireFn): void {
   watcherFireFn = fn;
+}
+
+/** brace matching 增量 JSON 解析: 一个 ws 帧可能含多个 JSON object 拼一起
+ *  ({"cursor":0}{"e":"rename","p":"a"}{"e":"change","p":"b"})
+ *  也可能一个 object 跨两个 ws 帧 — 不完整时 rest 保留等下次
+ *  考虑 string 内的引号 / 反斜杠, 不被误判 brace
+ */
+function extractJsonObjects(buf: string): { objects: any[]; rest: string } {
+  const objects: any[] = [];
+  let i = 0;
+  while (i < buf.length) {
+    const start = buf.indexOf('{', i);
+    if (start < 0) break;
+    let depth = 0;
+    let end = -1;
+    let inStr = false;
+    let escape = false;
+    for (let j = start; j < buf.length; j++) {
+      const c = buf[j];
+      if (escape) { escape = false; continue; }
+      if (c === '\\') { escape = true; continue; }
+      if (c === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (c === '{') depth++;
+      else if (c === '}') {
+        depth--;
+        if (depth === 0) { end = j; break; }
+      }
+    }
+    if (end < 0) break;  // 不完整, 等更多数据
+    const sub = buf.slice(start, end + 1);
+    try {
+      const obj = JSON.parse(sub);
+      if (obj && typeof obj === 'object') objects.push(obj);
+    } catch (e: any) {
+      console.warn('[watcher] JSON parse fail:', sub, e?.message ?? String(e));
+    }
+    i = end + 1;
+  }
+  return { objects, rest: buf.slice(i) };
+}
+
+/** 处理单个 JSON object: opencode pty 控制帧 (cursor/resize/method) 忽略, 其余作 fs event */
+function handleJsonObject(obj: any): void {
+  if (!obj || typeof obj !== 'object') return;
+  if ('cursor' in obj || obj.type === 'cursor' || obj.type === 'resize' || 'method' in obj) return;
+  if (typeof obj.e !== 'string' || typeof obj.p !== 'string') return;
+  // fs.watch → OpenSumi 事件类型转换:
+  //   node:fs.watch (跨平台) 的 'rename' 事件语义是 "路径节点被重命名/创建/删除",
+  //   filename 是否存在区分 add/unlink; 这里不 stat 判定, 统一当 UPDATED (OpenSumi 会重新 stat 同步)
+  //   之后可加 stat 优化, 但 'change' / 'add' / 'unlink' 直接映射 TYPE_MAP
+  let opencodeEvent: FileChangeType;
+  if (obj.e === 'rename') {
+    opencodeEvent = FileChangeType.UPDATED;
+  } else {
+    const t = TYPE_MAP[obj.e];
+    if (t === undefined) { console.log('[watcher] unknown event type:', obj.e); return; }
+    opencodeEvent = t;
+  }
+  const uri = `file://${WORKSPACE_ROOT}/${obj.p}`.replace(/\/+/g, '/');
+  console.log('[watcher] → fireFilesChange', uri, opencodeEvent);
+  if (watcherFireFn) {
+    watcherFireFn([{ uri, type: opencodeEvent }]);
+  }
 }
 
 /**
@@ -304,30 +368,29 @@ export async function startFsWatcher(cwd: string): Promise<void> {
 
   watcherCwd = cwd;
   watcherStopped = false;
-  // inline node 脚本: fs.watch recursive=true, 监听 cwd
-  const nodeScript = `
-const fs = require('node:fs');
-const path = require('node:path');
-const ROOT = process.argv[1];
-let bufWatchers = [];
-try {
-  const w = fs.watch(ROOT, { recursive: true, persistent: true }, (event, filename) => {
-    const rel = filename || '';
-    try { process.stdout.write(JSON.stringify({ e: event, p: rel }) + '\\n'); } catch {}
-  });
-  bufWatchers.push(w);
-} catch (e) {
-  process.stderr.write('watcher err: ' + e.message + '\\n');
-}
-process.on('SIGTERM', () => { try { bufWatchers.forEach(w => w.close()); } catch {} process.exit(0); });
-process.on('SIGINT',  () => { try { bufWatchers.forEach(w => w.close()); } catch {} process.exit(0); });
-`.trim();
-  const command = ['node', '-e', nodeScript, cwd];
+  // node 脚本 (单行无 ' " \n, 用 \x27 替代单引号避免 shell 拆 arg)
+  const nodeScript = [
+    "const fs=require(\"node:fs\");",
+    "const ROOT=process.argv[1];",
+    "let ws=[];",
+    "try{",
+    "  const w=fs.watch(ROOT,{recursive:true,persistent:true},(e,f)=>{",
+    "    const rel=f||\"\";",
+    "    try{process.stdout.write(JSON.stringify({e,p:rel})+\"\\n\");}catch{}",
+    "  });",
+    "  ws.push(w);",
+    "}catch(e){process.stderr.write(\"watcher err: \"+e.message+\"\\n\");}",
+    "process.on(\"SIGTERM\",()=>{try{ws.forEach(w=>w.close());}catch{}process.exit(0);});",
+    "process.on(\"SIGINT\",()=>{try{ws.forEach(w=>w.close());}catch{}process.exit(0);});",
+  ].join('');
+  // command 单 word, args 数组传参数 (跟 terminal.ts 一样, opencode /pty 接受 args 数组)
+  const command = 'node';
+  const args = ['-e', nodeScript, cwd];
   console.log('[watcher] start, cwd=', cwd);
 
   try {
     const sdk = createOpencodeClient({ baseUrl: base, headers: cwdHeader(), responseStyle: 'fields', throwOnError: true });
-    const { data, error } = await sdk.pty.create({ directory: cwd, command: command.join(' '), cwd });
+    const { data, error } = await sdk.pty.create({ directory: cwd, command, args, cwd });
     if (error || !data) {
       console.warn('[watcher] pty.create failed:', (error as any)?.message);
       scheduleWatcherRetry();
@@ -349,14 +412,30 @@ process.on('SIGINT',  () => { try { bufWatchers.forEach(w => w.close()); } catch
       socket.onopen = () => { clearTimeout(timer); console.log('[watcher] ws open'); resolve(); };
       socket.onerror = (e) => { clearTimeout(timer); reject(new Error('watcher ws connect error')); };
     });
-    socket.onmessage = (msg) => {
-      watcherStdoutBuf += String(msg.data || '');
-      let nl = watcherStdoutBuf.indexOf('\n');
-      while (nl >= 0) {
-        const line = watcherStdoutBuf.slice(0, nl).trim();
-        watcherStdoutBuf = watcherStdoutBuf.slice(nl + 1);
-        handleWatcherLine(line);
-        nl = watcherStdoutBuf.indexOf('\n');
+    socket.onmessage = async (msg) => {
+      // msg.data 类型: string (text frame) | Blob (binary frame default) | ArrayBuffer
+      // Blob 要用 .text() 读真实字符串; ArrayBuffer 用 TextDecoder; string 直接用
+      let chunk: string;
+      const data: any = msg.data;
+      if (typeof data === 'string') {
+        chunk = data;
+      } else if (data instanceof Blob) {
+        chunk = await data.text();
+      } else if (data instanceof ArrayBuffer) {
+        chunk = new TextDecoder().decode(data);
+      } else {
+        console.log('[watcher] ws msg unknown type:', typeof data);
+        return;
+      }
+      console.log('[watcher] ws msg chunk:', JSON.stringify(chunk).slice(0, 300));
+      watcherStdoutBuf += chunk;
+      // brace matching 增量解析: 一个 ws 帧可能含多个 JSON object 拼一起
+      // ({"cursor":0}{"e":"rename","p":"a"}{"e":"change","p":"b"})
+      // 也可能一个 object 跨两个 ws 帧 — 不完整时等下次
+      const { objects, rest } = extractJsonObjects(watcherStdoutBuf);
+      watcherStdoutBuf = rest;
+      for (const obj of objects) {
+        handleJsonObject(obj);
       }
     };
     socket.onclose = (ev) => {
@@ -370,19 +449,6 @@ process.on('SIGINT',  () => { try { bufWatchers.forEach(w => w.close()); } catch
   } catch (e: any) {
     console.warn('[watcher] start failed:', e?.message);
     scheduleWatcherRetry();
-  }
-}
-
-function handleWatcherLine(line: string): void {
-  if (!line) return;
-  let evt: { e: string; p: string };
-  try { evt = JSON.parse(line); } catch { return; }
-  if (!evt.e || !evt.p) return;
-  const type = TYPE_MAP[evt.e];
-  if (type === undefined) return;
-  const uri = `file://${WORKSPACE_ROOT}/${evt.p}`.replace(/\/+/g, '/');
-  if (watcherFireFn) {
-    watcherFireFn([{ uri, type }]);
   }
 }
 
@@ -582,14 +648,34 @@ export class FileSystemServiceImpl implements IFileSystem {
     try {
       const client = this.ensureClient();
       const events = await client.event.subscribe(undefined, { signal: abort.signal });
-      console.log('[filesystem] event.subscribe ok (非 fs 事件保留通道)');
+      console.log('[filesystem] event.subscribe ok');
+      const typeMap: Record<string, FileChangeType> = {
+        add: FileChangeType.ADDED,
+        change: FileChangeType.UPDATED,
+        unlink: FileChangeType.DELETED,
+      };
       for await (const evt of events.stream) {
         const t = (evt as any).type as string;
         if (!t) continue;
-        // 跳过 file.* 事件 (PTY watcher 接管)
-        if (t === 'file.edited' || t === 'file.watcher.updated') continue;
-        // 其他事件类型 (message.* / a2ui.* / ...) 当前不处理, 仅 log 留扩展点
-        console.log('[filesystem] event:', t, (evt as any).properties);
+        // 处理 file.* 事件: opencode 自身操作(写/读/删通过 opencode 走)→ fireFilesChange
+        //   PTY watcher 覆盖外部修改; 两者都 fireFilesChange, OpenSumi 内部去重
+        let changeType: string | null = null;
+        let relPath = '';
+        if (t === 'file.edited') {
+          changeType = 'change';
+          relPath = ((evt as any).properties?.file || '').toString();
+        } else if (t === 'file.watcher.updated') {
+          changeType = ((evt as any).properties?.event || '').toString();
+          relPath = ((evt as any).properties?.file || '').toString();
+        }
+        if (!changeType || !relPath) continue;
+        const rel = relPath.startsWith('/') ? relPath : `/${relPath}`;
+        const uri = `file://${WORKSPACE_ROOT}${rel}`;
+        console.log('[filesystem] fs event:', t, rel, '→ fireFilesChange', uri);
+        this.fileService.fireFilesChange({
+          changes: [{ uri, type: typeMap[changeType] ?? FileChangeType.UPDATED }],
+        });
+        window.dispatchEvent(new CustomEvent('fs:changed', { detail: { type: changeType, path: rel } }));
       }
     } catch (e) {
       if ((e as Error)?.name !== 'AbortError') {

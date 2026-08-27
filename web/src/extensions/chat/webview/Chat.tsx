@@ -198,7 +198,7 @@ export const Chat: React.FC = () => {
     };
   }, []);
   const wsName = useMemo(() => {
-    if (!wsCwd) return '未选择';
+    if (!wsCwd) return '选择工作目录';
     return wsCwd.split('/').filter(Boolean).pop() || wsCwd;
   }, [wsCwd]);
 
