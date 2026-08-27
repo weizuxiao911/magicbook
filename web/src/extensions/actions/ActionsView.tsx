@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { SlotLocation } from '@opensumi/ide-core-browser';
 import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/injectable-hooks';
 import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
@@ -40,7 +41,9 @@ export const ActionsView: React.FC = () => {
   const [cwd, setCwd] = useState<string>(() => effectiveCwd());
   const [recent, setRecent] = useState<string[]>(() => getRecent());
   const [wsOpen, setWsOpen] = useState(false);
-  const wsRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [btnRect, setBtnRect] = useState<{ left: number; top: number; bottom: number } | null>(null);
   useEffect(() => {
     const refresh = () => {
       setCwd(effectiveCwd());
@@ -56,11 +59,29 @@ export const ActionsView: React.FC = () => {
   }, []);
   useEffect(() => {
     if (!wsOpen) return;
+    // 重新计算按钮位置 (responsive: resize/scroll 后菜单位置跟着按钮)
+    const updateRect = () => {
+      if (btnRef.current) {
+        const r = btnRef.current.getBoundingClientRect();
+        setBtnRect({ left: r.left, top: r.top, bottom: r.bottom });
+      }
+    };
+    updateRect();
+    window.addEventListener('resize', updateRect);
+    window.addEventListener('scroll', updateRect, true);
+    // outside click 走 document.mousedown: 同时检查按钮 (在 top slot) 和菜单 (在 body, portal)
     const onDown = (e: MouseEvent) => {
-      if (wsRef.current && !wsRef.current.contains(e.target as Node)) setWsOpen(false);
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t)) return;
+      if (menuRef.current?.contains(t)) return;
+      setWsOpen(false);
     };
     document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('resize', updateRect);
+      window.removeEventListener('scroll', updateRect, true);
+      document.removeEventListener('mousedown', onDown);
+    };
   }, [wsOpen]);
 
   const workspaceName = useMemo(() => {
@@ -274,134 +295,138 @@ export const ActionsView: React.FC = () => {
     </svg>
   );
 
+  const menu = wsOpen && btnRect ? (
+    <div
+      ref={menuRef}
+      role="menu"
+      onMouseDown={(e) => e.stopPropagation()}
+      style={{
+        position: 'fixed',
+        left: btnRect.left,
+        top: btnRect.bottom + 6,
+        minWidth: 320, maxWidth: 480,
+        background: 'var(--editor-background, #1e1e2e)',
+        border: '1px solid var(--widget-border, rgba(255,255,255,0.12))',
+        borderRadius: 8, boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+        padding: 6, zIndex: 9000,
+        color: 'var(--editor-foreground, #e5e7eb)',
+      }}
+    >
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+        borderRadius: 6, background: 'rgba(255,255,255,0.03)', marginBottom: 4,
+      }}>
+        <span style={{ color: 'var(--focus-border, #6366f1)', display: 'inline-flex' }}><FolderOpenIcon /></span>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {workspaceName || '尚未选择'}
+          </div>
+          <div style={{
+            fontSize: 11, color: 'var(--foreground, #888)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }} title={cwd || ''}>
+            {cwd || '在工作目录面板选择目录后这里会显示路径'}
+          </div>
+        </div>
+      </div>
+      {recent.length > 0 && (
+        <>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '6px 10px 4px', fontSize: 10, fontWeight: 600,
+            color: 'var(--foreground, #888)', textTransform: 'uppercase', letterSpacing: 0.5,
+          }}>
+            <HistoryIcon /> 最近
+          </div>
+          {recent
+            .filter((p) => p !== cwd)
+            .slice(0, 5)
+            .map((p) => {
+              const name = p.split('/').filter(Boolean).pop() || p;
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { setWsOpen(false); switchToRecent(p); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                    padding: '6px 10px', background: 'none', border: 'none',
+                    borderRadius: 5, cursor: 'pointer', textAlign: 'left',
+                    color: 'var(--editor-foreground, #e5e7eb)', fontSize: 12,
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                  title={p}
+                >
+                  <span style={{ color: 'var(--foreground, #888)', display: 'inline-flex' }}><FolderIcon /></span>
+                  <span style={{ fontWeight: 500, flexShrink: 0 }}>{name}</span>
+                  <span style={{
+                    color: 'var(--foreground, #666)', fontSize: 11,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    direction: 'rtl', textAlign: 'left', minWidth: 0, flex: 1, marginLeft: 6,
+                  }}>{p}</span>
+                </button>
+              );
+            })}
+          <div style={{ height: 1, background: 'var(--widget-border, rgba(255,255,255,0.08))', margin: '6px 4px' }} />
+        </>
+      )}
+      <button
+        type="button"
+        role="menuitem"
+        onClick={openPicker}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+          padding: '8px 10px', background: 'none', border: 'none',
+          borderRadius: 5, cursor: 'pointer', textAlign: 'left',
+          color: 'var(--editor-foreground, #e5e7eb)', fontSize: 12, fontWeight: 500,
+        }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(99,102,241,0.18)'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+      >
+        <span style={{ color: 'var(--focus-border, #6366f1)', display: 'inline-flex' }}><FolderOpenIcon /></span>
+        <span>选择其他工作目录...</span>
+      </button>
+    </div>
+  ) : null;
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', height: '100%', padding: '0 12px', fontSize: 13 }}>
-      <div ref={wsRef} style={{ position: 'relative' }}>
-        <button
-          type="button"
-          title={cwd || '打开工作目录'}
-          onClick={() => setWsOpen((v) => !v)}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            height: 28, padding: '0 8px',
-            background: wsOpen ? 'rgba(255,255,255,0.06)' : 'transparent',
-            border: 'none', borderRadius: 6, cursor: 'pointer',
-            color: cwd
-              ? 'var(--editor-foreground, var(--vscode-editor-foreground, #e5e7eb))'
-              : 'var(--foreground, #999)',
-            fontSize: 13, fontWeight: 600, letterSpacing: 0.2,
-            maxWidth: 320, userSelect: 'none',
-          }}
-          onMouseEnter={(e) => { if (!wsOpen) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)'; }}
-          onMouseLeave={(e) => { if (!wsOpen) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-        >
-          {brand.logoChar ? (
-            <span style={{ display: 'inline-flex', width: 18, height: 18, alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>{brand.logoChar}</span>
-          ) : (
-            <FolderIcon size={14} />
-          )}
-          <span style={{
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 240,
-          }}>
-            {workspaceName || '打开工作目录'}
-          </span>
-          <span style={{ display: 'inline-flex', opacity: 0.7, marginLeft: 2 }}>
-            <ChevronDown />
-          </span>
-        </button>
-        {wsOpen && (
-          <div
-            role="menu"
-            onMouseDown={(e) => e.stopPropagation()}
-            style={{
-              position: 'absolute', top: 'calc(100% + 6px)', left: 0,
-              minWidth: 320, maxWidth: 480,
-              background: 'var(--editor-background, #1e1e2e)',
-              border: '1px solid var(--widget-border, rgba(255,255,255,0.12))',
-              borderRadius: 8, boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-              padding: 6, zIndex: 9000,
-              color: 'var(--editor-foreground, #e5e7eb)',
-            }}
-          >
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
-              borderRadius: 6, background: 'rgba(255,255,255,0.03)', marginBottom: 4,
-            }}>
-              <span style={{ color: 'var(--focus-border, #6366f1)', display: 'inline-flex' }}><FolderOpenIcon /></span>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {workspaceName || '尚未选择'}
-                </div>
-                <div style={{
-                  fontSize: 11, color: 'var(--foreground, #888)',
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }} title={cwd || ''}>
-                  {cwd || '在工作目录面板选择目录后这里会显示路径'}
-                </div>
-              </div>
-            </div>
-            {recent.length > 0 && (
-              <>
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '6px 10px 4px', fontSize: 10, fontWeight: 600,
-                  color: 'var(--foreground, #888)', textTransform: 'uppercase', letterSpacing: 0.5,
-                }}>
-                  <HistoryIcon /> 最近
-                </div>
-                {recent
-                  .filter((p) => p !== cwd)
-                  .slice(0, 5)
-                  .map((p) => {
-                    const name = p.split('/').filter(Boolean).pop() || p;
-                    return (
-                      <button
-                        key={p}
-                        type="button"
-                        role="menuitem"
-                        onClick={() => { setWsOpen(false); switchToRecent(p); }}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                          padding: '6px 10px', background: 'none', border: 'none',
-                          borderRadius: 5, cursor: 'pointer', textAlign: 'left',
-                          color: 'var(--editor-foreground, #e5e7eb)', fontSize: 12,
-                        }}
-                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'; }}
-                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-                        title={p}
-                      >
-                        <span style={{ color: 'var(--foreground, #888)', display: 'inline-flex' }}><FolderIcon /></span>
-                        <span style={{ fontWeight: 500, flexShrink: 0 }}>{name}</span>
-                        <span style={{
-                          color: 'var(--foreground, #666)', fontSize: 11,
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          direction: 'rtl', textAlign: 'left', minWidth: 0, flex: 1, marginLeft: 6,
-                        }}>{p}</span>
-                      </button>
-                    );
-                  })}
-                <div style={{ height: 1, background: 'var(--widget-border, rgba(255,255,255,0.08))', margin: '6px 4px' }} />
-              </>
-            )}
-            <button
-              type="button"
-              role="menuitem"
-              onClick={openPicker}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                padding: '8px 10px', background: 'none', border: 'none',
-                borderRadius: 5, cursor: 'pointer', textAlign: 'left',
-                color: 'var(--editor-foreground, #e5e7eb)', fontSize: 12, fontWeight: 500,
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(99,102,241,0.18)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-            >
-              <span style={{ color: 'var(--focus-border, #6366f1)', display: 'inline-flex' }}><FolderOpenIcon /></span>
-              <span>选择其他工作目录...</span>
-            </button>
-          </div>
+      <button
+        ref={btnRef}
+        type="button"
+        title={cwd || '打开工作目录'}
+        onClick={() => setWsOpen((v) => !v)}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          height: 28, padding: '0 8px',
+          background: wsOpen ? 'rgba(255,255,255,0.06)' : 'transparent',
+          border: 'none', borderRadius: 6, cursor: 'pointer',
+          color: cwd
+            ? 'var(--editor-foreground, var(--vscode-editor-foreground, #e5e7eb))'
+            : 'var(--foreground, #999)',
+          fontSize: 13, fontWeight: 600, letterSpacing: 0.2,
+          maxWidth: 320, userSelect: 'none',
+        }}
+        onMouseEnter={(e) => { if (!wsOpen) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)'; }}
+        onMouseLeave={(e) => { if (!wsOpen) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+      >
+        {brand.logoChar ? (
+          <span style={{ display: 'inline-flex', width: 18, height: 18, alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>{brand.logoChar}</span>
+        ) : (
+          <FolderIcon size={14} />
         )}
-      </div>
+        <span style={{
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 240,
+        }}>
+          {workspaceName || '打开工作目录'}
+        </span>
+        <span style={{ display: 'inline-flex', opacity: 0.7, marginLeft: 2 }}>
+          <ChevronDown />
+        </span>
+      </button>
+      {typeof document !== 'undefined' && createPortal(menu, document.body)}
       <span style={{ flex: 1 }} />
       <button type="button" title={isDark ? '切换到浅色主题' : '切换到深色主题'} onClick={toggleTheme} style={iconBtnStyle}>
         {isDark ? <SunIcon /> : <MoonIcon />}
