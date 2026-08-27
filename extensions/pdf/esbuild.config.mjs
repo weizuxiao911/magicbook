@@ -8,7 +8,7 @@ await esbuild.build({
   format: 'cjs',
   platform: 'browser',
   target: 'es2020',
-  sourcemap: false,
+  sourcemap: true,
   minify: true,
   keepNames: true,
   tsconfig: 'tsconfig.json',

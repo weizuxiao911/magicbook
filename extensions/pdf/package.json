@@ -27,7 +27,7 @@
             "filenamePattern": "*.pdf"
           }
         ],
-        "priority": "option"
+        "priority": "default"
       }
     ],
     "languages": [

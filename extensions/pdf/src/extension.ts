@@ -15,10 +15,15 @@ export const PDF_VIEW_TYPE = 'pdfViewer'
  *   5. opensumi webview 的 base url 是 vscode-resource, PDF.js worker 路径处理
  */
 export function activate(context: vscode.ExtensionContext) {
-  console.log('[pdf] activate (vsix)', context)
+  console.log('[pdf] context', context)
 
   const provider: vscode.CustomTextEditorProvider = {
     async resolveCustomTextEditor(document, webviewPanel, _token) {
+
+      console.log('[pdf] window:', window)
+      console.log('[pdf] document:', document)
+      console.log('[pdf] webviewPanel:', webviewPanel)
+      console.log('[pdf] _token:', _token)
       const uri = document.uri.toString()
       console.log('[pdf] resolve:', uri)
       webviewPanel.webview.options = { enableScripts: true, retainContextWhenHidden: true }
@@ -29,80 +34,46 @@ export function activate(context: vscode.ExtensionContext) {
         ((window as any).__APP_REGISTRY_RUNTIME__?.baseUrl as string | undefined) ||
         'http://localhost:7790'
 
-      // 2) PDF bytes: ext host 端 vscode.workspace.fs.readFile 拿 Uint8Array → base64 inline 到 webview html
-      //    (反向 postMessage webview→ext host 在 opensumi srcdoc iframe 不通, window.parent 跨 sandbox 也不稳)
+      // 2) 读 PDF 字节: 之前 vscode.workspace.fs.readFile 在 ext host worker 端 'fs' undefined fail.
+      //    改走 web 容器 service/fs.read 路径 (走 fetch opencode SDK, ext host 端 fetch OK, CORS pre-config).
+      //    web 容器 host API: 拿 baseUrl + cwd, 直接 fetch /file/content, 拿 { type, content, encoding, mimeType }.
       const name = (document.uri?.fsPath || '').split(/[\\/]/).pop() || 'document.pdf'
+      const ocBase = ((window as any).__APP_OPENCODE_RUNTIME__?.baseUrl as string | undefined) || ''
+      const cwdForFs = (() => { try { return localStorage.getItem('APP_CWD') || '' } catch { return '' } })()
+      const pathParam = (() => {
+        const fsPath = document.uri?.fsPath || ''
+        const rootName = cwdForFs.split('/').pop() || ''
+        if (rootName && fsPath.includes(`/workspace/${rootName}/`)) {
+          return fsPath.split(`/workspace/${rootName}/`)[1] || ''
+        }
+        if (cwdForFs && fsPath.startsWith(cwdForFs + '/')) {
+          return fsPath.slice(cwdForFs.length + 1)
+        }
+        return fsPath.split('/').pop() || ''
+      })()
       let pdfBase64 = ''
       let readErr: string | null = null
       try {
-        const bytes = await vscode.workspace.fs.readFile(document.uri)
-        console.log('[pdf]   readFile ok:', document.uri.toString(), 'bytes=', bytes.byteLength)
-        // chunked btoa (整串 btoa 30MB 字符串爆, 分块每 ~32KB)
-        let bin = ''
-        const chunk = 0x8000
-        for (let i = 0; i < bytes.length; i += chunk) {
-          // 不用 String.fromCharCode.apply (爆栈), 用循环 push charCodeAt
-          let s = ''
-          const end = Math.min(i + chunk, bytes.length)
-          for (let j = i; j < end; j++) s += String.fromCharCode(bytes[j])
-          bin += s
+        const apiUrl = `${ocBase}/file/content?path=${encodeURIComponent(pathParam)}&directory=${encodeURIComponent(cwdForFs)}`
+        const r = await fetch(apiUrl)
+        if (!r.ok) throw new Error(`opencode /file/content ${r.status}`)
+        const data: any = await r.json()
+        console.log('[pdf]   file/content ok:', pathParam, 'type=', data.type, 'len=', data.content?.length, 'encoding=', data.encoding)
+        if (data.type === 'binary' && data.encoding === 'base64') {
+          pdfBase64 = data.content
+        } else {
+          // 文本 (不该是 PDF, 但兜底)
+          pdfBase64 = btoa(unescape(encodeURIComponent(data.content || '')))
         }
-        // 分块 btoa (每 ~30KB, 避免 btoa 内部 buffer 限制)
-        let b64 = ''
-        const b64Chunk = 0x8000
-        for (let i = 0; i < bin.length; i += b64Chunk) {
-          b64 += btoa(bin.substr(i, b64Chunk))
-        }
-        pdfBase64 = b64
         console.log('[pdf]   base64 ok, len=', pdfBase64.length)
       } catch (e: any) {
-        console.error('[pdf]   readFile/base64 failed:', e?.message)
+        console.error('[pdf]   readFile failed:', e?.message)
         readErr = e?.message || String(e)
       }
+      webviewPanel.webview.html = buildHtml(registryBase, name, pdfBase64, readErr)
+      console.log('[pdf]   html 长度:', webviewPanel.webview.html.length)
 
-      // 3) webview html 模板 (pdfjs 走 registry 自包含, PDF bytes inline base64)
-      const html = buildHtml(registryBase, name, pdfBase64, readErr)
-      console.log('[pdf]   html 长度:', html.length, 'preview:', html.substring(0, 200))
-
-      // 3) 多档重试 push (参照 paper 模式, 避 opensumi webview 监听窗口)
-      const pushes: ReturnType<typeof setTimeout>[] = []
-      const push = (b64: string = pdfBase64, err: string | null = readErr) => {
-        pushes.forEach(clearTimeout)
-        pushes.length = 0
-        const html = buildHtml(registryBase, name, b64, err)
-        ;[0, 200, 800, 2000, 5000].forEach((d) => pushes.push(setTimeout(() => {
-          try { webviewPanel.webview.html = html } catch (e) { console.warn('[pdf]   push html fail @', d, e) }
-        }, d)))
-      }
-      push()
-
-      // 4) 文件变化重渲 (重新 readFile 拿最新 bytes → 重新 push html)
-      const changeSub = vscode.workspace.onDidChangeTextDocument(async (e) => {
-        if (e.document === document) {
-          try {
-            const bytes = await vscode.workspace.fs.readFile(document.uri)
-            let bin = ''
-            const chunk = 0x8000
-            for (let i = 0; i < bytes.length; i += chunk) {
-              bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk) as any)
-            }
-            const b64 = btoa(bin)
-            push(b64, null)
-          } catch (e: any) {
-            push('', e?.message || String(e))
-          }
-        }
-      })
-      const reqSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
-        if (msg?.type === 'ready') {
-          console.log('[pdf]   webview ready 消息, 重新 push')
-          push()
-        }
-      })
       webviewPanel.onDidDispose(() => {
-        pushes.forEach(clearTimeout)
-        reqSub.dispose()
-        changeSub.dispose()
         console.log('[pdf]   dispose:', uri)
       })
     },
@@ -201,9 +172,9 @@ async function readPdfViaPty(base: string, cwd: string, absPath: string): Promis
   }
 }
 
-function buildHtml(registryBase: string, name: string, pdfBase64: string, readErr: string | null): string {
+function buildHtml(registryBase: string, name: string, vsixFsJson: string): string {
   // pdfjs 资源走 registry 自包含 (registry/vsix/numas.pdf-0.1.0/pdfjs/*), 不依赖 cdn
-  // PDF bytes 通过 ext host inline base64 (反向 postMessage 在 opensumi srcdoc iframe 不通, window.parent 跨 sandbox 不稳)
+  // 试把 vscode.workspace.fs (JSON 序列化字符串) 给 webview, 测 webview 端能否拿到
   const pdfjsBase = `${registryBase.replace(/\/+$/, '')}/numas.pdf-0.1.0/pdfjs`
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -243,11 +214,6 @@ function buildHtml(registryBase: string, name: string, pdfBase64: string, readEr
 </div>
 <script>
 (function(){
-  // ext host inline 的 PDF base64 (反向 postMessage 在 opensumi srcdoc iframe 不通)
-  const PDF_B64 = ${JSON.stringify(pdfBase64)};
-  const READ_ERR = ${JSON.stringify(readErr)};
-  const FILE_NAME = ${JSON.stringify(name)};
-  const PDFJS_BASE = ${JSON.stringify(pdfjsBase)};
 
   function setStatus(s){document.getElementById('info').textContent=s;}
 
@@ -273,92 +239,40 @@ function buildHtml(registryBase: string, name: string, pdfBase64: string, readEr
     });
   }
 
-  // base64 → Uint8Array (chunked, 避免 apply 栈溢出)
-  function b64ToBytes(b64) {
-    const bin = atob(b64);
-    const len = bin.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
-    return bytes;
-  }
-
-  let pdf = null;
-  let scale = 1.0;
-  let current = 1;
-  const viewport = document.getElementById('viewport');
-
-  async function renderAll(){
-    viewport.innerHTML = '';
-    const total = pdf.numPages;
-    for (let n = 1; n <= total; n++) {
-      const page = await pdf.getPage(n);
-      const v1 = page.getViewport({ scale: 1 });
-      const fitScale = (viewport.clientWidth - 24) / v1.width;
-      const vp = page.getViewport({ scale: fitScale });
-      const dpr = window.devicePixelRatio || 1;
-      const rvp = page.getViewport({ scale: fitScale * dpr });
-      const canvas = document.createElement('canvas');
-      canvas.className = 'page';
-      canvas.width = rvp.width; canvas.height = rvp.height;
-      canvas.style.width = vp.width + 'px'; canvas.style.height = vp.height + 'px';
-      viewport.appendChild(canvas);
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport: rvp }).promise;
-      document.getElementById('cur').textContent = String(n);
-    }
-  }
-  function bind(){
-    document.getElementById('prev').onclick = () => goto(Math.max(1, current - 1));
-    document.getElementById('next').onclick = () => goto(Math.min(pdf.numPages, current + 1));
-    document.getElementById('zoom-in').onclick = () => { scale = Math.min(4, scale * 1.25); refresh(); };
-    document.getElementById('zoom-out').onclick = () => { scale = Math.max(0.25, scale / 1.25); refresh(); };
-    document.getElementById('fit').onclick = () => { scale = 1.0; renderAll(); };
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'PageDown' || e.key === ' ') { goto(Math.min(pdf.numPages, current + 1)); e.preventDefault(); }
-      else if (e.key === 'PageUp') { goto(Math.max(1, current - 1)); e.preventDefault(); }
-      else if (e.key === 'Home') goto(1);
-      else if (e.key === 'End') goto(pdf.numPages);
-    });
-  }
-  function goto(n){
-    if (n === current) return;
-    current = n;
-    document.getElementById('cur').textContent = String(n);
-    const c = viewport.querySelectorAll('canvas.page')[n - 1];
-    if (c) c.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-  function refresh(){
-    document.getElementById('zoom').textContent = Math.round(scale * 100) + '%';
-    renderAll();
-  }
-
   (async () => {
     try {
-      if (READ_ERR) {
-        viewport.innerHTML = '<div class="err">读取失败: ' + READ_ERR + '</div>';
-        return;
-      }
-      if (!PDF_B64) {
-        viewport.innerHTML = '<div class="err">PDF bytes 为空</div>';
-        return;
+      // 测: webview 端能否拿到 vscode 全局 + ext host 序列化 fs 的内容
+      console.log('[pdf-webview] typeof vscode:', typeof window['vscode'])
+      console.log('[pdf-webview] typeof acquireVsCodeApi:', typeof window['acquireVsCodeApi'])
+      console.log('[pdf-webview] VSIX_FS_JSON (ext host 序列化):', VSIX_FS_JSON)
+      try {
+        const parsed = JSON.parse(VSIX_FS_JSON)
+        console.log('[pdf-webview] parsed fs keys:', parsed.keys)
+      } catch (e) {
+        console.log('[pdf-webview] VSIX_FS_JSON parse fail:', e?.message)
       }
       const pdfjs = await loadPdfJs();
-      setStatus('解析 PDF (' + (PDF_B64.length * 0.75 / 1024).toFixed(1) + ' KB)…');
-      // base64 → bytes → Blob → blob URL, 喂 pdfjs.load (避免一次性大 Uint8Array 在 worker 序列化)
-      const bytes = b64ToBytes(PDF_B64);
-      const blob = new Blob([bytes], { type: 'application/pdf' });
-      const blobUrl = URL.createObjectURL(blob);
-      pdf = await pdfjs.load({
-        url: blobUrl,
-        cMapUrl: PDFJS_BASE + '/cmaps/',
-        cMapPacked: true,
+      // 听 ext host postMessage
+      window.addEventListener('message', (e) => {
+        const m = e.data;
+        if (!m || typeof m !== 'object') return;
+        if (m.type === 'pdf-bytes') {
+          const bytes = m.bytes instanceof Uint8Array ? m.bytes : new Uint8Array(m.bytes);
+          const blob = new Blob([bytes], { type: m.mimeType || 'application/pdf' });
+          const url = URL.createObjectURL(blob);
+          pdfjs.load({ url, cMapUrl: PDFJS_BASE + '/cmaps/', cMapPacked: true })
+            .then(p => { pdf = p; document.getElementById('tot').textContent = String(p.numPages); setStatus(p.numPages + ' 页'); URL.revokeObjectURL(url); renderAll(); bind(); })
+            .catch(e => { viewport.innerHTML = '<div class="err">加载失败: ' + (e?.message || e) + '</div>'; });
+        } else if (m.type === 'pdf-error') {
+          viewport.innerHTML = '<div class="err">读取失败: ' + (m.message || 'unknown') + '</div>';
+        }
       });
-      URL.revokeObjectURL(blobUrl);
-      document.getElementById('tot').textContent = String(pdf.numPages);
-      setStatus(pdf.numPages + ' 页');
-      await renderAll();
-      bind();
+      // 通知 ext host 准备好了
+      if (window.parent && window.parent !== window) {
+        try { window.parent.postMessage({ type: 'webview-ready' }, '*'); } catch (_) {}
+      }
     } catch (e) {
-      viewport.innerHTML = '<div class="err">加载失败: ' + (e && e.message || e) + '</div>';
+      viewport.innerHTML = '<div class="err">加载 PDF.js 失败: ' + (e && e.message || e) + '</div>';
     }
   })();
 })();
