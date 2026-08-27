@@ -633,7 +633,7 @@ export const styles = `
 /* Search */
 .chat__modal-search {
   display: flex; align-items: center; gap: 10px;
-  margin: 12px 20px 8px;
+  margin: 16px 16px 4px;
   padding: 9px 14px;
   background: var(--ai-input-bg);
   border: 1px solid var(--ai-border);
@@ -654,7 +654,7 @@ export const styles = `
 /* Body */
 .chat__modal-body {
   flex: 1; overflow-y: auto;
-  padding: 4px 16px 16px;
+  padding: 16px 12px 16px;
 }
 .chat__modal-body--apikey {
   padding: 8px 22px 22px;
@@ -708,12 +708,18 @@ export const styles = `
 .chat__modal-item--row .chat__modal-item-icon {
   margin-top: 1px;
 }
+/* 单行 item (跟 ModelPicker 一致: icon + name + tag + check) */
+.chat__modal-item-emoji {
+  font-size: 16px; line-height: 1; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; flex-shrink: 0;
+}
 .chat__modal-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .chat__modal-item-icon { font-size: 16px; line-height: 1; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 22px; }
 .chat__modal-item-icon--lg { font-size: 18px; width: 28px; height: 28px; background: var(--ai-accent-soft); border-radius: 8px; }
-.chat__modal-item-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.chat__modal-item-desc { font-size: 12px; color: var(--ai-fg-muted); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.chat__modal-item-check { color: var(--ai-accent); display: inline-flex; flex-shrink: 0; margin-top: 4px; }
+.chat__modal-item-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.chat__modal-item-desc { font-size: 11.5px; color: var(--ai-fg-muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.chat__modal-item-check { color: var(--ai-accent); display: inline-flex; flex-shrink: 0; }
 
 /* Header close (icon SVG) */
 .chat__modal-x {
