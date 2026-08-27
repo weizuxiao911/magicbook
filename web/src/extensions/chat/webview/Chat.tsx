@@ -44,6 +44,25 @@ function loadClientCmds() {
   return CLIENT_COMMANDS.map((c) => ({ cmd: c.cmd, name: c.desc, hint: c.hint || '', source: 'client-cmd' as const }));
 }
 
+/** 按 cwd 生成 sessionStorage key. 最后段的可读名 (raw, 任意 unicode) + 8位哈希防碰撞:
+ *  - 保留 CJK 可读性 (浏览 sessionStorage 时一眼看出是哪个目录)
+ *  - 哈希防同名目录 (如 ~/a 和 ~/b 但只是同名, 哈希区分) / 超长路径截断
+ *  - 切工作目录后 key 变, 旧 session 不会跨目录复用, 避免 session.directory 跟当前 cwd 不一致. */
+function sessionKeyFor(cwd: string): string {
+  if (!cwd) return 'chat.sessionID.default';
+  // djb2 哈希 (非加密, sessionStorage 标识够用, 32-bit → 8 位 hex)
+  let hash = 5381;
+  for (let i = 0; i < cwd.length; i++) {
+    hash = ((hash << 5) + hash) + cwd.charCodeAt(i);
+  }
+  const hex = (hash >>> 0).toString(16).padStart(8, '0');
+  // 最后一段做可读短名 (取 unicode 字符, 限 12 字符, 空白 trim)
+  const lastSeg = (cwd.split('/').filter(Boolean).pop() || '').trim().slice(0, 12);
+  // 不可见字符或空 fallback
+  const readable = lastSeg.replace(/[\x00-\x1F\x7F]/g, '') || 'cwd';
+  return `chat.sessionID.${readable}-${hex}`;
+}
+
 /** 在用户工作目录创建会话（directory 从 SDK path.get 取, 确保会话归属 workspace） */
 async function createSessionInWorkspace(client: any) {
   try {
@@ -398,13 +417,16 @@ export const Chat: React.FC = () => {
     else setRows([]);
   }, [sessionID, loadMessages]);
 
-  // sessionID 持久化到 sessionStorage (与具体工作目录解耦, chat 只跟 SDK 走, 切换 cwd
-  // 后 session 归属由 SDK 内部 x-opencode-directory header 决定, UI 端不按 cwd 隔离)
-  const SESSION_KEY = 'chat.sessionID';
+  // sessionID 持久化到 sessionStorage, 跟当前 APP_CWD 绑定.
+  // 切工作目录后 reload, 旧 SESSION_KEY 读不到 → 触发 ensureDraft 建新 session (新 cwd 下)
+  // 这保证 session 的 directory 字段永远跟当前 cwd 一致, pwd 等 shell 命令结果正确
+  const SESSION_KEY = useMemo(() => sessionKeyFor(getCwd()), []);
   // 仅启动时恢复一次上次会话. 注意: 不能依赖 sessionID 重跑 (restore 读 storage + write 写
   // storage 会形成 A↔B 乒乓 → applySessionToUI 反复 session.get → 请求洪流).
+  // 顺手清掉 4a0b040 之前的旧版 'chat.sessionID' (无 cwd 后缀) 残留
   useEffect(() => {
     if (!ready || !client) return;
+    try { sessionStorage.removeItem('chat.sessionID'); } catch { /* */ }
     const saved = sessionStorage.getItem(SESSION_KEY);
     if (saved && saved !== sessionID) { setSessionID(saved); return; }
     if (!saved && !sessionID) { void ensureDraft(); }
