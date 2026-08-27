@@ -672,17 +672,19 @@ export const styles = `
 /* select view: 分组模型列表 */
 .chat__modal-group { padding: 2px 0; }
 .chat__modal-group-title {
-  padding: 10px 12px 6px;
-  font-size: 12.5px; color: var(--ai-fg-muted);
+  padding: 12px 14px 6px;
+  font-size: 11.5px; font-weight: 600; color: var(--ai-fg-muted);
+  text-transform: uppercase; letter-spacing: 0.5px;
   user-select: none;
 }
 .chat__modal-item {
-  width: 100%; display: flex; align-items: center; gap: 10px;
-  padding: 7px 12px;
-  background: transparent; border: none; border-radius: 6px;
+  width: 100%; display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px;
+  background: transparent; border: none; border-radius: 8px;
   color: var(--ai-fg);
   font-family: inherit; font-size: 13px;
   cursor: pointer; text-align: left;
+  transition: background .1s;
 }
 .chat__modal-item:hover { background: var(--ai-hover); }
 .chat__modal-item.is-active {
@@ -697,12 +699,33 @@ export const styles = `
 .chat__modal-item.is-highlighted.is-active {
   background: var(--ai-active);
 }
-.chat__modal-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 多行 layout (icon + title + desc + check) — 比紧凑行高 4px, 适合 agent/skill 等带描述 */
+.chat__modal-item--row {
+  padding: 9px 12px;
+  align-items: flex-start;
+  gap: 12px;
+}
+.chat__modal-item--row .chat__modal-item-icon {
+  margin-top: 1px;
+}
+.chat__modal-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .chat__modal-item-icon { font-size: 16px; line-height: 1; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 22px; }
-.chat__modal-item-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.chat__modal-item-name { font-weight: 600; color: var(--ai-fg); }
-.chat__modal-item-desc { font-size: 11px; color: var(--ai-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat__modal-item-check { color: var(--ai-accent); display: inline-flex; flex-shrink: 0; }
+.chat__modal-item-icon--lg { font-size: 18px; width: 28px; height: 28px; background: var(--ai-accent-soft); border-radius: 8px; }
+.chat__modal-item-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.chat__modal-item-desc { font-size: 12px; color: var(--ai-fg-muted); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.chat__modal-item-check { color: var(--ai-accent); display: inline-flex; flex-shrink: 0; margin-top: 4px; }
+
+/* Header close (icon SVG) */
+.chat__modal-x {
+  width: 30px; height: 30px;
+  background: transparent; border: none;
+  color: var(--ai-fg-muted);
+  cursor: pointer; padding: 0; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 7px;
+  transition: all .12s;
+}
+.chat__modal-x:hover { background: var(--ai-hover); color: var(--ai-fg); }
 .chat__skill-item { align-items: flex-start; }
 .chat__skill-body {
   flex: 1; min-width: 0;

@@ -188,8 +188,18 @@ const expandHome = (p: string): string => {
       <style>{S}</style>
       <div className="wp-modal">
         <div className="wp-hdr">
-          <span className="wp-title">选择工作目录</span>
-          <button className="wp-x" onClick={() => setOpen(false)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+          <div className="wp-title">
+            <span className="wp-title-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            </span>
+            <div className="wp-title-text">
+              <span className="wp-title-name">选择工作目录</span>
+              <span className="wp-title-sub">{currentPath || '尚未选择'}</span>
+            </div>
+          </div>
+          <button className="wp-x" onClick={() => setOpen(false)} title="关闭">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
         </div>
         <div className="wp-bread">
           {segments.map((seg, i) => {
@@ -210,7 +220,10 @@ const expandHome = (p: string): string => {
         </div>
         <div className="wp-body">
           <div className="wp-side">
-            <div className="wp-side-title">快速访问</div>
+            <div className="wp-side-title">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+              快速访问
+            </div>
             {QUICK.map((q) => (
               <button key={q.path} type="button" className="wp-side-item" onClick={() => doBrowse(expandHome(q.path))}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -219,7 +232,10 @@ const expandHome = (p: string): string => {
             ))}
             {recent.filter((p) => p !== currentPath).slice(0, 5).length > 0 && (
               <>
-                <div className="wp-side-title" style={{ marginTop: 8 }}>最近</div>
+                <div className="wp-side-title" style={{ marginTop: 10 }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>
+                  最近
+                </div>
                 {recent
                   .filter((p) => p !== currentPath)
                   .slice(0, 5)
@@ -233,8 +249,8 @@ const expandHome = (p: string): string => {
                         title={p}
                         onClick={() => setCwd(p)}
                       >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /><path d="M12 7v5l3 2" /></svg>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                        <span>{name}</span>
                       </button>
                     );
                   })}
@@ -295,52 +311,82 @@ const expandHome = (p: string): string => {
 };
 
 const S = `
-.wp-overlay{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5)}
-.wp-modal{width:640px;max-width:90vw;height:480px;max-height:80vh;display:flex;flex-direction:column;background:var(--editor-background,#1e1e2e);border:1px solid var(--widget-border,rgba(255,255,255,0.1));border-radius:10px;color:var(--foreground,#ccc)}
-.wp-hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--widget-border,rgba(255,255,255,0.06));font-size:14px;font-weight:600;flex-shrink:0}
-.wp-title{font-size:14px;font-weight:600}
-.wp-x{background:none;border:none;color:var(--foreground,#888);cursor:pointer;padding:4px;display:flex;flex-shrink:0}
-.wp-bread{display:flex;align-items:center;padding:6px 12px;gap:2px;font-size:12px;border-bottom:1px solid var(--widget-border,rgba(255,255,255,0.04));flex-shrink:0;overflow-x:auto;min-height:28px}
-.wp-bread-item{background:none;border:none;color:var(--foreground,#999);cursor:pointer;padding:2px 4px;border-radius:3px;white-space:nowrap;font-size:12px}
-.wp-bread-item:hover{background:rgba(255,255,255,0.08);color:var(--foreground,#ddd)}
-.wp-bread-sep{color:var(--foreground,#555);font-size:12px}
-.wp-bread-up{background:none;border:none;color:var(--foreground,#888);cursor:pointer;padding:2px 6px;border-radius:3px;display:flex;flex-shrink:0}
-.wp-bread-up:hover{background:rgba(255,255,255,0.08);color:var(--foreground,#ddd)}
-.wp-body{flex:1;display:flex;overflow:hidden}
-.wp-side{width:120px;flex-shrink:0;padding:8px 0;border-right:1px solid var(--widget-border,rgba(255,255,255,0.04));overflow-y:auto}
-.wp-side-title{padding:4px 12px;font-size:11px;font-weight:600;color:var(--foreground,#666);text-transform:uppercase;letter-spacing:0.5px}
-.wp-side-item{display:flex;align-items:center;gap:6px;width:100%;padding:6px 12px;background:none;border:none;color:var(--foreground,#aaa);font-size:12px;cursor:pointer;text-align:left}
-.wp-side-item svg{flex-shrink:0;color:var(--focus-border,#6366f1)}
-.wp-side-item:hover{background:rgba(255,255,255,0.05)}
-.wp-main{flex:1;overflow-y:auto;padding:4px 0}
-.wp-loading,.wp-empty{padding:24px;text-align:center;color:var(--foreground,#666);font-size:13px}
-.wp-err{margin:8px;padding:8px;background:rgba(239,68,68,0.15);border-radius:6px;color:#f87171;font-size:12px}
-.wp-list{display:flex;flex-direction:column}
-.wp-ctx{position:fixed;z-index:11000;background:var(--editor-background,#1e1e2e);border:1px solid var(--widget-border,rgba(255,255,255,0.1));border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.4);overflow:hidden;min-width:120px}
-.wp-ctx-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;background:none;border:none;color:var(--foreground,#ccc);font-size:13px;cursor:pointer;text-align:left}
-.wp-ctx-item svg{flex-shrink:0;color:var(--focus-border,#6366f1)}
-.wp-ctx-item:hover{background:rgba(255,255,255,0.08);color:var(--foreground,#fff)}
-.wp-item{display:flex;align-items:center;gap:8px;width:100%;padding:6px 12px;background:none;border:none;color:var(--foreground,#bbb);font-size:13px;cursor:pointer;text-align:left}
-.wp-item svg{flex-shrink:0;color:var(--focus-border,#6366f1)}
-.wp-item.highlight{background:rgba(255,255,255,0.04)}
-.wp-item.selected{background:rgba(99,102,241,0.15);color:var(--foreground,#fff)}
-.wp-item:hover{background:rgba(255,255,255,0.06)}
-.wp-item-name{font-weight:500;flex-shrink:0}
-.wp-item-path{font-size:11px;color:var(--foreground,#555);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:4px}
-.wp-item-enter{background:none;border:none;color:var(--foreground,#666);cursor:pointer;padding:2px;display:flex;flex-shrink:0;margin-left:auto;opacity:0;transition:opacity 0.15s}
+/* 玻璃质感 + 居中模态 — 跟 chat__modal-overlay 同款 */
+.wp-overlay{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);padding:24px;animation:wp-fade .14s ease-out}
+@keyframes wp-fade{from{opacity:0}to{opacity:1}}
+.wp-modal{width:680px;max-width:100%;height:520px;max-height:min(calc(100vh - 72px),600px);display:flex;flex-direction:column;background:var(--ai-glass-bg,#1c1c22);-webkit-backdrop-filter:var(--ai-glass-blur,blur(18px) saturate(160%));backdrop-filter:var(--ai-glass-blur,blur(18px) saturate(160%));border:1px solid var(--ai-glass-edge,rgba(255,255,255,0.12));border-radius:16px;box-shadow:var(--ai-pop-shadow,0 16px 40px rgba(0,0,0,0.5));color:var(--ai-fg,#e5e7eb);overflow:hidden;animation:wp-pop .16s ease-out}
+@keyframes wp-pop{from{opacity:0;transform:translateY(8px) scale(0.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+
+/* Header */
+.wp-hdr{display:flex;align-items:center;gap:10px;padding:20px 22px 14px;flex-shrink:0}
+.wp-title{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:600;color:var(--ai-fg,#e5e7eb);flex:1;min-width:0}
+.wp-title-icon{color:var(--ai-accent,#6366f1);display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:var(--ai-accent-soft,rgba(99,102,241,0.18));border-radius:7px;flex-shrink:0}
+.wp-title-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.wp-title-name{font-size:15px;font-weight:600;color:var(--ai-fg,#e5e7eb);line-height:1.2}
+.wp-title-sub{font-size:11.5px;color:var(--ai-fg-muted,#9ca3af);font-weight:400;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:400px}
+.wp-x{width:30px;height:30px;background:transparent;border:none;color:var(--ai-fg-muted,#9ca3af);cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:7px;flex-shrink:0;transition:all .12s}
+.wp-x:hover{background:var(--ai-hover,rgba(255,255,255,0.06));color:var(--ai-fg,#e5e7eb)}
+
+/* Breadcrumb */
+.wp-bread{display:flex;align-items:center;padding:6px 18px;gap:2px;font-size:12.5px;border-top:1px solid var(--ai-divider,rgba(255,255,255,0.06));border-bottom:1px solid var(--ai-divider,rgba(255,255,255,0.06));flex-shrink:0;overflow-x:auto;min-height:34px;background:rgba(255,255,255,0.02)}
+.wp-bread-item{background:none;border:none;color:var(--ai-fg-muted,#9ca3af);cursor:pointer;padding:3px 6px;border-radius:4px;white-space:nowrap;font-size:12.5px;transition:all .12s}
+.wp-bread-item:hover{background:var(--ai-hover,rgba(255,255,255,0.06));color:var(--ai-fg,#e5e7eb)}
+.wp-bread-sep{color:var(--ai-fg-muted,#6b7280);font-size:11px;opacity:.5;user-select:none}
+.wp-bread-up{background:none;border:none;color:var(--ai-fg-muted,#9ca3af);cursor:pointer;padding:4px 6px;border-radius:4px;display:flex;flex-shrink:0;transition:all .12s}
+.wp-bread-up:hover{background:var(--ai-hover,rgba(255,255,255,0.06));color:var(--ai-fg,#e5e7eb)}
+.wp-bread-up:disabled{opacity:.3;cursor:default}
+.wp-bread-up:disabled:hover{background:transparent;color:var(--ai-fg-muted,#9ca3af)}
+
+/* Body: sidebar + main */
+.wp-body{flex:1;display:flex;overflow:hidden;min-height:0}
+.wp-side{width:160px;flex-shrink:0;padding:14px 10px;border-right:1px solid var(--ai-divider,rgba(255,255,255,0.06));overflow-y:auto;background:rgba(0,0,0,0.15)}
+.wp-side-title{padding:6px 10px 4px;font-size:10.5px;font-weight:600;color:var(--ai-fg-muted,#6b7280);text-transform:uppercase;letter-spacing:0.6px;display:flex;align-items:center;gap:4px}
+.wp-side-item{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;background:none;border:none;color:var(--ai-fg-muted,#cbd1d8);font-size:12.5px;cursor:pointer;text-align:left;border-radius:6px;transition:all .12s;overflow:hidden}
+.wp-side-item svg{flex-shrink:0;color:var(--ai-accent,#6366f1);opacity:.85}
+.wp-side-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wp-side-item:hover{background:var(--ai-hover,rgba(255,255,255,0.05));color:var(--ai-fg,#e5e7eb)}
+.wp-side-item:hover svg{opacity:1}
+.wp-side-item--recent{font-size:12px}
+
+/* Main */
+.wp-main{flex:1;overflow-y:auto;padding:8px 10px}
+.wp-loading,.wp-empty{padding:48px 16px;text-align:center;color:var(--ai-fg-muted,#6b7280);font-size:13px;display:flex;flex-direction:column;align-items:center;gap:8px}
+.wp-loading svg,.wp-empty svg{color:var(--ai-fg-muted,#4b5563)}
+.wp-err{margin:10px;padding:10px 14px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.2);border-radius:8px;color:#fca5a5;font-size:12.5px}
+.wp-list{display:flex;flex-direction:column;gap:1px}
+.wp-item{display:flex;align-items:center;gap:10px;width:100%;padding:7px 12px;background:transparent;border:none;border-radius:7px;color:var(--ai-fg,#d1d5db);font-size:13px;cursor:pointer;text-align:left;transition:all .1s}
+.wp-item svg{flex-shrink:0;color:var(--ai-accent,#6366f1);opacity:.8}
+.wp-item.highlight{background:var(--ai-hover,rgba(255,255,255,0.05))}
+.wp-item.selected{background:var(--ai-active,rgba(99,102,241,0.16));color:var(--ai-fg,#fff)}
+.wp-item.selected svg{opacity:1}
+.wp-item:hover{background:var(--ai-hover,rgba(255,255,255,0.06))}
+.wp-item-name{font-weight:500;flex-shrink:0;font-size:13px}
+.wp-item-path{font-size:11.5px;color:var(--ai-fg-muted,#6b7280);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:4px;flex:1;min-width:0}
+.wp-item-enter{background:none;border:none;color:var(--ai-fg-muted,#6b7280);cursor:pointer;padding:3px;display:flex;flex-shrink:0;margin-left:auto;opacity:0;transition:all .15s;border-radius:4px}
 .wp-item:hover .wp-item-enter{opacity:1}
-.wp-item-enter:hover{color:var(--foreground,#ddd)}
-.wp-foot{display:flex;align-items:center;padding:10px 16px;border-top:1px solid var(--widget-border,rgba(255,255,255,0.06));flex-shrink:0;gap:12px}
-.wp-foot-left{flex-shrink:0}
-.wp-foot-mk{display:flex;align-items:center;gap:4px;padding:4px 8px;background:none;border:1px dashed var(--widget-border,rgba(255,255,255,0.15));border-radius:4px;color:var(--foreground,#888);font-size:12px;cursor:pointer}
-.wp-foot-mk:hover{color:var(--foreground,#ccc);border-color:var(--widget-border,rgba(255,255,255,0.3))}
-.wp-mk{display:flex;align-items:center;gap:6px}
-.wp-mk-inp{width:140px;padding:4px 8px;background:var(--input-background,rgba(255,255,255,0.06));border:1px solid var(--focus-border,#6366f1);border-radius:4px;outline:none;font-size:12px;color:var(--foreground,#e0e0e0)}
-.wp-mk-btn{padding:4px 10px;background:var(--button-background,#6366f1);border:none;border-radius:4px;color:var(--button-foreground,#fff);font-size:12px;cursor:pointer}
-.wp-mk-btn:disabled{opacity:0.5}
-.wp-mk-cancel{padding:4px 8px;background:none;border:none;color:var(--foreground,#888);font-size:12px;cursor:pointer}
-.wp-mk-cancel:hover{color:var(--foreground,#ccc)}
-.wp-foot-path{display:flex;align-items:center;gap:6px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
-.wp-btn{padding:7px 20px;background:var(--button-background,#6366f1);border:none;border-radius:6px;color:var(--button-foreground,#fff);font-size:13px;font-weight:600;cursor:pointer;flex-shrink:0}
-.wp-btn:disabled{opacity:0.4;cursor:not-allowed}
+.wp-item-enter:hover{background:var(--ai-hover,rgba(255,255,255,0.08));color:var(--ai-fg,#e5e7eb)}
+
+/* Context menu (right click) */
+.wp-ctx{position:fixed;z-index:11000;background:var(--ai-bg-elev,#1c1c22);border:1px solid var(--ai-border,rgba(255,255,255,0.1));border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.5);overflow:hidden;min-width:140px;padding:4px}
+.wp-ctx-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;background:none;border:none;color:var(--ai-fg-muted,#d1d5db);font-size:12.5px;cursor:pointer;text-align:left;border-radius:5px;transition:all .1s}
+.wp-ctx-item svg{flex-shrink:0;color:var(--ai-accent,#6366f1)}
+.wp-ctx-item:hover{background:var(--ai-hover,rgba(255,255,255,0.08));color:var(--ai-fg,#fff)}
+
+/* Footer */
+.wp-foot{display:flex;align-items:center;padding:12px 18px;border-top:1px solid var(--ai-divider,rgba(255,255,255,0.06));flex-shrink:0;gap:12px;background:rgba(0,0,0,0.12)}
+.wp-foot-path{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ai-fg-muted,#9ca3af);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.wp-foot-path svg{flex-shrink:0;color:var(--ai-accent,#6366f1);opacity:.8}
+.wp-foot-path span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wp-mk{display:flex;align-items:center;gap:6px;flex:1;min-width:0}
+.wp-mk-inp{flex:1;min-width:0;padding:7px 10px;background:var(--ai-input-bg,rgba(255,255,255,0.06));border:1px solid var(--ai-accent,#6366f1);border-radius:6px;outline:none;font-size:12.5px;color:var(--ai-fg,#e5e7eb);font-family:inherit}
+.wp-mk-inp:focus{box-shadow:0 0 0 3px var(--ai-accent-soft,rgba(99,102,241,0.18))}
+.wp-mk-btn{padding:7px 14px;background:var(--ai-accent,#6366f1);border:none;border-radius:6px;color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;flex-shrink:0;transition:all .12s}
+.wp-mk-btn:hover:not(:disabled){background:color-mix(in srgb,var(--ai-accent,#6366f1) 88%,#fff)}
+.wp-mk-btn:disabled{opacity:.4;cursor:not-allowed}
+.wp-mk-cancel{padding:7px 10px;background:none;border:none;color:var(--ai-fg-muted,#9ca3af);font-size:12.5px;cursor:pointer;flex-shrink:0;border-radius:6px;transition:all .12s}
+.wp-mk-cancel:hover{background:var(--ai-hover,rgba(255,255,255,0.06));color:var(--ai-fg,#e5e7eb)}
+.wp-btn{padding:8px 22px;background:var(--ai-accent,#6366f1);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;flex-shrink:0;transition:all .12s;box-shadow:0 1px 0 color-mix(in srgb,var(--ai-accent,#6366f1) 60%,#000) inset}
+.wp-btn:hover:not(:disabled){background:color-mix(in srgb,var(--ai-accent,#6366f1) 88%,#fff);transform:translateY(-1px);box-shadow:0 4px 12px var(--ai-accent-soft,rgba(99,102,241,0.4))}
+.wp-btn:active:not(:disabled){transform:translateY(0)}
+.wp-btn:disabled{opacity:.4;cursor:not-allowed}
 `;

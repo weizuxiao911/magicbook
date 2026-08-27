@@ -102,6 +102,7 @@ export const Chat: React.FC = () => {
   const [currentTitle, setCurrentTitle] = useState<string>('');
   const [showSessions, setShowSessions] = useState(false);
   const [showAgents, setShowAgents] = useState(false);
+  const [agentQuery, setAgentQuery] = useState('');
   const [showModels, setShowModels] = useState(false);
   /** ModelPicker 初始视图: select=模型选择, providers=模型管理(/connect) */
   const [modelPickerView, setModelPickerView] = useState<'select' | 'providers'>('select');
@@ -907,6 +908,22 @@ export const Chat: React.FC = () => {
     [agents]
   );
 
+  // 打开 mode 选择器时清空搜索框
+  useEffect(() => {
+    if (showAgents) setAgentQuery('');
+  }, [showAgents]);
+  // 搜索过滤 agent (按 name + description 模糊匹配, 同 ModelPicker 风格)
+  const filteredAgents = useMemo(() => {
+    const q = agentQuery.trim().toLowerCase();
+    if (!q) return visibleAgents;
+    return visibleAgents.filter((a: any) => {
+      const id = a.id || a.name;
+      const name = (a.name || id || '').toLowerCase();
+      const desc = (a.description || AGENT_DESC[id] || '').toLowerCase();
+      return name.includes(q) || desc.includes(q);
+    });
+  }, [visibleAgents, agentQuery]);
+
   const filteredCommands = useMemo(() => {
     const q = input.match(/(?:^|\s)\/(\S*)$/)?.[1] || '';
     if (!q) return commandList;
@@ -1584,7 +1601,7 @@ export const Chat: React.FC = () => {
                       aria-modal="true"
                       onMouseDown={(e) => { if (e.target === e.currentTarget) setShowAgents(false); }}
                     >
-                      <div className="chat__modal" style={{ width: 440, maxHeight: 'min(calc(100vh - 72px), 480px)' }}>
+                      <div className="chat__modal" style={{ width: 460, maxHeight: 'min(calc(100vh - 72px), 520px)' }}>
                         <div className="chat__modal-header">
                           <div className="chat__modal-title">
                             <span className="chat__modal-title-icon">{AGENT_ICONS[currentAgent] || '✨'}</span>
@@ -1595,26 +1612,45 @@ export const Chat: React.FC = () => {
                             className="chat__modal-x"
                             onClick={() => setShowAgents(false)}
                             title="关闭"
-                          >✕</button>
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                          </button>
                         </div>
-                        <div className="chat__modal-body" style={{ padding: '8px 0' }}>
-                          {visibleAgents.map((a: any) => {
+                        <div className="chat__modal-search">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                          <input
+                            autoFocus
+                            type="text"
+                            placeholder="搜索 agent (build / office-master / ...)"
+                            value={agentQuery}
+                            onChange={(e) => setAgentQuery(e.target.value)}
+                          />
+                        </div>
+                        <div className="chat__modal-body" style={{ padding: '8px 14px 14px' }}>
+                          {filteredAgents.length === 0 && (
+                            <div className="chat__modal-empty">无匹配 agent</div>
+                          )}
+                          {filteredAgents.map((a: any) => {
                             const id = a.id || a.name;
+                            const isActive = id === currentAgent;
                             return (
                               <button
                                 key={id}
                                 type="button"
-                                className={`chat__modal-item${id === currentAgent ? ' is-active' : ''}`}
+                                className={`chat__modal-item chat__modal-item--row${isActive ? ' is-active' : ''}`}
                                 onClick={() => onSwitchAgent(id)}
                               >
-                                <span className="chat__modal-item-icon">{AGENT_ICONS[id] || '✨'}</span>
+                                <span className="chat__modal-item-icon chat__modal-item-icon--lg">{AGENT_ICONS[id] || '✨'}</span>
                                 <span className="chat__modal-item-body">
-                                  <span className="chat__modal-item-name">{a.name || id}</span>
+                                  <span className="chat__modal-item-name">
+                                    {a.name || id}
+                                    {isActive && <span className="chat__modal-tag">当前</span>}
+                                  </span>
                                   <span className="chat__modal-item-desc">{a.description || AGENT_DESC[id] || ''}</span>
                                 </span>
-                                {id === currentAgent && (
+                                {isActive && (
                                   <span className="chat__modal-item-check">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                                   </span>
                                 )}
                               </button>
