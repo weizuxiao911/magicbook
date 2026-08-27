@@ -42,13 +42,13 @@ export const AGENT_DESC: Record<string, string> = {
 };
 
 export const CLIENT_COMMANDS: Array<{ cmd: string; desc: string; hint?: string }> = [
-  { cmd: 'model',    desc: '选择模型', hint: '打开模型选择' },
-  { cmd: 'connect',  desc: '选择服务商', hint: '搜索服务商 · 输入 API Key 连接' },
-  { cmd: 'compact',  desc: '压缩上下文', hint: 'AI summary, 释放 tokens' },
-  { cmd: 'new',      desc: '创建新会话', hint: '新建一个空白会话' },
-  { cmd: 'session',  desc: '历史会话', hint: '打开历史会话列表' },
-  { cmd: 'skill',    desc: '选择技能', hint: '打开技能选择弹层' },
-  { cmd: 'agent',    desc: '选择角色', hint: '切换 agent 角色' },
+  { cmd: 'models',    desc: '选择模型', hint: '打开模型选择' },
+  { cmd: 'connect',   desc: '选择服务商', hint: '搜索服务商 · 输入 API Key 连接' },
+  { cmd: 'compact',   desc: '压缩上下文', hint: 'AI summary, 释放 tokens' },
+  { cmd: 'new',       desc: '创建新会话', hint: '新建一个空白会话' },
+  { cmd: 'sessions',  desc: '历史会话', hint: '打开历史会话列表' },
+  { cmd: 'skills',    desc: '选择技能', hint: '打开技能选择弹层' },
+  { cmd: 'agents',    desc: '选择角色', hint: '切换 agent 角色' },
 ];
 
 export function findCurrentTodos(parts: any[]): Array<{ content: string; status: string; priority?: string }> {

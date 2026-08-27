@@ -1584,7 +1584,15 @@ export const Chat: React.FC = () => {
               rows={1}
             />
             <div className="chat__input-bar">
-              {/* 工作目录选择器: 全局唯一切换入口, 点击直接开居中模态 (workspace:request-show → WorkspacePicker) */}
+              {/* 1. 上传附件 (第一位, 点击弹原生文件选择器, 走跟粘贴上传一样的 onUploadFile 逻辑) */}
+              <button type="button" className="chat__bar-btn chat__bar-plus" title="上传附件" onClick={() => fileInputRef.current?.click()}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </button>
+
+              {/* 2. 工作目录选择器: 全局唯一切换入口, 点击直接开居中模态 (workspace:request-show → WorkspacePicker) */}
               <button
                 type="button"
                 className="chat__bar-btn chat__bar-text"
@@ -1598,13 +1606,9 @@ export const Chat: React.FC = () => {
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
 
-              <button type="button" className="chat__bar-btn chat__bar-plus" title="上传附件" onClick={() => fileInputRef.current?.click()}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
+              {/* 3. Model 选择器 (居中模态, 跟 ModelPicker 风格) — 保持原位 */}
 
+              {/* Agent (Mode) 选择器: 暂时隐藏 (用户要求, 代码保留以便恢复)
               <div className="chat__select">
                 <button
                   data-ai-pop="agents"
@@ -1669,6 +1673,7 @@ export const Chat: React.FC = () => {
                   </Portal>
                 )}
               </div>
+              */}
 
               <div className="chat__select">
                 <button
