@@ -131,9 +131,22 @@ export function installCustomEditorPatch(): void {
     // 注册编辑器事件监听
     if (!state.handlersRegistered) {
       state.handlersRegistered = true;
-      const fire = () => (this as any).__paperTryMountAllPending();
-      this.addDispose(this.eventBus.on(EditorGroupChangeEvent, fire));
-      this.addDispose(this.eventBus.on(EditorActiveResourceStateChangedEvent, fire));
+      const tryMount = () => (this as any).__paperTryMountAllPending();
+      // 切到 paper 时挂载, 切走时卸载
+      const sync = () => {
+        const activeUri = this.workbenchEditorService?.currentEditorGroup?.currentResource?.uri?.toString();
+        for (const [key, info] of Array.from(state.mountedMap.entries())) {
+          if (activeUri === info.uri.toString()) {
+            // 当前就是 paper, 确保挂载
+            (this as any).__paperTryMount(key);
+          } else {
+            // 切走了, 隐藏 (切回时复用)
+            (this as any).__paperHide(key);
+          }
+        }
+      };
+      this.addDispose(this.eventBus.on(EditorGroupChangeEvent, sync));
+      this.addDispose(this.eventBus.on(EditorActiveResourceStateChangedEvent, sync));
     }
 
     // 立即尝试挂载
@@ -157,7 +170,25 @@ export function installCustomEditorPatch(): void {
       state.pendingMounts.delete(key);
       return;
     }
-    if (info.mounted) return;
+    if (info.mounted) {
+      // 已挂载过, 切回时只需恢复显示
+      if (info.stableContainer) {
+        info.stableContainer.style.display = 'block';
+      }
+      // 重新计算位置
+      if (info.syncPosition) info.syncPosition();
+      // 重新挂载 ResizeObserver
+      const target = findPaperTabContainer(info.uri.toString());
+      if (target && info.resizeObserver) {
+        try { info.resizeObserver.observe(target.editorBody); } catch { /* */ }
+      }
+      if (target && info.onWindowResize) {
+        window.addEventListener('resize', info.onWindowResize);
+      }
+      state.pendingMounts.delete(key);
+      state.mountedMap.set(key, info);
+      return;
+    }
 
     const workbenchEditor = document.getElementById('workbench-editor');
     if (!workbenchEditor) {
@@ -210,7 +241,7 @@ export function installCustomEditorPatch(): void {
     info.syncPosition = syncPosition;
     info.mounted = true;
 
-    // 注册 hide event 监听, 关闭时清理
+    // 注册 hide event 监听, 关闭 tab 时完全卸载
     const hideDisposable = this.eventBus.on(CustomEditorShouldHideEvent, (e: any) => {
       if (info.uri.toString() === e.payload.uri.toString()) {
         (this as any).__paperUnmount(key);
@@ -290,7 +321,29 @@ export function installCustomEditorPatch(): void {
     state.pendingMounts.delete(key);
   };
 
-  // 卸载
+  // 隐藏 (切走 tab 时) — 保留 webview/stableContainer, 切回时只需重新显示
+  (MainThreadCustomEditor.prototype as any).__paperHide = function (this: any, key: string) {
+    const state = getState(this);
+    const info = state.mountedMap.get(key) || state.pendingMounts.get(key);
+    if (!info) return;
+    // eslint-disable-next-line no-console
+    console.log(TAG, '__paperHide', { key });
+
+    if (info.resizeObserver) {
+      try { info.resizeObserver.disconnect(); } catch { /* */ }
+    }
+    if (info.onWindowResize) {
+      try { window.removeEventListener('resize', info.onWindowResize); } catch (_) { /* */ }
+    }
+    if (info.stableContainer) {
+      info.stableContainer.style.display = 'none';
+    }
+    // 从 mountedMap 移出, 但 info.webview 保持活着
+    state.mountedMap.delete(key);
+    // 保留在 pendingMounts, 这样切回时 tryMount 能找到
+  };
+
+  // 彻底卸载 (关闭 tab 时) — 完全清理
   (MainThreadCustomEditor.prototype as any).__paperUnmount = function (this: any, key: string) {
     const state = getState(this);
     const info = state.mountedMap.get(key) || state.pendingMounts.get(key);
@@ -298,20 +351,18 @@ export function installCustomEditorPatch(): void {
     // eslint-disable-next-line no-console
     console.log(TAG, '__paperUnmount', { key });
 
-    if (info.resizeObserver) {
-      try { info.resizeObserver.disconnect(); } catch { /* */ }
-    }
-    if (info.onWindowResize) {
-      try { window.removeEventListener('resize', info.onWindowResize); } catch { /* */ }
-    }
+    (this as any).__paperHide(key);
+
     if (info.hideDisposable) {
       try { info.hideDisposable.dispose(); } catch { /* */ }
+    }
+    if (info.docRef) {
+      try { info.docRef.dispose(); } catch { /* */ }
     }
     if (info.webview) {
       try { info.webview.remove(); } catch { /* */ }
       try { info.webview.dispose(); } catch { /* */ }
     }
-    // 下一帧才删 stableContainer, 避免 React 重新挂载时找不到
     if (info.stableContainer && info.stableContainer.parentNode) {
       const toRemove = info.stableContainer;
       setTimeout(() => {
