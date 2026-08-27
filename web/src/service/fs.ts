@@ -334,7 +334,12 @@ function handleJsonObject(obj: any): void {
     if (t === undefined) { console.log('[watcher] unknown event type:', obj.e); return; }
     opencodeEvent = t;
   }
-  const uri = `file://${WORKSPACE_ROOT}/${obj.p}`.replace(/\/+/g, '/');
+  // URI: file:///{WORKSPACE_ROOT}/{rel}.  保留 :// 三 slash 段不被合并
+  //  (负 lookbehind (?<!:) 看前 1 字符, 拦不住 file:// 的第二/三个 /)
+  //  改成: 先把 :// 段占位为 3 个 \u0000, 合并连续 / 为 1, 再恢复 ://
+  const rawUri = `file://${WORKSPACE_ROOT}/${obj.p}`;
+  const tmp = rawUri.replace('://', '\u0000\u0000\u0000').replace(/\/+/g, '/').replace('\u0000\u0000\u0000', '://');
+  const uri = tmp;
   console.log('[watcher] → fireFilesChange', uri, opencodeEvent);
   if (watcherFireFn) {
     watcherFireFn([{ uri, type: opencodeEvent }]);
