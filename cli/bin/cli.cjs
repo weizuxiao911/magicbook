@@ -17,7 +17,14 @@
  *   - 缺 tsx          → 装到 root/node_modules
  *   - 缺 opencode     → 装到 web/node_modules (opencode-ai 提供二进制)
  *   - 缺 web deps     → npm install 在 web/ (react + codeblitz + webpack)
+ *   - 缺 registry deps → npm install 在 registry/ (typescript)
  * 每个检查 idempotent, 首次 ~30s 装完, 之后秒级.
+ *
+ * 守卫统一用 "关键 bin 是否就绪" (deps 完整性), 不用 build 产物:
+ *   早期 registry 守卫看 server.js 存在性, 但 server.js 在 git 里被跟踪
+ *   (dev 模式跑 `node src/server.js` 不走 build:config), 守卫误判 deps 已就绪
+ *   → npx 模式 registry install 跳过 → tsc 找不到 → build:config 失败.
+ *   改用 .bin/tsc 看 typescript 装没装, deps 完整性才准.
  *
  * 默认 opencode 端口 24096 (匹配 web/.env.development 的 APP_BASE_URL);
  * CORS 默认 http://127.0.0.1:7788 (webpack-dev-server 默认地址). 用户可命令行覆盖.
@@ -36,8 +43,11 @@ const webDir = path.join(root, 'web');
 const registryDir = path.join(root, 'registry');
 const REGISTRY_PORT = 7790;
 
+/** 关键 bin 路径 (用于 install 守卫: 看 deps 完整性, 不看 build 产物) */
 const tsxBin = path.join(root, 'node_modules', '.bin', isWin() ? 'tsx.cmd' : 'tsx');
 const opencodeBin = path.join(cliDir, 'node_modules', '.bin', isWin() ? 'opencode.cmd' : 'opencode');
+const webTscBin = path.join(webDir, 'node_modules', '.bin', isWin() ? 'tsc.cmd' : 'tsc');
+const registryTscBin = path.join(registryDir, 'node_modules', '.bin', isWin() ? 'tsc.cmd' : 'tsc');
 const cliEntry = path.join(cliDir, 'src', 'main.ts');  // cli/bin → cli/src/main.ts
 
 /** 跨平台 npm script runner (win: npm.cmd + shell, posix: 直接 npm) */
@@ -64,28 +74,10 @@ function whichCmd(cmd) {
   return spawnSync('which', [cmd]).status === 0;
 }
 
-function ensureInstalled(label, cmd, args, cwd) {
-  if (label === 'tsx' && fs.existsSync(tsxBin)) return;
-  if (label === 'tsx') {
-    // PATH 有 tsx (用户 npm i -g tsx) 也跳过本地装
-    if (whichCmd('tsx')) {
-      console.log('[cli] 检测到 PATH tsx, 复用 (跳过安装)');
-      return;
-    }
-  }
-  if (label === 'opencode') {
-    if (fs.existsSync(opencodeBin)) return;
-    if (whichCmd('opencode')) {
-      console.log('[cli] 检测到 PATH opencode, 复用 (跳过安装)');
-      return;
-    }
-  }
-  if (label === 'web') {
-    if (fs.existsSync(path.join(webDir, 'node_modules', 'webpack'))) return;
-  }
-  if (label === 'registry') {
-    // registry 跑要 server.js 预编译 (避免 npx clone 在 node_modules 下 strip-types 失败)
-    if (fs.existsSync(path.join(registryDir, 'src', 'server.js'))) return;
+function ensureInstalled(label, depsReadyCheck, cmd, args, cwd) {
+  if (depsReadyCheck()) {
+    console.log(`[cli] ${label} deps 已就绪 (复用)`);
+    return;
   }
   console.log(`[cli] 首次运行, 装 ${label} ...`);
   // 网络抖动重试 2 次 (registry 抽风, ECONNRESET 等)
@@ -109,11 +101,36 @@ function ensureInstalled(label, cmd, args, cwd) {
   }
 }
 
-ensureInstalled('tsx', 'npm', ['install', '--no-save', '--prefer-offline', 'tsx'], root);
-ensureInstalled('opencode', 'npm', ['install', '--no-save', '--prefer-offline', 'opencode-ai'], cliDir);
-// web/registry: 先 npm install 装 deps (含 dev), 再 build:config 编译配置
-ensureInstalled('web', 'npm', ['install', '--include=dev', '--prefer-offline'], webDir);
-ensureInstalled('registry', 'npm', ['install', '--include=dev', '--prefer-offline'], registryDir);
+// 守卫统一用 "关键 bin 是否就绪" (deps 完整性), 不用 build 产物
+// (npx 缓存复用 + git 跟踪的产物会误导守卫, 导致 install 跳过 → tsc 找不到)
+ensureInstalled(
+  'tsx',
+  () => fs.existsSync(tsxBin) || whichCmd('tsx'),
+  'npm',
+  ['install', '--no-save', '--prefer-offline', 'tsx'],
+  root,
+);
+ensureInstalled(
+  'opencode',
+  () => fs.existsSync(opencodeBin) || whichCmd('opencode'),
+  'npm',
+  ['install', '--no-save', '--prefer-offline', 'opencode-ai'],
+  cliDir,
+);
+ensureInstalled(
+  'web',
+  () => fs.existsSync(webTscBin),
+  'npm',
+  ['install', '--include=dev', '--prefer-offline'],
+  webDir,
+);
+ensureInstalled(
+  'registry',
+  () => fs.existsSync(registryTscBin),
+  'npm',
+  ['install', '--include=dev', '--prefer-offline'],
+  registryDir,
+);
 // 配置预编译 (webpack.config.ts / server.ts → JS, 运行时不需要 tsx 编译 ts 配置)
 runNpmScript(webDir, 'build:config');
 runNpmScript(registryDir, 'build:config');
