@@ -137,7 +137,7 @@ cd client && npm run typecheck    # tsc --noEmit
 - **单一职责**: 每个模块只做一件事.
 - **配置外置**: 敏感信息不入库.
 - **中文优先**: 文档/接口/文案中文为主.
-- **tsx 统一**: bin/cli.cjs + cli/src/main.ts + web/webpack.config.ts 全走 tsx.
+- **tsx 统一**: bin/cli.cjs + cli/src/main.ts 走 tsx; web/webpack.config 走 JS (已切, 不再 .ts/.js 双源).
 - **品牌**: Numas (牛马们) — 打工人首选工作模式. 文档/banner 体现这调性.
 - **临时文件统一放 `.tmp/`** (项目根, 已在 .gitignore): 日志/截图/临时数据/调试产物全部进 `.tmp/`. **禁止**写到 `/tmp/` (散落难追踪) 或项目其他目录 (污染源码). 后台进程 `&> .tmp/<name>.log` 是标准写法.
 

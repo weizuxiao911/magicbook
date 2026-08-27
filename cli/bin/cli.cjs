@@ -131,8 +131,8 @@ ensureInstalled(
   ['install', '--include=dev', '--prefer-offline'],
   registryDir,
 );
-// 配置预编译 (webpack.config.ts / server.ts → JS, 运行时不需要 tsx 编译 ts 配置)
-runNpmScript(webDir, 'build:config');
+// 配置预编译 (registry server.ts/build.ts → JS; webpack.config 已是 JS 直接用, 不再 tsc 编译)
+// 运行时不需要 tsx 编译 ts 配置; 删了 webpack.config.ts 后 web build:config 也无意义
 runNpmScript(registryDir, 'build:config');
 
 const args = process.argv.slice(2);
