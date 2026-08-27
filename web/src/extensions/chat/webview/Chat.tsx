@@ -122,6 +122,8 @@ export const Chat: React.FC = () => {
   const [showSessions, setShowSessions] = useState(false);
   const [showAgents, setShowAgents] = useState(false);
   const [agentQuery, setAgentQuery] = useState('');
+  const [agentActiveIndex, setAgentActiveIndex] = useState(0);
+  const agentBodyRef = useRef<HTMLDivElement>(null);
   const [showModels, setShowModels] = useState(false);
   /** ModelPicker 初始视图: select=模型选择, providers=模型管理(/connect) */
   const [modelPickerView, setModelPickerView] = useState<'select' | 'providers'>('select');
@@ -885,6 +887,8 @@ export const Chat: React.FC = () => {
     setRows([]);
     // 切换后对账 busy (事件流可能有遗漏)
     void refreshSessionStatuses();
+    // 切完会话回 input, 继续输入
+    requestAnimationFrame(() => taRef.current?.focus());
   }, [cleanupDraft, refreshSessionStatuses]);
 
   const onDeleteSession = useCallback(async (sid: string) => {
@@ -932,7 +936,10 @@ export const Chat: React.FC = () => {
 
   // 打开 mode 选择器时清空搜索框
   useEffect(() => {
-    if (showAgents) setAgentQuery('');
+    if (showAgents) {
+      setAgentQuery('');
+      setAgentActiveIndex(0);
+    }
   }, [showAgents]);
   // 搜索过滤 agent (按 name + description 模糊匹配, 同 ModelPicker 风格)
   const filteredAgents = useMemo(() => {
@@ -945,6 +952,36 @@ export const Chat: React.FC = () => {
       return name.includes(q) || desc.includes(q);
     });
   }, [visibleAgents, agentQuery]);
+
+  // agent 弹层 ↑↓ 键盘导航 + Enter 选中
+  const handleAgentKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { e.preventDefault(); setShowAgents(false); return; }
+    if (filteredAgents.length === 0) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setAgentActiveIndex((i) => (i + 1) % filteredAgents.length); return; }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); setAgentActiveIndex((i) => (i - 1 + filteredAgents.length) % filteredAgents.length); return; }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const a = filteredAgents[agentActiveIndex];
+      if (a) onSwitchAgent(a.id || a.name);
+      return;
+    }
+  }, [filteredAgents, agentActiveIndex, onSwitchAgent]);
+
+  // 搜索/列表变化重置高亮
+  useEffect(() => { setAgentActiveIndex(0); }, [agentQuery]);
+
+  // 高亮项跟随滚动
+  useEffect(() => {
+    if (!showAgents) return;
+    const body = agentBodyRef.current;
+    if (!body) return;
+    const el = body.querySelector('.is-highlighted');
+    if (!el) return;
+    const bRect = body.getBoundingClientRect();
+    const eRect = el.getBoundingClientRect();
+    if (eRect.top < bRect.top) body.scrollTop += eRect.top - bRect.top;
+    else if (eRect.bottom > bRect.bottom) body.scrollTop += eRect.bottom - bRect.bottom;
+  }, [agentActiveIndex, showAgents]);
 
   const filteredCommands = useMemo(() => {
     const q = input.match(/(?:^|\s)\/(\S*)$/)?.[1] || '';
@@ -1384,7 +1421,10 @@ export const Chat: React.FC = () => {
             currentID={sessionID}
             onSelect={onSwitchSession}
             onDelete={onDeleteSession}
-            onClose={() => setShowSessions(false)}
+            onClose={() => {
+              setShowSessions(false);
+              requestAnimationFrame(() => taRef.current?.focus());
+            }}
           />
         </Portal>
       )}
@@ -1620,7 +1660,6 @@ export const Chat: React.FC = () => {
 
               {/* 3. Model 选择器 (居中模态, 跟 ModelPicker 风格) — 保持原位 */}
 
-              {/* Agent (Mode) 选择器: 暂时隐藏 (用户要求, 代码保留以便恢复)
               <div className="chat__select">
                 <button
                   data-ai-pop="agents"
@@ -1648,22 +1687,24 @@ export const Chat: React.FC = () => {
                             placeholder="选择Agent角色"
                             value={agentQuery}
                             onChange={(e) => setAgentQuery(e.target.value)}
+                            onKeyDown={handleAgentKeyDown}
                           />
                         </div>
-                        <div className="chat__modal-body">
+                        <div className="chat__modal-body" ref={agentBodyRef}>
                           {filteredAgents.length === 0 && (
                             <div className="chat__modal-empty">无匹配 agent</div>
                           )}
-                          {filteredAgents.map((a: any) => {
+                          {filteredAgents.map((a: any, idx: number) => {
                             const id = a.id || a.name;
                             const isActive = id === currentAgent;
+                            const highlighted = idx === agentActiveIndex;
                             const desc = a.description || AGENT_DESC[id] || '';
                             return (
                               <div
                                 key={id}
                                 role="button"
                                 tabIndex={0}
-                                className={`chat__modal-item${isActive ? ' is-active' : ''}`}
+                                className={`chat__modal-item${isActive ? ' is-active' : ''}${highlighted ? ' is-highlighted' : ''}`}
                                 onClick={() => onSwitchAgent(id)}
                                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSwitchAgent(id); }}
                               >
@@ -1685,7 +1726,6 @@ export const Chat: React.FC = () => {
                   </Portal>
                 )}
               </div>
-              */}
 
               <div className="chat__select">
                 <button
@@ -1712,6 +1752,8 @@ export const Chat: React.FC = () => {
                         setCurrentProvider(providerID);
                         modelPrefs.setDefault(id, providerID);
                         setShowModels(false);
+                        // 选完模型回到 input, 光标放末尾继续输入
+                        requestAnimationFrame(() => taRef.current?.focus());
                       }}
                       onClose={() => setShowModels(false)}
                       onProvidersChanged={async () => {

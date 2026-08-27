@@ -48,11 +48,16 @@ export const SessionsModal: React.FC<SessionsModalProps> = ({
   onClose,
 }) => {
   const [query, setQuery] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { searchRef.current?.focus(); }, []);
 
-  const filtered = useMemo(() => {
+  // 搜索 / 列表变化时高亮重置
+  useEffect(() => { setActiveIndex(0); }, [query, sessions]);
+
+  const flatList = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = q
       ? sessions.filter((s) => (s?.title || '').toLowerCase().includes(q))
@@ -60,15 +65,53 @@ export const SessionsModal: React.FC<SessionsModalProps> = ({
     return [...list].sort((a, b) => sessionTime(b) - sessionTime(a));
   }, [sessions, query]);
 
+  const filtered = flatList; // 兼容旧 groups 用
+
   const groups = useMemo(() => {
     const map = new Map<string, any[]>();
-    for (const s of filtered) {
+    for (const s of flatList) {
       const label = groupLabel(sessionTime(s));
       if (!map.has(label)) map.set(label, []);
       map.get(label)!.push(s);
     }
-    return GROUP_ORDER.filter((l) => map.has(l)).map((l) => ({ label: l, items: map.get(l)! }));
-  }, [filtered]);
+    return GROUP_ORDER
+      .filter((l) => map.has(l))
+      .map((l) => ({ label: l, items: map.get(l)! }));
+  }, [flatList]);
+
+  // 键盘 ↑↓ 导航 + Enter 选中
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
+    if (flatList.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIndex((i) => (i + 1) % flatList.length);
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIndex((i) => (i - 1 + flatList.length) % flatList.length);
+      return;
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const s = flatList[activeIndex];
+      if (s) onSelect(s.id);
+      return;
+    }
+  };
+
+  // 高亮项跟随滚动
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const el = body.querySelector('.is-highlighted');
+    if (!el) return;
+    const bRect = body.getBoundingClientRect();
+    const eRect = el.getBoundingClientRect();
+    if (eRect.top < bRect.top) body.scrollTop += eRect.top - bRect.top;
+    else if (eRect.bottom > bRect.bottom) body.scrollTop += eRect.bottom - bRect.bottom;
+  }, [activeIndex]);
 
   return (
     <div
@@ -99,12 +142,12 @@ export const SessionsModal: React.FC<SessionsModalProps> = ({
             ref={searchRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+            onKeyDown={handleKeyDown}
             placeholder="搜索会话标题"
           />
         </div>
 
-        <div className="chat__modal-body">
+        <div className="chat__modal-body" ref={bodyRef}>
           {filtered.length === 0 && (
             <div className="chat__modal-empty">
               {sessions.length === 0 ? '暂无历史会话' : '无匹配会话'}
@@ -115,6 +158,7 @@ export const SessionsModal: React.FC<SessionsModalProps> = ({
               <div className="chat__modal-group-title">{g.label} · {g.items.length}</div>
                   {g.items.map((s) => {
                 const active = s.id === currentID;
+                const highlighted = flatList.indexOf(s) === activeIndex;
                 const t = sessionTime(s);
                 const label = s.title || `会话 ${(s.id || '').slice(0, 8)}`;
                 return (
@@ -122,7 +166,7 @@ export const SessionsModal: React.FC<SessionsModalProps> = ({
                     key={s.id}
                     role="button"
                     tabIndex={0}
-                    className={`chat__modal-item chat__sess-item${active ? ' is-active' : ''}`}
+                    className={`chat__modal-item chat__sess-item${active ? ' is-active' : ''}${highlighted ? ' is-highlighted' : ''}`}
                     onClick={() => onSelect(s.id)}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect(s.id); }}
                   >
