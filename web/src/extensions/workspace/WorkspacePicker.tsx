@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 import { appBaseUrl, cwdHeader, effectiveCwd } from '../../service/env';
+import { addRecent } from './recent';
 
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\"'\"'`)}'`;
@@ -140,6 +141,7 @@ const expandHome = (p: string): string => {
     setLoading(true); setError('');
     try {
       localStorage.setItem('APP_CWD', dir);
+      addRecent(dir);
       window.location.reload();
     } catch (e: any) { setError(e?.message || '切换失败'); }
     finally { setLoading(false); }
