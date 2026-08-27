@@ -27,7 +27,7 @@ console.log('[pdf] packaging:', OUT)
 fs.rmSync(STAGE, { recursive: true, force: true })
 fs.mkdirSync(path.join(STAGE, 'extension'), { recursive: true })
 
-// 2. 复制 package.json + dist
+// 2. 复制 package.json + dist + pdfjs (自包含 pdf.js 静态资源)
 fs.copyFileSync(PKG_PATH, path.join(STAGE, 'extension', 'package.json'))
 function copyDir(src, dst) {
   fs.mkdirSync(dst, { recursive: true })
@@ -39,6 +39,13 @@ function copyDir(src, dst) {
   }
 }
 copyDir(SRC_DIST, path.join(STAGE, 'extension', 'dist'))
+const PDFJS_SRC = path.join(ROOT, 'pdfjs')
+if (fs.existsSync(PDFJS_SRC)) {
+  copyDir(PDFJS_SRC, path.join(STAGE, 'extension', 'pdfjs'))
+  console.log('[pdf]   bundled pdfjs:', PDFJS_SRC, '→', 'extension/pdfjs/')
+} else {
+  console.warn('[pdf]   pdfjs/ 不存在, 跳过. webview 会回退到 cdn (如不可达会失败).')
+}
 
 // 3. [Content_Types].xml
 fs.writeFileSync(

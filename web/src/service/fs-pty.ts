@@ -19,6 +19,7 @@
 
 import { detectPlatform, getShellOps, pickShellKind, type ShellKind, type ShellOps } from './shell-ops';
 import { appBaseUrl, cwdHeader, effectiveCwd } from './env';
+import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 interface Pending {
   resolve: (out: { ok: boolean; output: string }) => void;
@@ -56,16 +57,18 @@ class FsPty {
     const cwd = effectiveCwd();
     if (!cwd) throw new Error('fs pty: no cwd (APP_CWD unset and hostCwd not yet probed)');
 
-    // 1. 探测可用 shell (v1: GET /pty/shells?directory=<cwd>)
+    const sdk = createOpencodeClient({
+      baseUrl: base,
+      headers: cwdHeader(),
+      responseStyle: 'fields',
+      throwOnError: true,
+    });
+
+    // 1. SDK pty.shells 探测可用 shell
     let shellList: Array<{ name: string; path: string; acceptable: boolean }> = [];
     try {
-      const res = await fetch(`${base}/pty/shells`, {
-        headers: { Accept: 'application/json', ...cwdHeader() },
-      });
-      if (res.ok) {
-        const j = await res.json();
-        if (Array.isArray(j)) shellList = j;
-      }
+      const { data, error } = await sdk.pty.shells({ directory: cwd });
+      if (!error && Array.isArray(data)) shellList = data as any;
     } catch { /* 兜底 */ }
     this.shellKind = pickShellKind(shellList, detectPlatform());
     this.ops = getShellOps(this.shellKind);
@@ -74,18 +77,13 @@ class FsPty {
     const shell = pickShell(shellList, this.shellKind);
     console.log('[fs-pty] init: shellKind=', this.shellKind, 'command=', shell);
 
-    // 2. POST /pty 创建会话 (v1 端点, 跟 terminal.ts 一致)
-    const createRes = await fetch(`${base}/pty`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...cwdHeader() },
-      body: JSON.stringify({ command: shell, cwd }),
-    });
-    if (!createRes.ok) throw new Error(`fs pty: create pty failed: HTTP ${createRes.status}`);
-    const info = await createRes.json();
-    this.ptyId = info.id;
+    // 2. SDK pty.create 创建会话
+    const { data: createData, error: createErr } = await sdk.pty.create({ directory: cwd, command: shell, cwd });
+    if (createErr || !createData) throw new Error(`fs pty: create pty failed: ${(createErr as any)?.message || 'no data'}`);
+    this.ptyId = (createData as any).id;
     if (!this.ptyId) throw new Error('fs pty: create pty returned no id');
 
-    // 3. WS 连接 (v1: /pty/{id}/connect?directory=<cwd>)
+    // 3. WS 连接 (SDK 无 WS, 直连 opencode)
     const wsBase = base.replace(/^http/, 'ws');
     const ws = new WebSocket(`${wsBase}/pty/${this.ptyId}/connect?directory=${encodeURIComponent(cwd)}`);
     this.ws = ws;

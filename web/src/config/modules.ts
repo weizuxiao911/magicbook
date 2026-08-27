@@ -11,7 +11,9 @@ import { WelcomeModule } from '../extensions/welcome';
 import { ChatModule } from '../extensions/chat';
 import { WorkspaceModule } from '../extensions/workspace';
 // import { PdfReaderModule } from '../extensions/pdf';  // 内置 PDF 暂不启用, 改用 extensions/pdf vsix 走 registry 分发
-import { HtmlModule } from '../extensions/html';
+// import { HtmlModule } from '../extensions/html';       // 内置 HTML 暂不启用, 改用 extensions/html vsix 走 registry 分发
+import { PdfReaderModule } from '../extensions/pdf';    // 内置 PDF (default), extensions/pdf vsix option 并存
+// import { HtmlModule } from '../extensions/html';         // 内置 HTML 暂不启用, 改用 extensions/html vsix 走 registry 分发
 import { AgentModule } from '../service/agent';
 import { RegistryModule } from '../service/registry';
 import { FileSystemModule } from '../service/fs';
@@ -33,7 +35,8 @@ export function getBuiltinModules(_opts?: { vsixMetadata?: any[] }): any[] {
     WelcomeModule,
     ChatModule,
     WorkspaceModule,
+    PdfReaderModule,    // 内置 PDF (default priority)
     // PdfReaderModule,  // 内置 PDF 不启用, registry/vsix/numas.pdf-0.1.0.vsix 替代
-    HtmlModule,
+    // HtmlModule,       // 内置 HTML 不启用, registry/vsix/numas.html-0.1.0.vsix 替代
   ];
 }

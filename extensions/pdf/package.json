@@ -16,17 +16,18 @@
     "onCommand:pdf.open"
   ],
   "main": "./dist/extension.js",
+  "browser": "./dist/extension.js",
   "contributes": {
     "customEditors": [
       {
         "viewType": "pdfViewer",
-        "displayName": "PDF Viewer",
+        "displayName": "PDF Viewer (vsix)",
         "selector": [
           {
             "filenamePattern": "*.pdf"
           }
         ],
-        "priority": "default"
+        "priority": "option"
       }
     ],
     "languages": [

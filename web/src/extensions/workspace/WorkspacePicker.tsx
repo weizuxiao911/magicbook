@@ -19,19 +19,15 @@ const QUICK = [
 ];
 
 async function browseDir(path: string): Promise<{ path: string; directories: DirEntry[] }> {
-  const base = appBaseUrl();
-  if (!base) throw new Error('app base url not ready');
-  // encodeURI: 中文路径要 percent-encode, header 必须是 ISO-8859-1
-  const res = await fetch(`${base}/api/fs/list?path=.`, {
-    headers: { Accept: 'application/json', 'x-opencode-directory': encodeURI(path) },
-  });
-  if (!res.ok) throw new Error(`browse failed: HTTP ${res.status}`);
-  const json = await res.json();
-  const entries: Array<{ path: string; type: string }> = Array.isArray(json?.data) ? json.data : [];
+  // SDK client.file.list: 返回 FileNode[] (name, path, type, ...), 用 path 字段名直接取
+  const client = await getFsClient();
+  const { data, error } = await client.file.list({ path: '.', directory: path });
+  if (error) throw new Error(`browse failed: ${(error as any)?.message || 'unknown'}`);
+  const entries: Array<{ name: string; path: string; type: 'file' | 'directory' }> = Array.isArray(data) ? (data as any) : [];
   const directories = entries
     .filter((e) => e.type === 'directory')
     .map((e) => ({
-      name: e.path.replace(/\/+$/, '').split('/').pop() || e.path,
+      name: e.name,
       path: path.replace(/\/+$/, '') + '/' + e.path.replace(/^\/+/, ''),
     }));
   return { path: path.replace(/\/+$/, ''), directories };

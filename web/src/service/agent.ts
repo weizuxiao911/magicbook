@@ -208,19 +208,24 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
 
   async listAgents(): Promise<unknown[]> {
     await this.waitForReady();
-    const res = await fetch(`${appBaseUrl()}/agent`, { headers: { Accept: 'application/json' } });
-    if (!res.ok) throw new Error(`GET /agent failed: HTTP ${res.status}`);
-    const list = await res.json();
-    return Array.isArray(list) ? list : [];
+    // SDK client.app.agents: 参数 directory (cwd), 返回 agents 列表
+    const { data, error } = await this.withClient(async (c) => {
+      return await c.app.agents({ query: { directory: effectiveCwd() } });
+    });
+    if (error) throw new Error(`listAgents failed: ${(error as any)?.message || 'unknown'}`);
+    return Array.isArray(data) ? (data as unknown[]) : [];
   }
 
   async listModels(): Promise<AgentModel[]> {
     await this.waitForReady();
-    const res = await fetch(`${appBaseUrl()}/provider`, { headers: { Accept: 'application/json' } });
-    if (!res.ok) throw new Error(`GET /provider failed: HTTP ${res.status}`);
-    const json = await res.json();
-    const all: any[] = Array.isArray(json?.all) ? json.all : [];
-    const connected = new Set(Array.isArray(json?.connected) ? json.connected : []);
+    // SDK client.provider.list: 返回 { all, connected, default }
+    const { data, error } = await this.withClient(async (c) => {
+      return await c.provider.list({ query: { directory: effectiveCwd() } });
+    });
+    if (error) throw new Error(`listModels failed: ${(error as any)?.message || 'unknown'}`);
+    const json: any = data || {};
+    const all: any[] = Array.isArray(json.all) ? json.all : [];
+    const connected = new Set(Array.isArray(json.connected) ? json.connected : []);
     const result: AgentModel[] = [];
     for (const p of all) {
       if (!connected.has(p?.id)) continue;

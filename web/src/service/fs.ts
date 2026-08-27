@@ -310,15 +310,15 @@ export class FileSystemServiceImpl implements IFileSystem {
   // ---- 相对路径接口（OverlayFS 对接）----
 
   async list(idePath: string): Promise<FsEntry[]> {
-    // opencode /api/fs/list?path=<rel> 返回 {location, data: [{path, type}]}; type ∈ {file, directory}
-    // 路径: 不带前导 / 的相对路径 (与 read/find 一致); 空字符串 / "/" 视作 .
+    // SDK client.file.list: 返回 FileNode[] (name, path, absolute, type: 'file'|'directory', ignored)
     const norm = !idePath || idePath === '/' ? '/' : idePath.replace(/\/+$/, '');
     const queryPath = norm === '/' ? '.' : norm.replace(/^\/+/, '');
-    const json = await httpJson<{ data: Array<{ path: string; type: string }> }>(
-      `${appBaseUrl()}/api/fs/list?path=${encodeURIComponent(queryPath)}`,
-    );
-    const entries: FsEntry[] = (json.data || []).map((e) => ({
-      name: e.path.split('/').filter(Boolean).pop() || e.path,
+    const c = this.ensureClient()
+    const cwd = effectiveCwd()
+    const { data, error } = await c.file.list({ path: queryPath, directory: cwd })
+    if (error) throw new Error(`fs list failed: ${idePath}: ${(error as any)?.message || 'unknown'}`)
+    const entries: FsEntry[] = (data || []).map((e) => ({
+      name: e.name,
       type: e.type === 'directory' ? 'directory' : 'file',
     }));
     // 回填 stat 缓存 (meta 直接命中, 避免重复 list)
@@ -364,14 +364,29 @@ export class FileSystemServiceImpl implements IFileSystem {
     return { path: idePath, type: entry.type, size: 0 };
   }
 
-  async read(idePath: string): Promise<string> {
-    // opencode /api/fs/read/<relpath> 返回 text/plain; 路径不能带前导 /
-    const res = await fetch(
-      `${appBaseUrl()}/api/fs/read/${relPathForRead(idePath)}`,
-      { headers: { ...cwdHeader() } },
-    );
-    if (!res.ok) throw new Error(`fs read ${res.status}: ${idePath}`);
-    return res.text();
+  async read(idePath: string): Promise<Uint8Array> {
+    // 走 SDK client.file.read: 返回 FileContent { type: 'text'|'binary', content, encoding?, mimeType? }.
+    //   文本: content 是 utf-8 字符串 → TextEncoder → Uint8Array (跟 vscode API 一致).
+    //   binary: content 是 base64 → atob → Uint8Array (原始 bytes, 不再 utf-8 强解避免损坏).
+    //   优势: 30MB+ 大文件 (PDF 等) 不再 500, mimeType 拿到, bytes 真实.
+    const c = this.ensureClient()
+    const relPath = relPathForRead(idePath)
+    const cwd = effectiveCwd()
+    console.log('[fs.read] start:', { relPath, cwd })
+    const { data, error } = await c.file.read({ path: relPath, directory: cwd })
+    if (error || !data) {
+      console.error('[fs.read] fail:', { relPath, error, hasData: !!data })
+      throw new Error(`fs read failed: ${idePath}: ${(error as any)?.message || 'no data'}`)
+    }
+    console.log('[fs.read] ok:', { relPath, type: data.type, mimeType: data.mimeType, len: data.content.length, encoding: data.encoding })
+    if (data.type === 'binary') {
+      const b64 = (data.encoding === 'base64' ? data.content : btoa(data.content)).replace(/\s+/g, '')
+      const bin = atob(b64)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      return bytes
+    }
+    return new TextEncoder().encode(data.content)
   }
 
   /**
@@ -393,40 +408,23 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   /**
-   * 二进制读 (无损): 直接 fetch opencode /api/fs/read + arrayBuffer.
-   * 不走 PTY base64 (二进制经 UTF-8 解码会破坏), 跟 animbook 一致.
-   * relPath: 相对 workspace 的路径 (如 '数据结构.pdf'), 兼容 '/xxx' 前缀.
+   * 二进制读 (无损, 大文件安全): 走 FsPty 跑 `base64 <abs>`, 浏览器端 atob 解码.
+   *   跟 readBinary 思路一致, 但接受 relPath (workspace 内路径) → absPath 拼.
+   *   原 fetch opencode /api/fs/read 对 30MB+ 大文件 (PDF 等) 返回 500; FsPty
+   *   走平台原生 base64 命令读文件, 绕开 opencode 后端 30MB 限制.
+   *   timeout: 30s (30MB base64 编码/传输耗时).
+   *   注: 不支持 onProgress, FsPty 一次性返回 (跟 readBinary 一致).
    */
-  async readBinaryAbsolute(relPath: string, opts?: { signal?: AbortSignal; onProgress?: (l: number, t: number) => void }): Promise<Uint8Array> {
-    const base = appBaseUrl();
-    if (!base) throw new Error('fs readBinaryAbsolute: base url not ready');
-    const parts = relPath.split('/').filter(Boolean);
-    const name = parts.pop() || '';
-    if (!name) throw new Error(`fs readBinaryAbsolute: empty name ${relPath}`);
-    const dir = parts.join('/');
-    const url = `${base}/api/fs/read/${encodeURIComponent(name)}?directory=${encodeURIComponent(dir)}`;
-    const res = await fetch(url, { headers: { ...cwdHeader() }, signal: opts?.signal });
-    if (!res.ok) throw new Error(`fs readBinaryAbsolute: HTTP ${res.status}`);
-    if (!res.body) {
-      const buf = await res.arrayBuffer();
-      opts?.onProgress?.(buf.byteLength, buf.byteLength);
-      return new Uint8Array(buf);
-    }
-    const reader = res.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let loaded = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        chunks.push(value);
-        loaded += value.byteLength;
-        opts?.onProgress?.(loaded, loaded);
-      }
-    }
-    const out = new Uint8Array(loaded);
-    let off = 0;
-    for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+  async readBinaryAbsolute(relPath: string): Promise<Uint8Array> {
+    const ops = await this.ops();
+    const abs = absPath(relPath);
+    const { ok, output } = await getFsPty().exec(ops.readFileBase64(abs), 30000);
+    if (!ok) throw new Error(`fs readBinaryAbsolute: pty exec failed ${relPath}`);
+    const b64 = output.replace(/\s+/g, '');
+    if (!b64) throw new Error(`fs readBinaryAbsolute: empty content ${relPath}`);
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
   }
 
@@ -527,14 +525,14 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   async find(idePath: string, pattern = '*'): Promise<string[]> {
-    // opencode /find/file?query=<pat>&type=file&directory=<cwd-rel>
-    // 注: directory 字段是搜索根, 不是工作目录; 我们把 IDE 路径当搜索根
+    // SDK client.find.files: 参数 query (搜索模式), type, directory
+    //   注: directory 是搜索根, 不是工作目录; 我们把 IDE 路径当搜索根
     const dir = !idePath || idePath === '/' ? '.' : idePath.replace(/^\/+/, '');
-    const type = 'file';
-    const json = await httpJson<string[]>(
-      `${appBaseUrl()}/find/file?query=${encodeURIComponent(pattern)}&type=${type}&directory=${encodeURIComponent(dir)}`,
-    );
-    return Array.isArray(json) ? json : [];
+    const c = this.ensureClient()
+    const cwd = effectiveCwd()
+    const { data, error } = await c.find.files({ query: pattern, type: 'file', directory: dir })
+    if (error) throw new Error(`fs find failed: ${idePath}: ${(error as any)?.message || 'unknown'}`)
+    return Array.isArray(data) ? (data as any[]).map(String) : []
   }
 
   /**

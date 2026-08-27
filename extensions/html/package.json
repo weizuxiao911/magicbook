@@ -1,0 +1,66 @@
+{
+  "name": "html",
+  "displayName": "HTML Viewer",
+  "description": "HTML 预览/编辑 (vscode customEditor + webview iframe srcDoc 渲染, 浮动工具栏含刷新/编辑; 切到 vscode 编辑器改 HTML, 改动自动同步回 webview)",
+  "version": "0.1.0",
+  "publisher": "numas",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCustomEditor:htmlViewer",
+    "onCommand:html.open"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "htmlViewer",
+        "displayName": "HTML Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.html"
+          },
+          {
+            "filenamePattern": "*.htm"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "languages": [
+      {
+        "id": "html",
+        "extensions": [
+          ".html",
+          ".htm"
+        ],
+        "aliases": [
+          "HTML"
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "html.open",
+        "title": "Open HTML",
+        "category": "HTML"
+      }
+    ]
+  },
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "compile:bundle": "node esbuild.config.mjs",
+    "build": "npm run clean && npm run compile:bundle",
+    "package": "npm run build && node scripts/package.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/vscode": "^1.75.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.4"
+  }
+}

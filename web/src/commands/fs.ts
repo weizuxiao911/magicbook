@@ -33,7 +33,7 @@ export interface IFileSystem {
   /** 文件元信息（BrowserFS stat 适配的取值源） */
   meta(idePath: string): Promise<FileMeta>;
   /** 读文件（IDE 相对路径）, 返回 utf-8 字符串 */
-  read(idePath: string): Promise<string>;
+  read(idePath: string): Promise<Uint8Array>;
   /** 读文件为二进制（IDE 相对路径） */
   readBinary(idePath: string): Promise<Uint8Array>;
   /** 写文件（覆盖, 二进制安全: 字符串或 {base64}） */

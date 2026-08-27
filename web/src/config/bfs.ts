@@ -97,8 +97,9 @@ export class RemoteFS extends BaseFileSystem {
     const rel = workspaceRel(fname);
     getFileSystemService()
       .read(rel)
-      .then((text) => {
-        const buf = Buf.from(text);
+      .then((bytes) => {
+        // service/fs.read 返 Uint8Array (vscode API 一致): text 已 TextEncoder, binary 是原始 bytes
+        const buf = Buf.from(bytes);
         cb(null, encoding === null ? buf : buf.toString(encoding as any));
       })
       .catch(() => cb(ApiError.ENOENT(fname)));
@@ -111,8 +112,8 @@ export class RemoteFS extends BaseFileSystem {
     }
     const rel = workspaceRel(p);
     Promise.all([getFileSystemService().meta(rel), getFileSystemService().read(rel)])
-      .then(([meta, text]) => {
-        cb(null, new NoSyncFile(this, p, flags, toStats(meta), Buf.from(text)));
+      .then(([meta, bytes]) => {
+        cb(null, new NoSyncFile(this, p, flags, toStats(meta), Buf.from(bytes)));
       })
       .catch(() => cb(ApiError.ENOENT(p)));
   }
