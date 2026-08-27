@@ -1070,7 +1070,7 @@ export const Chat: React.FC = () => {
   const runClientCmd = useCallback(async (cmd: string) => {
     try {
       switch (cmd) {
-        case 'model': {
+        case 'models': {
           // TUI /models 同款: 唤起模型选择
           setModelPickerView('select');
           setShowModels(true);
@@ -1103,14 +1103,14 @@ export const Chat: React.FC = () => {
           await onNewSession();
           break;
         }
-        case 'skill': {
+        case 'skills': {
           setShowSkills(true);
           setShowModels(false);
           setShowAgents(false);
           setShowCommands(false);
           break;
         }
-        case 'session': {
+        case 'sessions': {
           setShowSessions(true);
           void loadSessions();
           setShowModels(false);
@@ -1119,7 +1119,7 @@ export const Chat: React.FC = () => {
           setShowSkills(false);
           break;
         }
-        case 'agent': {
+        case 'agents': {
           setShowAgents(true);
           setShowModels(false);
           setShowCommands(false);
@@ -1580,7 +1580,7 @@ export const Chat: React.FC = () => {
               onChange={onInput}
               onKeyDown={onKeyDown}
               onPaste={onPaste}
-              placeholder="Ask anything, / for commands, @ for context..."
+              placeholder="有什么我可以帮忙的吗? 可以输入/召唤魔法; 输入@选择智能体 🎉"
               rows={1}
             />
             <div className="chat__input-bar">
