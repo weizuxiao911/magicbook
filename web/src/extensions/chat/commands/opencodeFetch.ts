@@ -12,8 +12,10 @@ type SdkClient = ReturnType<typeof createOpencodeClient>;
 function getSdkConfig() {
   const c = getGlobalOpencodeClient() as SdkClient | null;
   if (!c) throw new Error('opencodeFetch: SDK client not ready');
-  // SDK v2 client.config 是 getter, 返回 { baseUrl, headers, ... }
-  const cfg = (c as any).getConfig ? (c as any).getConfig() : (c as any).config;
+  // SDK v2: c 是 OpencodeClient (HeyApiClient 子类), baseUrl/headers 存在 inner client._config
+  // 路径: c.client (inner HeyApiClient) → getConfig() → { baseUrl, headers, ... }
+  const inner = (c as any).client;
+  const cfg = (inner && typeof inner.getConfig === 'function') ? inner.getConfig() : ((c as any).config || {});
   const baseUrl: string = cfg?.baseUrl || '';
   const headers: Record<string, string> = { ...(cfg?.headers || {}) };
   if (!baseUrl) throw new Error('opencodeFetch: SDK baseUrl missing');
