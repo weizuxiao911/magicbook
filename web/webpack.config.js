@@ -236,7 +236,7 @@ const config = {
     devServer: {
         allowedHosts: 'all',
         host: '0.0.0.0',
-        // 端口由 cli 注入 (process.env.WEB_PORT), 兜底 7788 (直跑 client 时的默认)
+        // 端口由 cli.js 注入 (WEB_PORT env), 兜底 7788
         port: parseInt(process.env.WEB_PORT || '7788', 10),
         historyApiFallback: { disableDotRule: true },
         hot: true,
@@ -245,4 +245,5 @@ const config = {
         },
     },
 };
+
 exports.default = config;

@@ -3,13 +3,12 @@
   "version": "0.1.0",
   "description": "Numas (牛马们) — 打工人首选工作模式 (npx github:weizuxiao911/numas)",
   "bin": {
-    "numas": "cli/bin/cli.cjs"
+    "numas": "./cli.js"
   },
   "scripts": {
-    "dev": "npm --prefix cli run web -- --port 3100 --hostname 127.0.0.1 --cors http://127.0.0.1:7788",
-    "serve": "npm --prefix cli run serve -- --port 3100 --hostname 127.0.0.1"
+    "dev": "node cli.js"
   },
   "dependencies": {
-    "tsx": "^4.23.12"
+    "opencode-ai": "^1.18.11"
   }
 }

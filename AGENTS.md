@@ -15,13 +15,13 @@
 
 | 端 | 目录 | 职责 |
 | --- | --- | --- |
-| 入口 | `cli/` | 进程编排器: npx bin + web/serve 路由 + opencode 进程组管理 |
-| 客户端 | `web/` | codeblitz 容器 + 8 service + 4 extension |
-| 后端 | opencode (外部) | AI + 终端 PTY + 文件系统 |
+| 入口 | `cli.js` (根) | npx bin 入口: 装 web deps + spawn `npm run dev` (detached), webpack 内部启 opencode |
+| 客户端 | `web/` | codeblitz 容器 + 8 service + 4 extension; webpack.config.js 内置启 opencode + 清理 |
+| 后端 | opencode (外部) | AI + 终端 PTY + 文件系统; webpack spawn `opencode serve` |
 | 扩展 | `extensions/` | vsix 源码 |
-| 分发 | `registry/` | vsix 扩展分发 (独立) |
+| 分发 | `registry/` | vsix 扩展分发 (代码保留, dev 不启动) |
 
-架构: client → opencode 直连, 无中间层. 单一事实源是 cli 入口. 详图见 README.
+架构: client → opencode 直连, 无中间层. 进程树: cli.js → npm run dev → webpack → opencode (同进程组, cli.js 退出时整组杀). 详图见 README.
 
 ## 品牌资产
 
@@ -39,15 +39,15 @@
 
 **1. 砍中间层, client → opencode 直连**: 中间层 HTTP 反代导致写文件 409 死锁 (单 session 一次只能跑一个 shell) + 终端 ws 卡死 + CORS 散落. 解法: 写操作走单例 PTY, 读操作走全局 API.
 
-**2. 端口单一事实源 (cli)**: 改 cli `--port` 一次到位, 透 process.env 注入 webpack, 避免 .env 跟 cli 漂移.
+**2. 端口单一事实源 (opencode 24096 / webpack 7788)**: webpack.config.js 内部启 opencode, 同 config 同时定端口, 走 env (`OPENCODE_PORT` / `WEB_PORT` / `OPENCODE_WEB_PORT`), .env 兜底.
 
 **3. fs 写走单例 PTY (FsPty)**: 替代 `client.session.shell`. PTY 是全局的, 无 session 限制, promise chain 串行化. 0 个 409.
 
 **4. 平铺 `core/` → `commands/` `config/` `styles/`**: 历史 core/commands/ + core/config/ + core/styles/ 三层嵌套冗余, 拍平到 src/ 根, 删 core/. 0 行逻辑改动.
 
-**5. npx 一行启动 (cli/bin/cli.cjs)**: 公开 GitHub 仓库, npx github:user/repo 自动 clone + install + 跑 bin. 零发布成本.
+**5. npx 一行启动 (根 `cli.js`)**: 公开 GitHub 仓库, `npx github:user/repo` 自动拉 tarball + install + 跑 bin. 零发布成本. bin 单文件, 不需要 cli/ 子目录编排.
 
-**6. 依赖下沉**: root 只留 `tsx`, client 全套 react/codeblitz/webpack, cli 只 `tsx` + `typescript` (删了 opencode-ai 174M). 各管各, root node_modules 11M.
+**6. 依赖下沉**: root 只留 `opencode-ai` (opencode 二进制, 提供给 webpack 启), client 全套 react/codeblitz/webpack. root node_modules 0M (opencode-ai 装在 web/node_modules).
 
 **.env**: 搬到 `web/.env.development` (client 局部). webpack 优先 process.env, 兜底读 .env.
 
