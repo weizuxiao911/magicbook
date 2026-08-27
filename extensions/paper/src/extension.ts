@@ -99,8 +99,9 @@ export function activate(context: vscode.ExtensionContext) {
       }
     } catch { /* not supported */ }
     const pending = Array.from(uris).filter((u) => !panels.has(u))
-    console.log(`[paper] self-heal attempt=${attempt} uris=${uris.size} pending=${pending.length}`)
+    console.log(`[paper] self-heal attempt=${attempt} uris=${uris.size} pending=${pending.length} uris=[${Array.from(uris).join(', ')}] pending=[${pending.join(', ')}]`)
     if (pending.length) {
+      console.log(`[paper] self-heal firing vscode.openWith: ${pending[0]}`)
       void vscode.commands.executeCommand('vscode.openWith', vscode.Uri.parse(pending[0]), PAPER_CUSTOM_EDITOR_VIEW_TYPE)
       return
     }
