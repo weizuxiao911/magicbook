@@ -64,7 +64,8 @@ const config = {
     watchOptions: {
         // 排除输出/缓存/运行期数据目录, 避免删除/重建目录时 watcher ENOENT 风暴杀掉 webpack
         ignored: [
-            '**/node_modules/**',
+            // dev trace: 临时把 customEditors.js 从排除中拿掉, 让我们改 node_modules 也能热重载
+            '**/node_modules/(?!@opensumi/ide-extension/lib/browser/vscode/contributes/customEditors.js)',
             '**/.webpack-cache/**',
             '**/dist/**',
             '**/.playwright-screenshots/**',
@@ -131,13 +132,12 @@ const config = {
                 test: /\.tsx?$/,
                 exclude: /node_modules/,
                 use: [{
-                        loader: 'ts-loader',
+                        loader: 'esbuild-loader',
                         options: {
-                            transpileOnly: true,
-                            experimentalWatchApi: true,
-                            // 启用 loader 缓存: 增量构建只重新编译改动文件, 避免 monaco-editor
-                            // 等大依赖在每次 webpack-dev-server 重建时被重新走一遍
-                            compilerOptions: { sourceMap: false },
+                            // esbuild-loader 默认 tsx=transform, target=es2015; loader 内置 ts 配置
+                            // 不需要 tsconfig (但项目里有 src/ tsconfig.json 给 src/ 自己的 typecheck 用, 不影响构建)
+                            loader: 'tsx',
+                            target: 'es2020',
                         },
                     }],
             },
