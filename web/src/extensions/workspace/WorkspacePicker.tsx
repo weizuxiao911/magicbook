@@ -2,7 +2,8 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 import { appBaseUrl, cwdHeader, effectiveCwd } from '../../service/env';
-import { addRecent } from './recent';
+import { setCwd } from '../../service/workspace';
+import { getRecent } from './recent';
 
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\"'\"'`)}'`;
@@ -88,6 +89,8 @@ export const WorkspacePicker: React.FC = () => {
   const [mkName, setMkName] = useState('');
   const [active, setActive] = useState(0);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [recent, setRecent] = useState<string[]>(() => getRecent());
+  // 监听 recent 变化 (e.g. 切到某条 recent 后 addRecent 触发)
 // 用户家目录: opencode /path 返回, 用于展开 QUICK 里的 ~ 路径 (opencode 不展开 ~, 必须给绝对路径)
 const [home, setHome] = useState('');
 
@@ -116,6 +119,7 @@ const expandHome = (p: string): string => {
   useEffect(() => {
     const h = async () => {
       setOpen(true); setDirs([]); setSelected(null); setError(''); setMkMode(false); setMkName('');
+      setRecent(getRecent()); // 打开时刷新一次
       setTimeout(async () => {
         inputRef.current?.focus();
         // 初始路径: APP_CWD (用户选) → hostCwd (opencode /path 注入) → 现拉一次 (兜底)
@@ -133,16 +137,21 @@ const expandHome = (p: string): string => {
         doBrowse(start || '/');
       }, 100);
     };
-    window.addEventListener('workspace:show-picker', h);
-    return () => window.removeEventListener('workspace:show-picker', h);
+    window.addEventListener('workspace:request-show', h);
+    // recent 列表变化 (切到某条 recent 触发 addRecent → workspace:recent-changed)
+    const onRecentChanged = () => setRecent(getRecent());
+    window.addEventListener('workspace:recent-changed', onRecentChanged);
+    return () => {
+      window.removeEventListener('workspace:request-show', h);
+      window.removeEventListener('workspace:recent-changed', onRecentChanged);
+    };
   }, [doBrowse]);
 
   const confirm = useCallback(async (dir: string) => {
     setLoading(true); setError('');
     try {
-      localStorage.setItem('APP_CWD', dir);
-      addRecent(dir);
-      window.location.reload();
+      // 唯一变更入口 (写 APP_CWD + recent + 派 workspace:changed + reload)
+      setCwd(dir);
     } catch (e: any) { setError(e?.message || '切换失败'); }
     finally { setLoading(false); }
   }, []);
@@ -208,6 +217,29 @@ const expandHome = (p: string): string => {
                 <span>{q.name}</span>
               </button>
             ))}
+            {recent.filter((p) => p !== currentPath).slice(0, 5).length > 0 && (
+              <>
+                <div className="wp-side-title" style={{ marginTop: 8 }}>最近</div>
+                {recent
+                  .filter((p) => p !== currentPath)
+                  .slice(0, 5)
+                  .map((p) => {
+                    const name = p.split('/').filter(Boolean).pop() || p;
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        className="wp-side-item wp-side-item--recent"
+                        title={p}
+                        onClick={() => setCwd(p)}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /><path d="M12 7v5l3 2" /></svg>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                      </button>
+                    );
+                  })}
+              </>
+            )}
           </div>
           <div className="wp-main" onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}>
             {loading && <div className="wp-loading">加载中…</div>}

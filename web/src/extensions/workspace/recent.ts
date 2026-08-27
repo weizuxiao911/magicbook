@@ -3,11 +3,10 @@
  *
  * - localStorage key: WORKSPACE_RECENT, value: JSON string[] of cwd paths
  * - 最多 5 条, 最新在前; 重复路径移动到首位
- * - 切换目录时 (WorkspacePicker 确认 / 下拉框点击最近项) 调用 addRecent 记录
- * - 下拉框 (ActionsView 顶部) 调用 getRecent 展示快速切换
+ * - 唯一变更入口在 service/workspace.ts: setCwd() 内部 addRecent 后写 APP_CWD + reload
+ * - UI 层 (chat 选择器等) 只读 getRecent 展示
  *
- * 与 WorkspacePicker 一致: 切换路径 = localStorage.setItem('APP_CWD', dir)
- *   + window.location.reload() (opencode/fs/agent 全部 reload 后重连)
+ * 不再提供 switchToRecent — 切目录统一走 setCwd, 避免散落变更入口
  */
 
 const KEY = 'WORKSPACE_RECENT';
@@ -32,20 +31,12 @@ export function getRecent(): string[] {
   return read();
 }
 
-/** 把 dir 放到第 1 位; 已存在则去重后前移; 超过 MAX 截断 */
+/** 把 dir 放到第 1 位; 已存在则去重后前移; 超过 MAX 截断.
+ *  仅 service/workspace.setCwd 内部调用, 外部 UI 不应直接调. */
 export function addRecent(dir: string): string[] {
   if (!dir) return read();
   const next = [dir, ...read().filter((p) => p !== dir)].slice(0, MAX);
   write(next);
-  // 通知所有监听者 (ActionsView 等) 刷新 UI
   window.dispatchEvent(new CustomEvent('workspace:recent-changed', { detail: next }));
   return next;
-}
-
-/** 切换到指定 dir: 写 APP_CWD + 记录 recent + 刷新页面 (跟 WorkspacePicker 流程一致) */
-export function switchToRecent(dir: string): void {
-  if (!dir) return;
-  addRecent(dir);
-  localStorage.setItem('APP_CWD', dir);
-  window.location.reload();
 }

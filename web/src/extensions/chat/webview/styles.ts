@@ -698,6 +698,11 @@ export const styles = `
   background: var(--ai-active);
 }
 .chat__modal-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat__modal-item-icon { font-size: 16px; line-height: 1; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 22px; }
+.chat__modal-item-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.chat__modal-item-name { font-weight: 600; color: var(--ai-fg); }
+.chat__modal-item-desc { font-size: 11px; color: var(--ai-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat__modal-item-check { color: var(--ai-accent); display: inline-flex; flex-shrink: 0; }
 .chat__skill-item { align-items: flex-start; }
 .chat__skill-body {
   flex: 1; min-width: 0;

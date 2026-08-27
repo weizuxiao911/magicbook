@@ -21,6 +21,7 @@ import {
   isAiReady,
 } from '@/extensions/chat/commands/api';
 import { modelPrefs } from '@/extensions/chat/commands/modelPrefs';
+import { getCwd, subscribeCwd, requestShowPicker } from '@/service/workspace';
 import { PartRenderer } from './parts/PartRenderer';
 import { PermissionModal } from './parts/PermissionModal';
 import { ModelPicker } from './parts/ModelPicker';
@@ -157,6 +158,23 @@ export const Chat: React.FC = () => {
     const rt = (window as any).__APP_OPENCODE_RUNTIME__;
     return rt ? { userId: rt.userId, tenantId: rt.tenantId, deployEnv: rt.deployEnv } : null;
   }, []);
+
+  // chat 输入框底部的工作目录选择器按钮 (全局唯一切换入口, 顶栏 + explorer 都已去掉)
+  // 点击直接派 workspace:request-show → WorkspacePicker 居中模态 (与 model/agent picker 风格一致)
+  const [wsCwd, setWsCwd] = useState<string>(() => getCwd());
+  useEffect(() => {
+    const refresh = () => setWsCwd(getCwd());
+    const unsub = subscribeCwd(refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      unsub();
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+  const wsName = useMemo(() => {
+    if (!wsCwd) return '未选择';
+    return wsCwd.split('/').filter(Boolean).pop() || wsCwd;
+  }, [wsCwd]);
 
   // chat 可用性: 只看 opencode SDK 是否已初始化 (agent runtime 派发 runtime-ready 后
   // 把 client 挂到 window.__APP_OPENCODE__). 不依赖 APP_CWD —— 选了工作目录只是影响
@@ -328,7 +346,6 @@ export const Chat: React.FC = () => {
       const t = e.target as HTMLElement;
       if (t.closest('.chat__mpop')
         || t.closest('.chat__modal')
-        || t.closest('.chat__agent-pop')
         || t.closest('[data-ai-pop="agents"]')
         || t.closest('[data-ai-pop="models"]')
         || t.closest('[data-ai-pop="sessions"]')) return;
@@ -336,8 +353,18 @@ export const Chat: React.FC = () => {
       setShowModels(false);
       setShowSessions(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setShowAgents(false);
+      setShowModels(false);
+      setShowSessions(false);
+    };
     document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [showAgents, showModels, showSessions]);
 
   const loadSessions = useCallback(async () => {
@@ -1518,6 +1545,20 @@ export const Chat: React.FC = () => {
               rows={1}
             />
             <div className="chat__input-bar">
+              {/* 工作目录选择器: 全局唯一切换入口, 点击直接开居中模态 (workspace:request-show → WorkspacePicker) */}
+              <button
+                type="button"
+                className="chat__bar-btn chat__bar-text"
+                title={wsCwd || '未选择工作目录'}
+                onClick={() => requestShowPicker()}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                </svg>
+                <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{wsName}</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+
               <button type="button" className="chat__bar-btn chat__bar-plus" title="上传附件" onClick={() => fileInputRef.current?.click()}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="12" y1="5" x2="12" y2="19" />
@@ -1536,34 +1577,53 @@ export const Chat: React.FC = () => {
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                 </button>
                 {showAgents && (
-                  <div className="chat__agent-pop">
-                    <div className="chat__agent-pop-head">
-                      <span className="chat__agent-pop-title">选择 Mode</span>
-                      <button type="button" className="chat__agent-pop-close" onClick={() => setShowAgents(false)}>✕</button>
+                  <Portal>
+                    <div
+                      className="chat__modal-overlay"
+                      role="dialog"
+                      aria-modal="true"
+                      onMouseDown={(e) => { if (e.target === e.currentTarget) setShowAgents(false); }}
+                    >
+                      <div className="chat__modal" style={{ width: 440, maxHeight: 'min(calc(100vh - 72px), 480px)' }}>
+                        <div className="chat__modal-header">
+                          <div className="chat__modal-title">
+                            <span className="chat__modal-title-icon">{AGENT_ICONS[currentAgent] || '✨'}</span>
+                            <span>选择 Mode</span>
+                          </div>
+                          <button
+                            type="button"
+                            className="chat__modal-x"
+                            onClick={() => setShowAgents(false)}
+                            title="关闭"
+                          >✕</button>
+                        </div>
+                        <div className="chat__modal-body" style={{ padding: '8px 0' }}>
+                          {visibleAgents.map((a: any) => {
+                            const id = a.id || a.name;
+                            return (
+                              <button
+                                key={id}
+                                type="button"
+                                className={`chat__modal-item${id === currentAgent ? ' is-active' : ''}`}
+                                onClick={() => onSwitchAgent(id)}
+                              >
+                                <span className="chat__modal-item-icon">{AGENT_ICONS[id] || '✨'}</span>
+                                <span className="chat__modal-item-body">
+                                  <span className="chat__modal-item-name">{a.name || id}</span>
+                                  <span className="chat__modal-item-desc">{a.description || AGENT_DESC[id] || ''}</span>
+                                </span>
+                                {id === currentAgent && (
+                                  <span className="chat__modal-item-check">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
-                    {visibleAgents.map((a: any) => {
-                      const id = a.id || a.name;
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          className={`chat__agent-item${id === currentAgent ? ' is-active' : ''}`}
-                          onClick={() => onSwitchAgent(id)}
-                        >
-                          <span className="chat__agent-icon">{AGENT_ICONS[id] || '✨'}</span>
-                          <span className="chat__agent-body">
-                            <span className="chat__agent-name">{a.name || id}</span>
-                            <span className="chat__agent-desc">{a.description || AGENT_DESC[id] || ''}</span>
-                          </span>
-                          {id === currentAgent && (
-                            <span className="chat__agent-check">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  </Portal>
                 )}
               </div>
 
