@@ -235,13 +235,16 @@ body.vs,
 
 /* ============= Dark 主题: 撤销 light 写死, 让 --app-* 跟随 IDE 主题变量 ============= */
 /* 背景: codeblitz-root 永远挂着 codeblitz-light, 把 --app-* 写死为 #ffffff,
-   导致切到 dark 主题时, .ab-welcome 等拓展区域仍取浅色.
-   这里用 body.design-dark / .codeblitz-dark 选择器 (specificity ≥ .codeblitz-light)
-   覆盖写死, --app-* 走 IDE 主题变量, 真正跟随切主题. */
+   .codeblitz-root.codeblitz-light 选择器 specificity = (0,2,0), 高于普通
+   body.design-dark (0,1,1), 所以单写 body.design-dark 覆盖不掉.
+   必须显式在 .codeblitz-root.codeblitz-light 之下补一条 dark 规则,
+   让 --app-* 走 IDE 主题变量, 真正跟随切主题. */
 body.design-dark,
 body.vs-dark,
 .codeblitz-dark,
-.codeblitz-root.codeblitz-dark {
+.codeblitz-root.codeblitz-dark,
+body.design-dark .codeblitz-root.codeblitz-light,
+body.vs-dark .codeblitz-root.codeblitz-light {
   --app-panel-bg: var(--editor-background, var(--vscode-editor-background, #181818));
   --app-panel-fg: var(--editor-foreground, var(--vscode-editor-foreground, #e5e7eb));
   --app-surface-base: var(--editor-background, #181818);
@@ -249,6 +252,116 @@ body.vs-dark,
   --app-surface-raised: color-mix(in srgb, var(--app-surface-base) 97%, #fff);
   --app-surface-edge: color-mix(in srgb, var(--app-surface-base) 94%, #000);
   --app-border: var(--panel-border, var(--vscode-panel-border, rgba(255, 255, 255, 0.08)));
+}
+
+/* ============= Dark 主题: 覆盖 light 写死的 !important background ============= */
+/* overrides.css:163-179 给 .ab-welcome / .kt_editor_* 写死 background: #fcfcfc !important,
+   跟变量无关, 单改 --app-panel-bg 覆盖不掉. dark 主题下用更高 specificity + !important
+   显式覆盖, 让 .editor 容器真正走深色. */
+body.design-dark .kt_editor_body___HSrwN,
+body.design-dark .kt_editor_components___cmFFV,
+body.design-dark .kt_editor_component___hOjMR,
+body.design-dark .kt_workbench_editor___JmqFp,
+body.design-dark .kt_editor_main_wrapper___x1f2H,
+body.design-dark .kt_editor_main_wrapper___jVI2r,
+body.design-dark .kt_editor_group____46Ak,
+body.design-dark .ab-welcome {
+  background: var(--editor-background, #181818) !important;
+  background-color: var(--editor-background, #181818) !important;
+}
+
+/* ============= Dark 主题: 覆盖 codeblitz 框架写死的 codeblitz-root background ============= */
+/* codeblitz 框架有: codeblitz-root.codeblitz-light { background: rgb(252, 252, 252) !important; }
+   codeblitz-root 永远挂 codeblitz-light class, 这条规则永远生效, 把整个 web 内容区
+   底层染成浅色. dark 主题下用同 specificity (后写) + !important 覆盖, 让底色跟主题. */
+body.design-dark codeblitz-root,
+body.design-dark codeblitz-root.codeblitz-light,
+body.vs-dark codeblitz-root,
+body.vs-dark codeblitz-root.codeblitz-light {
+  background: var(--app-panel-bg) !important;
+  background-color: var(--app-panel-bg) !important;
+}
+
+/* ============= Dark 主题: 覆盖 light 写死的 #ffffff !important tab / header 元素 ============= */
+/* overrides.css:316-355 给 .codeblitz-light .kt_editor_tabs / editorGroupHeader /
+   editor_tab_block_container / editor_actions / .kt_editor_tabs_scroll_wrapper
+   写死 background: #ffffff !important, dark 主题下显式覆盖, 让中间 tab 栏跟主题. */
+body.design-dark [class*="kt_editor_tabs_scroll_wrapper"],
+body.design-dark [class*="editorGroupHeader"],
+body.design-dark [class*="editor_tab_block_container"],
+body.design-dark [class*="kt_editor_tabs"],
+body.design-dark [class*="editor_actions"],
+body.design-dark [class*="kt_editor_tabs_content"],
+body.design-dark [class*="kt_editor_tabs_current_last"],
+body.design-dark [class*="kt_editor_tab_current"] {
+  background: var(--app-panel-bg) !important;
+  background-color: var(--app-panel-bg) !important;
+  background-image: none !important;
+}
+
+/* ============= Dark 主题: 覆盖 light 写死的 active tab 块 (高 specificity) ============= */
+/* overrides.css:327-334 给 .codeblitz-light [class*="editor_tab_block_container"][class*="active"]
+   写死 background-color: #ffffff + border-bottom: 2px solid #2563eb, specificity = (0,3,0)
+   高于普通 body.design-dark (0,2,1) 选择器. 显式 .codeblitz-light 父类限定 + 后代选择器
+   把 dark 规则 specificity 拉到 (0,4,1) > (0,3,0), 同时去掉 light 写死的蓝色下划线. */
+body.design-dark.codeblitz-light [class*="editor_tab_block_container"][class*="active"],
+body.design-dark.codeblitz-light [class*="editor_tab_block_container"].active,
+body.design-dark [class*="editor_tab_block_container"][class*="active"],
+body.design-dark [class*="editor_tab_block_container"].active {
+  background: var(--app-panel-bg) !important;
+  background-color: var(--app-panel-bg) !important;
+  background-image: none !important;
+  border-bottom: 0 !important;
+  color: var(--editor-foreground, #e5e7eb) !important;
+}
+
+/* ============= Dark 主题: 覆盖 OpenSumi view_container / titlebar / left_tab 写死浅色 ============= */
+/* OpenSumi 框架给 [class*="view_container___"] / [class*="titlebar___"] /
+   .design-titlebar / .left_tab / .design-left_tab 等写死 background: #ffffff !important.
+   这些覆盖了 left/right slot 内部整个 view 区域, 让 slot 即使外层深色也显示浅色.
+   dark 主题下显式覆盖. */
+body.design-dark [class*="view_container___"],
+body.design-dark [class*="titlebar___"],
+body.design-dark [class*="design-titlebar"],
+body.design-dark [class*="left_tab___"],
+body.design-dark [class*="design-left_tab"],
+body.design-dark [class*="right_tab___"],
+body.design-dark [class*="design-right_tab"],
+body.design-dark [class*="bottom_bar___"],
+body.design-dark [class*="design-bottom_bar"],
+body.design-dark [class*="kt_editor_tabs_content___"],
+body.design-dark [class*="design-kt_editor_tabs_content"],
+body.design-dark [class*="kt_editor_tabs_current_last___"],
+body.design-dark [class*="design-kt_editor_tabs_current_last"],
+body.design-dark [class*="kt_editor_tabs_current___"],
+body.design-dark [class*="design-kt_editor_tabs_current"],
+body.design-dark [class*="kt_editor_tabs_scroll___"],
+body.design-dark [class*="design-kt_editor_tabs_scroll"] {
+  background: var(--app-panel-bg) !important;
+  background-color: var(--app-panel-bg) !important;
+  background-image: none !important;
+}
+
+/* ============= Dark 主题: 撤销 light 写死的 IDE 主题变量 ============= */
+/* overrides.css:208-233 在 .codeblitz-light 等选择器下写死 --editorWidget-background / 
+   --sideBar-background / --activityBar-background / --input-background / --button-background 
+   等 = #ffffff, 跟 .codeblitz-root 永远挂 codeblitz-light 一起, 让 codeblitz 内部所有
+   IDE 标准变量永远是浅色值, 间接影响 .chat 内部 --ai-bg-elev / --ai-glass-bg 也解析为浅色.
+   dark 主题下用同 specificity + !important 覆盖, 让 IDE 变量跟随 .codeblitz-root 之外
+   OpenSumi 框架设的主题值. */
+body.design-dark .codeblitz-light,
+body.design-dark .codeblitz-root.codeblitz-light,
+body.design-dark codeblitz-root,
+body.design-dark body.vs,
+body.design-dark body.vs-light {
+  --editorWidget-background: var(--editor-background, #1c1c22) !important;
+  --editorWidget-foreground: var(--editor-foreground, #e5e7eb) !important;
+  --sideBar-background: var(--sideBar-background) !important;
+  --activityBar-background: var(--activityBar-background) !important;
+  --input-background: var(--input-background) !important;
+  --button-background: var(--button-background) !important;
+  --input-foreground: var(--input-foreground) !important;
+  --input-border: var(--input-border) !important;
 }
 
 /* 编辑器组件本体背景统一 (#151b21 → #181818) */
