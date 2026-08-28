@@ -33,16 +33,6 @@ import {
   effectiveCwd,
   secureUrl,
 } from './env';
-import {
-  detectPlatform,
-  getShellOps,
-  pickShellKind,
-  pickFsPtyShell,
-  shellQuotePosix,
-  wrapFsPtyCommand,
-  type ShellKind,
-  type ShellOps,
-} from './terminal';
 
 // ---- 工具函数 ----
 
@@ -79,31 +69,52 @@ function absPath(idePath: string): string {
   return cwd.replace(/\/+$/, '') + '/' + idePath.replace(/^\/+/, '');
 }
 
-// ---- FsPty (合并自 service/fs-pty.ts) ----
+// ---- FsPty (node worker, 同 watcher 模式) ----
+//
+// 专用 node PTY 跑 worker 脚本: 读 stdin JSON 行, 用 node fs API 执行写/删/建/移/读/stat,
+// 写 stdout JSON 行响应. 无 interactive shell → 无 zsh prompt/回显/syntax-highlight 污染,
+// 无 marker 匹配歧义, ok 由 node fs API 真实返回. 持久化连接, 串行化 promise chain.
+//
+// 协议:
+//   → {"id":"1","op":"write","path":"/abs","b64":"..."}
+//   ← {"id":"1","ok":true,"data":{...}} | {"id":"1","ok":false,"err":"..."}
+// op: write(覆盖)/append(追加)/mkdir/rm/rmdir/move/readB64/stat
 
-interface Pending {
-  resolve: (out: { ok: boolean; output: string }) => void;
-  reject: (e: Error) => void;
-  buffer: string;
-  marker: string;
-  timer: ReturnType<typeof setTimeout> | null;
-}
+const FS_PTY_WORKER = [
+  "const fs=require('fs'),path=require('path');",
+  "let buf='';",
+  "process.stdin.on('data',c=>{buf+=c;let i;while((i=buf.indexOf('\\n'))>=0){",
+  "  const line=buf.slice(0,i);buf=buf.slice(i+1);",
+  "  let r;try{r=JSON.parse(line)}catch(e){continue}",
+  "  const id=r.id,out=(ok,data,err)=>{try{process.stdout.write(JSON.stringify({id,ok,data,err})+'\\n')}catch(e){}};",
+  "  try{",
+  "    if(r.op==='write'){fs.mkdirSync(path.dirname(r.path),{recursive:true});fs.writeFileSync(r.path,Buffer.from(r.b64,'base64'));out(true,{bytes:r.b64.length});}",
+  "    else if(r.op==='append'){fs.appendFileSync(r.path,Buffer.from(r.b64,'base64'));out(true,{bytes:r.b64.length});}",
+  "    else if(r.op==='mkdir'){fs.mkdirSync(r.path,{recursive:true});out(true);}",
+  "    else if(r.op==='rm'){fs.rmSync(r.path,{recursive:true,force:true});out(true);}",
+  "    else if(r.op==='rmdir'){fs.rmSync(r.path,{force:true});out(true);}",
+  "    else if(r.op==='move'){fs.mkdirSync(path.dirname(r.to),{recursive:true});fs.renameSync(r.from,r.to);out(true);}",
+  "    else if(r.op==='readB64'){out(true,{b64:fs.readFileSync(r.path).toString('base64')});}",
+  "    else if(r.op==='stat'){const s=fs.statSync(r.path);out(true,{size:s.size,mtimeMs:Math.floor(s.mtimeMs),isDir:s.isDirectory()});}",
+  "    else out(false,null,'unknown op '+r.op);",
+  "  }catch(e){out(false,null,String(e&&e.message||e));}",
+  "}});",
+].join('');
 
 class FsPty {
   private ptyId: string | null = null;
   private ws: WebSocket | null = null;
-  private shellKind: ShellKind | null = null;
-  private ops: ShellOps | null = null;
-  /** 串行化: 上一个 exec 的 promise */
+  /** 串行化: 上一个请求的 promise */
   private queue: Promise<unknown> = Promise.resolve();
-  /** 等待中的命令 (marker 匹配前) */
-  private pending: Pending | null = null;
-  /** 累积输出 (marker 匹配前所有 ws.onmessage 拼起来) */
-  private accum = '';
+  /** 等待中的请求 (id → resolve/reject/timer) */
+  private pending = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  /** worker 响应行缓冲 (跨 ws 帧拼接 JSON 行) */
+  private respBuf = '';
+  private nextId = 1;
 
   private initPromise: Promise<void> | null = null;
 
-  /** 懒初始化: probe shell + create pty + connect ws. 幂等. */
+  /** 懒初始化: create node worker pty + connect ws. 幂等. */
   private async init(): Promise<void> {
     if (this.initPromise) return this.initPromise;
     this.initPromise = this.doInit();
@@ -116,132 +127,100 @@ class FsPty {
     const cwd = effectiveCwd();
     if (!cwd) throw new Error('fs pty: no cwd (APP_CWD unset and hostCwd not yet probed)');
 
-    const sdk = createOpencodeClient({
-      baseUrl: base,
-      headers: cwdHeader(),
-      responseStyle: 'fields',
-      throwOnError: true,
-    });
-
-    // 1. SDK pty.shells 探测可用 shell
-    let shellList: Array<{ name: string; path: string; acceptable: boolean }> = [];
-    try {
-      const { data, error } = await sdk.pty.shells({ directory: cwd });
-      if (!error && Array.isArray(data)) shellList = data as any;
-    } catch { /* 兜底 */ }
-    this.shellKind = pickShellKind(shellList, detectPlatform());
-    this.ops = getShellOps(this.shellKind);
-    (window as any).__APP_FS_PTY_OPS__ = this.ops;
-    const shell = pickFsPtyShell(shellList, this.shellKind);
-    console.log('[fs-pty] init: shellKind=', this.shellKind, 'command=', shell);
-
-    // 2. SDK pty.create 创建会话
-    const { data: createData, error: createErr } = await sdk.pty.create({ directory: cwd, command: shell, cwd });
-    if (createErr || !createData) throw new Error(`fs pty: create pty failed: ${(createErr as any)?.message || 'no data'}`);
+    const sdk = createOpencodeClient({ baseUrl: base, headers: cwdHeader(), responseStyle: 'fields', throwOnError: true });
+    console.log('[fs-pty] init node worker, cwd=', cwd);
+    const { data: createData, error: createErr } = await sdk.pty.create({ directory: cwd, command: 'node', args: ['-e', FS_PTY_WORKER], cwd });
+    if (createErr || !createData) throw new Error(`fs pty: create worker failed: ${(createErr as any)?.message || 'no data'}`);
     this.ptyId = (createData as any).id;
-    if (!this.ptyId) throw new Error('fs pty: create pty returned no id');
+    if (!this.ptyId) throw new Error('fs pty: create worker returned no id');
 
-    // 3. WS 连接 (SDK 无 WS, 直连 opencode; secureUrl 让 https 页面下 wss)
+    // WS 连接 (SDK 无 WS, 直连 opencode; secureUrl 让 https 页面下 wss)
     const wsBase = secureUrl(base).replace(/^http/, 'ws');
     const ws = new WebSocket(`${wsBase}/pty/${this.ptyId}/connect?directory=${encodeURIComponent(cwd)}`);
     this.ws = ws;
+    // opencode pty ws 的帧是 binary (Blob) — binaryType=arraybuffer 让 onmessage 同步拿 ArrayBuffer
+    ws.binaryType = 'arraybuffer';
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('fs pty: ws connect timeout')), 5000);
       ws.onopen = () => { clearTimeout(timer); resolve(); };
-      ws.onerror = (e) => { clearTimeout(timer); reject(new Error('fs pty: ws connect error')); };
+      ws.onerror = () => { clearTimeout(timer); reject(new Error('fs pty: ws connect error')); };
     });
 
-    // 4. 装消息处理: 累积 → 匹配 pending marker
-    ws.onmessage = (e) => {
-      const data = typeof e.data === 'string' ? e.data : '';
-      const trimmed = data.replace(/^\u0000+/, '');
-      if (
-        trimmed.startsWith('{"cursor"') ||
-        trimmed.startsWith('{"type":"cursor"') ||
-        trimmed.startsWith('{"type":"resize"') ||
-        (trimmed.startsWith('{') && trimmed.includes('"method"'))
-      ) {
-        return;
-      }
-      this.accum += trimmed;
-      this.matchMarker();
-    };
+    ws.onmessage = (e) => this.handleWsData((e as any).data);
     ws.onclose = () => {
-      if (this.pending) {
-        this.pending.reject(new Error('fs pty: ws closed'));
-        this.pending = null;
-      }
+      const err = new Error('fs pty: ws closed');
+      this.pending.forEach((p) => { if (p.timer) clearTimeout(p.timer); p.reject(err); });
+      this.pending.clear();
       this.ws = null;
       this.ptyId = null;
       this.initPromise = null;
     };
   }
 
-  /** 执行一条命令, 返回 { ok, output }. 串行化 (promise chain). */
-  async exec(body: string, timeoutMs = 10000): Promise<{ ok: boolean; output: string }> {
+  /** 处理一段 ws 数据: 剥离控制帧 → 按 \n 切 JSON 响应行 → dispatch */
+  private handleWsData(data: any): void {
+    let chunk: string;
+    if (typeof data === 'string') {
+      chunk = data;
+    } else if (data instanceof ArrayBuffer) {
+      chunk = new TextDecoder().decode(data);
+    } else if (data instanceof Blob) {
+      // binaryType=arraybuffer 兜底 Blob 帧
+      void data.text().then((t) => this.handleWsData(t));
+      return;
+    } else {
+      return;
+    }
+    let cleaned = chunk.replace(/\u0000/g, '');
+    // 剥离 opencode 控制帧 ({"cursor":..} / {"type":"cursor"..} / {"type":"resize"..})
+    cleaned = cleaned
+      .replace(/\{"cursor":[^}]*\}/g, '')
+      .replace(/\{"type":"(?:cursor|resize)"[^}]*\}/g, '');
+    if (!cleaned) return;
+    this.respBuf += cleaned;
+    let nl: number;
+    while ((nl = this.respBuf.indexOf('\n')) >= 0) {
+      const line = this.respBuf.slice(0, nl).trim();
+      this.respBuf = this.respBuf.slice(nl + 1);
+      if (!line) continue;
+      try {
+        const msg = JSON.parse(line);
+        this.dispatch(msg);
+      } catch { /* 拼不完整, 等下一帧 */ }
+    }
+  }
+
+  private dispatch(msg: { id?: string; ok?: boolean; data?: any; err?: string }): void {
+    // 只认带 ok 字段的 worker 响应; tty 会回显请求行 ({id,op,...} 无 ok) → 忽略
+    if (!msg || msg.id === undefined || !('ok' in msg)) return;
+    const p = this.pending.get(String(msg.id));
+    if (!p) return;
+    this.pending.delete(String(msg.id));
+    if (p.timer) clearTimeout(p.timer);
+    if (msg.ok) p.resolve({ ok: true, data: msg.data });
+    else p.reject(new Error(msg.err || 'fs pty op failed'));
+  }
+
+  /** 执行一个 node fs 操作 (串行化 promise chain) */
+  async request<T = any>(op: string, payload: Record<string, unknown>, timeoutMs = 10000): Promise<{ ok: boolean; data: T }> {
     const next = this.queue.then(async () => {
       await this.init();
-      if (!this.ops || !this.ws) throw new Error('fs pty: not initialized');
-      const marker = `__FSM_${uuid()}_${Date.now()}__`;
-      const fullCmd = wrapFsPtyCommand(body, this.ops, marker);
-      this.accum = '';
-      this.pending = {
-        resolve: () => {},
-        reject: () => {},
-        buffer: '',
-        marker,
-        timer: null,
-      };
-      const p = new Promise<{ ok: boolean; output: string }>((resolve, reject) => {
-        this.pending!.resolve = resolve;
-        this.pending!.reject = reject;
-        this.pending!.timer = setTimeout(() => {
-          if (this.pending) {
-            const cur = this.pending;
-            this.pending = null;
-            cur.reject(new Error(`fs pty: exec timeout (${timeoutMs}ms)`));
-          }
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('fs pty: not initialized');
+      const id = String(this.nextId++);
+      const line = JSON.stringify({ id, op, ...payload });
+      const p = new Promise<{ ok: boolean; data: T }>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.pending.delete(id);
+          reject(new Error(`fs pty op timeout (${timeoutMs}ms): ${op}`));
         }, timeoutMs);
+        this.pending.set(id, { resolve: resolve as any, reject, timer });
       });
-      this.ws!.send(`\r${fullCmd}\r`);
-      try {
-        const out = await p;
-        return out;
-      } finally {
-        if (this.pending?.timer) clearTimeout(this.pending.timer);
-        this.pending = null;
-      }
-    }) as Promise<{ ok: boolean; output: string }>;
+      this.ws.send(`${line}\n`);
+      return await p;
+    }) as Promise<{ ok: boolean; data: T }>;
     this.queue = next;
     return next;
   }
-
-  /** 累积里匹配 pending marker; 命中 → resolve pending, 清空 accum */
-  private matchMarker(): void {
-    if (!this.pending) return;
-    const idx = this.accum.indexOf(this.pending.marker);
-    if (idx < 0) return;
-    const output = this.accum.slice(0, idx);
-    const okMarker = this.ops?.successMarker().trim() || '';
-    const ok = okMarker ? output.includes(okMarker) : true;
-    const cur = this.pending;
-    this.pending = null;
-    this.accum = '';
-    if (cur.timer) clearTimeout(cur.timer);
-    cur.resolve({ ok, output: stripOkMarker(output, okMarker) });
-  }
-}
-
-function uuid(): string {
-  if (typeof crypto !== 'undefined' && (crypto as any).randomUUID) return (crypto as any).randomUUID();
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
-function stripOkMarker(output: string, okMarker: string): string {
-  if (!okMarker) return output;
-  const i = output.lastIndexOf(okMarker);
-  if (i < 0) return output;
-  return output.slice(0, i) + output.slice(i + okMarker.length);
 }
 
 let _fsPty: FsPty | null = null;
@@ -276,6 +255,17 @@ let watcherStdoutBuf = '';
 let watcherFireFn: ((changes: Array<{ uri: string; type: FileChangeType }>) => void) | null = null;
 /** 已同步路径 → 内容 hash (fs.watch 事件对比: 一致 = 自己写/无变化, 跳过不 fire; 不一致 = 外部改, fire) */
 const watcherSyncedHashes = new Map<string, string | null>();
+
+// ---- 真实 stat (FsPty node worker 'stat' op) ----
+
+/** 真实 stat 缓存 (IDE 路径 → {size,mtimeMs}): FsPty stat 结果; 写/外部修改后 invalidateStat 清 */
+const statCache = new Map<string, { size: number; mtimeMs: number }>();
+
+/** 清 stat 缓存 (写入/外部修改后, 保证下次 stat 拿到新值) */
+function invalidateStat(idePath: string): void {
+  const norm = !idePath || idePath === '/' ? '/' : idePath.replace(/\/+$/, '');
+  statCache.delete(norm);
+}
 
 /** 内容 hash (SHA-256 hex, 浏览器 crypto.subtle) */
 async function contentHash(bytes: Uint8Array): Promise<string> {
@@ -399,6 +389,8 @@ function handleJsonObject(obj: any): void {
         return;
       }
       console.log('[watcher] → fireFilesChange', uri, opencodeEvent, { old: synced, now: h });
+      // 外部修改: 清 stat 缓存, 下次 stat 拿新 mtime/size (编辑器重载后 checkInSync 同值)
+      invalidateStat(key);
       if (watcherFireFn) {
         watcherFireFn([{ uri, type: opencodeEvent }]);
       }
@@ -743,6 +735,7 @@ export class FileSystemServiceImpl implements IFileSystem {
         const rel = relPath.startsWith('/') ? relPath : `/${relPath}`;
         const uri = `file://${WORKSPACE_ROOT}${rel}`;
         console.log('[filesystem] fs event:', t, rel, '→ fireFilesChange', uri);
+        invalidateStat(rel);
         this.fileService.fireFilesChange({
           changes: [{ uri, type: typeMap[changeType] ?? FileChangeType.UPDATED }],
         });
@@ -798,10 +791,10 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   /**
-   * stat: opencode 没有单独的 stat endpoint, 复用 /api/fs/list 拿父目录 entries, 找 entry 拿 type.
-   *   优点: 不用 FsPty 跑 stat 命令 (interactive shell prompt/syntax highlight 干扰 stat 输出);
-   *         opencode 自己拿 type, 准
-   *   缺点: 多一次 list 请求; 但 explorer 先 readdir 后 stat, 命中缓存
+   * stat: type 复用 /api/fs/list 拿父目录 entries (opencode 自己拿 type, 准, 且不跑 PTY);
+   *       size+mtime 走 FsPty node worker 'stat' op (真实宿主磁盘 fs.statSync, 无 shell 污染).
+   *   为什么不用 meta 之前 read 全文拿长度: 读整个文件只为长度, 网络开销远大于一次 stat.
+   *   缓存: statCache (path → {size,mtimeMs}), 写/外部修改 invalidateStat 清.
    */
   private listCache = new Map<string, FsEntry[]>();
 
@@ -816,23 +809,29 @@ export class FileSystemServiceImpl implements IFileSystem {
     if (cached) {
       entry = cached.find((e) => e.name === name);
     }
-    // 未命中: list 父目录拿 entry (opencode SDK /file 不返 mtime, mtime 由 OpenSumi 内部 currentTime 兜底)
+    // 未命中: list 父目录拿 entry (opencode SDK /file 不返 mtime, mtime 由 statCache 真实 stat 补)
     if (!entry) {
       const entries = await this.list(base);
       this.listCache.set(base, entries);
       entry = entries.find((e) => e.name === name);
     }
     if (!entry) throw new Error(`stat: not found ${idePath}`);
-    // size: OpenSumi checkInSync 用 stat.size === file.size 对比, 必须真实字节数 (文件; 目录 0)
-    //   SDK list 返 FileNode 无 size, 只能 read 一次拿长度 (缓存 read 结果)
-    let size = 0;
-    if (entry.type === 'file') {
-      try {
-        const bytes = await this.read(idePath);
-        size = bytes.length;
-      } catch { /* 读不到 size=0 */ }
+    // 目录: 不需要 size/mtime (checkInSync 只对文件, setContent 目录会抛 FileIsADirectory)
+    if (entry.type === 'directory') {
+      return { path: idePath, type: 'directory', size: 0 };
     }
-    return { path: idePath, type: entry.type, size };
+    // 文件: 真实 size + mtime (FsPty worker 'stat', 缓存)
+    let st: { size: number; mtimeMs: number } | null = statCache.get(norm) ?? null;
+    if (!st) {
+      const abs = absPath(idePath);
+      const { ok, data } = await getFsPty().request<{ size: number; mtimeMs: number }>('stat', { path: abs }, 8000).catch(() => ({ ok: false, data: null as any }));
+      if (ok && typeof data?.size === 'number') {
+        st = { size: data.size, mtimeMs: data.mtimeMs };
+        statCache.set(norm, st);
+      }
+    }
+    if (!st) return { path: idePath, type: 'file', size: 0 };
+    return { path: idePath, type: 'file', size: st.size, mtime: new Date(st.mtimeMs).toISOString() };
   }
 
   async read(idePath: string): Promise<Uint8Array> {
@@ -861,50 +860,32 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   /**
-   * 二进制读: 走 FsPty 跑 base64 编码, 浏览器端 atob 解码.
-   *   POSIX: base64 <file>
-   *   PowerShell: [Convert]::ToBase64String([System.IO.File]::ReadAllBytes(...))
+   * 二进制读 (无损, 大文件安全): 走 FsPty node worker 'readB64' (node fs.readFileSync → base64),
+   *   浏览器端 atob 解码. 绕开 opencode /api/fs/read 30MB 限制, 无 shell 污染.
+   *   timeout: 30s (大文件 base64 编码/传输耗时).
    */
   async readBinary(idePath: string): Promise<Uint8Array> {
-    const ops = await this.ops();
     const abs = absPath(idePath);
-    const { ok, output } = await getFsPty().exec(ops.readFileBase64(abs));
-    if (!ok) throw new Error(`fs readBinary: pty exec failed ${idePath}`);
-    const b64 = output.replace(/\s+/g, '');
-    if (!b64) throw new Error(`fs readBinary: empty content ${idePath}`);
-    const bin = atob(b64);
+    const { ok, data } = await getFsPty().request<{ b64: string }>('readB64', { path: abs }, 30000);
+    if (!ok || !data?.b64) throw new Error(`fs readBinary failed: ${idePath}`);
+    const bin = atob(data.b64);
     const out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
   }
 
   /**
-   * 二进制读 (无损, 大文件安全): 走 FsPty 跑 `base64 <abs>`, 浏览器端 atob 解码.
-   *   跟 readBinary 思路一致, 但接受 relPath (workspace 内路径) → absPath 拼.
-   *   原 fetch opencode /api/fs/read 对 30MB+ 大文件 (PDF 等) 返回 500; FsPty
-   *   走平台原生 base64 命令读文件, 绕开 opencode 后端 30MB 限制.
-   *   timeout: 30s (30MB base64 编码/传输耗时).
-   *   注: 不支持 onProgress, FsPty 一次性返回 (跟 readBinary 一致).
+   * 二进制读 (无损, 大文件安全): 同 readBinary, 接受 relPath (workspace 内路径) → absPath 拼.
+   *   timeout: 30s.
    */
   async readBinaryAbsolute(relPath: string): Promise<Uint8Array> {
-    const ops = await this.ops();
-    const abs = absPath(relPath);
-    const { ok, output } = await getFsPty().exec(ops.readFileBase64(abs), 30000);
-    if (!ok) throw new Error(`fs readBinaryAbsolute: pty exec failed ${relPath}`);
-    const b64 = output.replace(/\s+/g, '');
-    if (!b64) throw new Error(`fs readBinaryAbsolute: empty content ${relPath}`);
-    const bin = atob(b64);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
+    return this.readBinary(relPath);
   }
 
   /**
-   * 写文件: base64 内容通过 FsPty 写到绝对路径, 父目录自动 mkdir -p.
-   *   大文件分块: 每块 ≤ CHUNK_BYTES, 多次 exec 追加.
-   *   超时: 5s 基础, 大文件按 KB 比例放宽 (上限 60s).
-   *   POSIX: 每块 `printf %s ... | base64 -d >> path` (首块用 >)
-   *   PowerShell: 单条 [IO.File]::WriteAllBytes (无 ARG_MAX 问题, 不分块)
+   * 写文件: base64 内容通过 FsPty node worker 'write'/'append' 写到绝对路径 (node fs API, 无 shell).
+   *   大文件分块: 每块 ≤ CHUNK_BYTES base64, 首块 'write' (truncate) 后续 'append'.
+   *   父目录: worker 内自动 mkdir -p.
    *   onProgress?: (bytesWritten, totalBytes) 实时回调, 让 UI 显示进度
    */
   async write(
@@ -912,46 +893,19 @@ export class FileSystemServiceImpl implements IFileSystem {
     content: string | { base64: string },
     onProgress?: (done: number, total: number) => void,
   ): Promise<boolean> {
-    const ops = await this.ops();
     const abs = absPath(idePath);
     const b64 = typeof content === 'string' ? bytesToBase64(content) : content.base64;
-    const kind = (await this.ops()).kind;
-    // PowerShell: 单条命令, 无 ARG_MAX, 不分块
-    if (kind === 'powershell') {
-      const { ok } = await getFsPty().exec(ops.writeFile(abs, b64), this.writeTimeoutMs(b64.length));
-      if (ok) {
-        this.invalidateParent(idePath);
-        onProgress?.(b64.length, b64.length);
-      }
-      return ok;
-    }
-    // POSIX: 分块写 (4KB base64 / 块, 远低于 ARG_MAX, 25 块/100KB, 单次 50ms)
-    const CHUNK = 4 * 1024;
-    const absQ = shellQuotePosix(abs);
-    const dir = abs.replace(/\/[^/]+$/, '');
-    if (dir && dir !== abs) {
-      const { ok: ok1 } = await getFsPty().exec(`mkdir -p ${shellQuotePosix(dir)}`, 3000);
-      if (!ok1) return false;
-    }
-    // 写首块 (> 覆盖)
+    const CHUNK = 4 * 1024; // base64 chars / 块 (远低于 ws 单帧安全大小)
+    // 首块 write (truncate, 空内容也建空文件)
     const first = b64.slice(0, CHUNK);
-    const { ok: ok2 } = await getFsPty().exec(
-      `printf %s ${first} | base64 -d > ${absQ}`,
-      this.writeTimeoutMs(first.length),
-    );
-    if (!ok2) return false;
+    let ok = (await getFsPty().request('write', { path: abs, b64: first }, this.writeTimeoutMs(first.length))).ok;
+    if (!ok) return false;
     onProgress?.(first.length, b64.length);
-    // 写剩余块 (>> 追加)
+    // 剩余块 append
     for (let i = CHUNK; i < b64.length; i += CHUNK) {
       const chunk = b64.slice(i, i + CHUNK);
-      const r = await getFsPty().exec(
-        `printf %s ${chunk} | base64 -d >> ${absQ}`,
-        this.writeTimeoutMs(chunk.length),
-      );
-      if (!r.ok) {
-        console.warn('[fs.write] chunk fail at', i, '/', b64.length, 'output:', r.output?.slice(0, 200));
-        return false;
-      }
+      const r = await getFsPty().request('append', { path: abs, b64: chunk }, this.writeTimeoutMs(chunk.length));
+      if (!r.ok) return false;
       onProgress?.(Math.min(i + chunk.length, b64.length), b64.length);
     }
     this.invalidateParent(idePath);
@@ -964,29 +918,25 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   async rm(idePath: string): Promise<boolean> {
-    const ops = await this.ops();
-    const { ok } = await getFsPty().exec(ops.rm(absPath(idePath)));
+    const ok = (await getFsPty().request('rm', { path: absPath(idePath) })).ok;
     if (ok) this.invalidateParent(idePath);
     return ok;
   }
 
   async rmdir(idePath: string): Promise<boolean> {
-    const ops = await this.ops();
-    const { ok } = await getFsPty().exec(ops.rmdir(absPath(idePath)));
+    const ok = (await getFsPty().request('rmdir', { path: absPath(idePath) })).ok;
     if (ok) this.invalidateParent(idePath);
     return ok;
   }
 
   async mkdirp(idePath: string): Promise<boolean> {
-    const ops = await this.ops();
-    const { ok } = await getFsPty().exec(ops.mkdirp(absPath(idePath)));
+    const ok = (await getFsPty().request('mkdir', { path: absPath(idePath) })).ok;
     if (ok) this.invalidateParent(idePath);
     return ok;
   }
 
   async move(from: string, to: string): Promise<boolean> {
-    const ops = await this.ops();
-    const { ok } = await getFsPty().exec(ops.move(absPath(from), absPath(to)));
+    const ok = (await getFsPty().request('move', { from: absPath(from), to: absPath(to) })).ok;
     if (ok) {
       this.invalidateParent(from);
       this.invalidateParent(to);
@@ -994,12 +944,14 @@ export class FileSystemServiceImpl implements IFileSystem {
     return ok;
   }
 
-  /** 文件树变化后: 清掉相关缓存 (自身 + 父目录) */
+  /** 文件树变化后: 清掉相关缓存 (自身 + 父目录: listCache + statCache) */
   private invalidateParent(idePath: string): void {
     const norm = idePath === '/' ? '/' : idePath.replace(/\/+$/, '');
     this.listCache.delete(norm);
     const parent = norm.includes('/') ? norm.slice(0, norm.lastIndexOf('/')) || '/' : '/';
     this.listCache.delete(parent);
+    invalidateStat(norm);
+    invalidateStat(parent);
   }
 
   async find(idePath: string, pattern = '*'): Promise<string[]> {
@@ -1011,18 +963,6 @@ export class FileSystemServiceImpl implements IFileSystem {
     const { data, error } = await c.find.files({ query: pattern, type: 'file', directory: dir })
     if (error) throw new Error(`fs find failed: ${idePath}: ${(error as any)?.message || 'unknown'}`)
     return Array.isArray(data) ? (data as any[]).map(String) : []
-  }
-
-  /**
-   * 懒解析 shell 命令构造器: 调用 getFsPty().init() 时已选定 shellKind, 此处直接拿
-   * 同步的 ops (用同步 getter 兜底: 第一次 init 前 fallback 到 POSIX).
-   */
-  private async ops(): Promise<ReturnType<typeof getShellOps>> {
-    // FsPty.init 完成后会写一个 window 全局供这里读
-    const cached = (window as any).__APP_FS_PTY_OPS__;
-    if (cached) return cached;
-    // 没就绪: 用浏览器 UA 兜底, 不阻塞
-    return getShellOps(detectPlatform() === 'windows' ? 'powershell' : 'posix');
   }
 }
 

@@ -29,8 +29,8 @@ function workspaceRel(path: string): string {
   return p || '/';
 }
 
-/** opencode FileMeta → BrowserFS Stats（mtime 固定 0: OpenSumi shadow-file-system 也用 lastModification: 0,
- *  checkInSync 用 stat.lastModification === file.lastModification 对比, 固定 0 永远一致 → 不报 out-of-sync) */
+/** opencode FileMeta → BrowserFS Stats（mtime/size 真实值: meta() 走 nodeStatPty (专用 node PTY fs.statSync) 拿宿主磁盘值.
+ *  diskService 与编辑器 stat 都经本 RemoteFS.stat → 两边 lastModification/size 同值 → checkInSync 永一致) */
 function toStats(meta: FileMeta): Stats {
   const type = meta.type === 'directory' ? FileType.DIRECTORY : FileType.FILE;
   const t = meta.mtime ? Date.parse(meta.mtime) : 0;
