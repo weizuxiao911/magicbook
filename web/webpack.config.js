@@ -135,7 +135,10 @@ const config = {
         rules: [
             {
                 test: /\.tsx?$/,
-                exclude: /node_modules/,
+                // 排除 numas 自己的 node_modules (相对 web/ 项目根), 不用 /node_modules/ 这种
+                // 简单 regex, 因为 npx 跑时 file path 包含 /node_modules/numas/, 用简单 regex
+                // 会错误排除 numas 自己的源码, 导致 esbuild-loader 不匹配, 走默认 js parser 报错.
+                exclude: /\/node_modules\/(?!numas\/)/,
                 use: [{
                         loader: 'esbuild-loader',
                         options: {
