@@ -38,7 +38,7 @@ export class WorkspaceContribution implements CommandContribution, ClientAppCont
     this.layoutService.collectViewComponent({
       id: 'file-explorer',
       component: WorkspaceView,
-      name: 'WORKSPACE',
+      name: '工作空间',
       priority: 10,
     }, EXPLORER_CONTAINER_ID);
   }
