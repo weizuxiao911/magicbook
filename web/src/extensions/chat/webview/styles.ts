@@ -13,7 +13,7 @@ export const styles = `
 .chat {
   /* ========== 主题色板: 优先使用 IDE/VSCode 主题变量, 暗色兜底 ========== */
   /* 与 left slot 保持一致 (var(--app-surface-muted)) */
-  --ai-bg: var(--app-surface-muted, var(--editor-background, #181818));
+  --ai-bg: var(--editor-background, var(--app-surface-muted, #181818));
   /* 弹层/浮起表面: 不允许透明, 用 editorWidget-background (VSCode 标准弹层色) */
   --ai-bg-elev: var(--editorWidget-background, var(--sideBar-background, var(--ai-bg, #1c1c22)));
   --ai-bg-input: color-mix(in srgb, var(--ai-fg, #e5e7eb) 5%, var(--ai-bg-elev));

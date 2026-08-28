@@ -13,7 +13,7 @@ import { createPortal } from 'react-dom';
 
 /** 暗色主题变量集 (匹配 .chat 容器内定义, 暗色兜底) */
 const DARK_VARS: React.CSSProperties = {
-  ['--ai-bg' as any]: 'var(--app-surface-muted, var(--editor-background, #181818))',
+  ['--ai-bg' as any]: 'var(--editor-background, var(--app-surface-muted, #181818))',
   ['--ai-bg-elev' as any]: 'var(--editorWidget-background, #1c1c22)',
   ['--ai-bg-input' as any]: 'color-mix(in srgb, var(--ai-fg, #e5e7eb) 5%, var(--ai-bg-elev))',
   ['--ai-fg' as any]: 'var(--editor-foreground, #e5e7eb)',
@@ -45,7 +45,7 @@ const DARK_VARS: React.CSSProperties = {
 
 /** 亮色主题变量集 (亮色背景, 深色文字, 跟 .chat 内 light 主题一致) */
 const LIGHT_VARS: React.CSSProperties = {
-  ['--ai-bg' as any]: 'var(--app-surface-muted, #f6f6f6)',
+  ['--ai-bg' as any]: 'var(--editor-background, var(--app-surface-muted, #f6f6f6))',
   ['--ai-bg-elev' as any]: '#ffffff',
   ['--ai-bg-input' as any]: 'color-mix(in srgb, var(--ai-fg, #1f2328) 5%, #ffffff)',
   ['--ai-fg' as any]: 'var(--editor-foreground, #1f2328)',
