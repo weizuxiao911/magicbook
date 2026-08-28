@@ -66,6 +66,9 @@
 | CJK 路径 | 中文路径 fetch header 报 non-ISO-8859-1 | `encodeURI` 包裹 header | 6 处 `cwdHeader` 全部 `encodeURI` |
 | 文档重写 | README/AGENTS 还提旧中间层架构 | 删旧架构全部引用 | README 讲终态架构 + 图表, AGENTS 讲过程决策 |
 | **品牌: Numas** | "对标腾讯 workbuddy, 打工人首选工作模式" | 改名 Numas (牛马们) | package name → `numas`, bin → `numas`, description + slogan 更新 |
+| **spdlog node-gyp 失败** | 其他同学 macOS Python 3.14 删 distutils → `npm install` 跑 `node-gyp rebuild` 必崩 | `npm install --ignore-scripts` 跳过 spdlog native build, opensumi 走 JS fallback logger | `dev.js#ensureInstalled` installArgs 加 `--ignore-scripts` |
+| **npx 不提示确认** | npm exec 升级后, 未知包(github:) 默认要按 y | 文档提示用 `npx -y` | `README.md` 命令改 `npx -y` |
+| **启动后没自动开浏览器** | dev.js 启动后只 print, 用户得手动复制 URL | sleep 4s 后 spawn `open` / `xdg-open` / `start` | `dev.js` 末尾 `setTimeout(4000)` opener 分流 |
 
 ## 踩坑速查
 
@@ -73,6 +76,9 @@
 
 | 现象 | 根因 | 修复 |
 | --- | --- | --- |
+| npx 首次执行不提示确认 (y) | npm exec 升级后对未知包 (github:) 默认要确认, 且若 npm 缓存失败命中则跳过 | 文档统一 `npx -y github:weizuxiao911/numas`, -y 跳过确认; 缓存命中失败时手动 `rm -rf ~/.npm/_npx` 触发重新问 |
+| spdlog node-gyp rebuild 失败 (Python 3.14 没 distutils) | `@opensumi/ide-logs@3.6.5` deps `spdlog@^0.9.0` 是 deprecated + native; Python 3.14 删 distutils 后 node-gyp@9 必崩 | dev.js#ensureInstalled 加 `--ignore-scripts` 跳过 postinstall; spdlog 没 build 但 opensumi 自动 fallback JS logger, 主流程不受影响 |
+| 启动后没自动打开浏览器 | dev.js 启动完只 print URL | 末尾 sleep 4s + spawn `open` (mac) / `xdg-open` (linux) / `cmd /c start` (win) http://localhost:7788; 失败仅 warn 不阻塞 |
 | cli's --port 改了, 客户端连不上 | .env 跟 cli 漂移 | cli 注入 process.env.APP_BASE_URL, webpack 优先读 process.env, .env 兜底 |
 | 中文路径 fetch header 报 non-ISO-8859-1 | HTTP header 限制 | `encodeURI()` 包裹 x-opencode-directory; opencode 自动 decode |
 | `__APP_OPENCODE__` 永远 undefined, chat 报 "opencode client not ready" | `agent.getClient()` 创 SDK 时 CJK cwd 没 encode, `createOpencodeClient` 抛错被 try/catch 吞 | `getClient()` line 126 也要 `encodeURI(cwd)` (跟 cwdHeader 同源; 不是 fetch 直连, 是 SDK 内部 mergeHeaders) |

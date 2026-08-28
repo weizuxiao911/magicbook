@@ -1,7 +1,7 @@
 # Numas (牛马们)
 
 > **打工人首选工作模式** — 浏览器即用的 AI 工作台, 直连 opencode, 无中间层。
-> `npx github:weizuxiao911/numas` 一行启动。
+> `npx -y github:weizuxiao911/numas` 一行启动。
 
 ## 架构
 
@@ -32,8 +32,8 @@ graph TB
 
 ```bash
 # npx (推荐, 一次装好)
-npx github:weizuxiao911/numas                          # web 模式 (opencode 24096 + client 7788)
-npx github:weizuxiao911/numas web                      # 等价 (默认子命令)
+npx -y github:weizuxiao911/numas                          # web 模式 (opencode 24096 + client 7788)
+npx -y github:weizuxiao911/numas web                      # 等价 (默认子命令)
 
 # git clone (本地开发)
 git clone https://github.com/weizuxiao911/numas
@@ -48,23 +48,23 @@ npm run dev
 2. 检查 `web/node_modules/.bin/opencode` — 没装则 `npm install --no-save opencode-ai` (~50MB 二进制)
 3. spawn `npm run dev --prefix web` (detached + 进程组, 退出 cli 杀整组)
 
-> **升级时若行为异常**: npx 会 cache 旧 numas, 清掉重试:
-> ```bash
-> # macOS / Linux
-> rm -rf ~/.npm/_npx ~/.npm/_cacache
->
-> # Windows (PowerShell)
-> Remove-Item -Recurse -Force ~\.npm\_npx,~\.npm\_cacache
->
-> # Windows (CMD)
-> rmdir /S /Q %USERPROFILE%\.npm\_npx %USERPROFILE%\.npm\_cacache
-> ```
-
 | 服务 | 地址 |
 | --- | --- |
 | 工作台 | http://localhost:7788 |
 | opencode | http://127.0.0.1:24096 |
 | registry | (代码保留, dev 不起) |
+
+## 部署提示
+
+| 项 | 说明 |
+| --- | --- |
+| 环境要求 | Node ≥ 18 (推荐 LTS); macOS / Linux / Windows 全平台; npm 10+ |
+| 首次启动 | `dev.js` 会自动 `npm install --ignore-scripts` (跳过 native postinstall), 约 1-2 分钟装 web deps |
+| 自动打开 | 启动后 4s 自动调系统浏览器打开 `http://localhost:7788` (mac=open / linux=xdg-open / win=start); 失败仅 warn |
+| 预期警告 | `npm warn deprecated spdlog@0.9.0` 可忽略 — spdlog 是 opensumi 传递依赖, native build 已用 `--ignore-scripts` 跳过, opensumi 走 JS fallback logger |
+| 关闭 | 终端 `Ctrl+C` → dev.js 杀整组进程 (opencode + webpack) |
+| 端口冲突 | 旧 dev 残留 → 手动 `lsof -ti :7788 :24096 \| xargs kill -9` (macOS BSD lsof 必须带冒号) |
+| 升级异常 | npx 缓存命中失败记录 → 清掉重试: `rm -rf ~/.npm/_npx ~/.npm/_cacache` |
 
 ## 数据流
 
