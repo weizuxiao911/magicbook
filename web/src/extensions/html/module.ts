@@ -1,6 +1,6 @@
 import { Injectable } from '@opensumi/di';
-import { Domain } from '@opensumi/ide-core-common';
-import { BrowserModule } from '@opensumi/ide-core-browser';
+import { Domain, ClientAppContribution } from '@opensumi/ide-core-common';
+import { BrowserModule, CommandContribution, CommandRegistry } from '@opensumi/ide-core-browser';
 import type { ResourceService } from '@opensumi/ide-editor';
 import { BrowserEditorContribution, EditorComponentRegistry } from '@opensumi/ide-editor/lib/browser/types';
 
@@ -22,12 +22,15 @@ function getExt(path: string): string {
  *
  * 注册:
  *   - EditorComponent uid = HTML_COMPONENT_ID (scheme = file)
- *   - registerEditorComponentResolver for file scheme, 命中 .html/.htm 时高权重
- *     返回 HtmlViewer; 其余情况不 resolve (让后续 resolver 继续)
+ *   - registerEditorComponentResolver for file scheme, 命中 .html/.htm 时 weight: 'default'
+ *     让默认 Monaco text editor 也出现在「打开方式」菜单, 不被 numas 完全覆盖
  */
 @Injectable()
-@Domain(BrowserEditorContribution)
-export class HtmlContribution implements BrowserEditorContribution {
+@Domain(CommandContribution, ClientAppContribution, BrowserEditorContribution)
+export class HtmlContribution implements CommandContribution, ClientAppContribution, BrowserEditorContribution {
+  registerCommands(commands: CommandRegistry): void {
+    // 不需要 commands, 之前为 tab 栏 menu actions 注册的 3 个 commands 已撤回.
+  }
   registerResource(_resourceService: ResourceService): void {
     // file scheme 已由框架提供
   }
@@ -39,7 +42,7 @@ export class HtmlContribution implements BrowserEditorContribution {
       component: HtmlViewer as any,
     });
     registry.registerEditorComponentResolver(
-      (scheme: string) => (scheme === 'file' ? 1100 : -1),
+      (scheme: string) => (scheme === 'file' ? 100 : -1),
       (resource: any, results: any[], resolve: (r: any[]) => void) => {
         const uri: any = resource?.uri;
         const pathStr = (uri?.path?.toString?.() || '').toLowerCase();
@@ -51,7 +54,7 @@ export class HtmlContribution implements BrowserEditorContribution {
               componentId: HTML_COMPONENT_ID,
               type: 'component',
               title: 'HTML 预览',
-              weight: 1100,
+              weight: 'default',
             },
           ]);
         }
@@ -64,5 +67,5 @@ export class HtmlContribution implements BrowserEditorContribution {
 @Injectable()
 export class HtmlModule extends BrowserModule {
   providers = [HtmlContribution];
-  contributionProvider = [BrowserEditorContribution];
+  contributionProvider = [CommandContribution, ClientAppContribution, BrowserEditorContribution];
 }
