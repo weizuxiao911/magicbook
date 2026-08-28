@@ -360,7 +360,7 @@ body.design-dark [class*="design-kt_editor_tab_current"]::after {
    等 = #ffffff, 跟 .codeblitz-root 永远挂 codeblitz-light 一起, 让 codeblitz 内部所有
    IDE 标准变量永远是浅色值, 间接影响 .chat 内部 --ai-bg-elev / --ai-glass-bg 也解析为浅色.
    dark 主题下用同 specificity + !important 覆盖, 让 IDE 变量跟随 .codeblitz-root 之外
-   OpenSumi 框架设的主题值. */
+   OpenSumi 框架设的主题值. 注意不要用 var(--xxx) 自我引用, 解析会得空字符串. */
 body.design-dark .codeblitz-light,
 body.design-dark .codeblitz-root.codeblitz-light,
 body.design-dark codeblitz-root,
@@ -371,7 +371,7 @@ body.design-dark body.vs-light {
   --sideBar-background: var(--sideBar-background) !important;
   --activityBar-background: var(--activityBar-background) !important;
   --input-background: var(--input-background) !important;
-  --button-background: var(--button-background) !important;
+  --button-background: #2563eb !important;
   --input-foreground: var(--input-foreground) !important;
   --input-border: var(--input-border) !important;
 }
