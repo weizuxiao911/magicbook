@@ -614,7 +614,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
 
       {error && <div className="ab-pdf__error">无法加载: {error}</div>}
 
-      {!loading && !error && (
+      {/* ab-pdf__toolbar (页码跳转 ‹ ›) 已按需求去掉 */}
+      {/* {!loading && !error && (
         <div className="ab-pdf__toolbar">
           <button className="ab-pdf__btn" disabled={currentPage <= 1} onClick={() => jumpToPage(currentPage - 1)}>‹</button>
           <span className="ab-pdf__pageno">
@@ -646,7 +647,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
           </span>
           <button className="ab-pdf__btn" disabled={currentPage >= numPages} onClick={() => jumpToPage(currentPage + 1)}>›</button>
         </div>
-      )}
+      )} */}
     </div>
   );
 };
@@ -812,26 +813,5 @@ const STYLES = `
 .ab-pdf__progress { width: min(360px, 60%); height: 4px; background: var(--progressBar-inactiveBackground, rgba(128,128,128,0.2)); border-radius: 2px; overflow: hidden; }
 .ab-pdf__progressBar { height: 100%; background: var(--progressBar-background, var(--vscode-progressBar-background, #2563eb)); transition: width .12s linear; }
 @keyframes ab-pdf-indet { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
-.ab-pdf__toolbar {
-  flex-shrink: 0;
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px 10px;
-  background: var(--tc-surface-muted, var(--vscode-editorWidget-background, #252526));
-  border-top: 1px solid var(--panel-border, var(--vscode-panel-border, rgba(128,128,128,0.2)));
-  color: var(--editor-foreground, var(--vscode-editor-foreground, #cccccc));
-}
-.ab-pdf__btn {
-  height: 26px; min-width: 26px; padding: 0 8px;
-  background: var(--button-secondaryBackground, rgba(128,128,128,0.2)); color: inherit;
-  border: 1px solid transparent; border-radius: 5px;
-  font-family: inherit; font-size: 12.5px; cursor: pointer;
-}
-.ab-pdf__btn:hover:not(:disabled) { background: var(--button-secondaryHoverBackground, rgba(128,128,128,0.32)); }
-.ab-pdf__btn:disabled { opacity: .4; cursor: not-allowed; }
-.ab-pdf__pageno { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; }
-.ab-pdf__pagenoInput {
-  width: 36px; text-align: center;
-  background: var(--input-background, rgba(128,128,128,0.15)); color: inherit;
-  border: 1px solid transparent; border-radius: 4px; padding: 2px 4px; font: inherit;
-}
+/* ab-pdf__toolbar / __btn / __pageno / __pagenoInput 已按需求去掉 */
 `;
