@@ -173,17 +173,17 @@ export const HtmlViewer: React.FC<Props> = ({ resource }) => {
     }
   }, [handleSave, uriStr]);
 
-  const toolbarBtn = (active: boolean, label: string, onClick: () => void) => (
-    <button
-      className={active ? 'ab-html__btn ab-html__btn--active' : 'ab-html__btn'}
-      onClick={onClick}
-    >{label}</button>
-  );
+  // const toolbarBtn = (active: boolean, label: string, onClick: () => void) => (
+  //   <button
+  //     className={active ? 'ab-html__btn ab-html__btn--active' : 'ab-html__btn'}
+  //     onClick={onClick}
+  //   >{label}</button>
+  // );
 
   return (
     <div className="ab-html">
       <style>{STYLES}</style>
-      <div className="ab-html__toolbar">
+      {/* <div className="ab-html__toolbar">
         <span className="ab-html__name">📄 {fileName}</span>
         <span className="ab-html__spacer" />
         {savedTip && <span className="ab-html__saved">✓ 已保存</span>}
@@ -194,7 +194,7 @@ export const HtmlViewer: React.FC<Props> = ({ resource }) => {
         {mode === 'preview'
           ? toolbarBtn(false, '✏️ 编辑', switchToEdit)
           : toolbarBtn(true, '✏️ 编辑', () => {})}
-      </div>
+      </div> */}
       <div className="ab-html__body">
         {loading ? (
           <div className="ab-html__msg">正在加载 {fileName}…</div>
