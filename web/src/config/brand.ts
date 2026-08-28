@@ -9,9 +9,9 @@
 
 export const APP_CHAT_CONFIG = {
   brand: {
-    name: 'AI 工作台',
-    nameZh: 'AI 工作台',
-    tagline: 'C/S 架构可交互工作台',
+    name: 'Numas AI',
+    nameZh: 'Numas AI',
+    tagline: '打工人首选工作模式',
     greeting: '你好，我是 {nameZh}',
     logoChar: '🐮',
   },
