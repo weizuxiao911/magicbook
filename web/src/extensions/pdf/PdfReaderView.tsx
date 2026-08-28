@@ -13,6 +13,8 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useInjectable } from '@opensumi/ide-core-browser';
+import { IFileServiceClient } from '@opensumi/ide-file-service';
 
 // @ts-ignore — pdfjs-dist v4 ships ESM types, loose import
 import * as pdfjsLib from 'pdfjs-dist';
@@ -54,17 +56,22 @@ interface Props {
 }
 
 /**
- * 解析 OpenSumi 虚拟路径 → workspace 内相对路径.
+ * 解析 OpenSumi 虚拟路径 → 宿主机绝对路径.
  *
- * OpenSumi 可能给两种形态:
- *   - 虚拟 FS: "/{workspace根目录名}/机器学习2.pdf"
- *   - 绝对路径: "/Users/.../workspace/机器学习2.pdf"
- * 前缀 = 工作区根目录 (来自 opencode /ai/path 的 directory 字段), 不硬编码.
- * 归一为相对路径后, fsRead/fsWrite 内部 toHostPath 拼回绝对路径.
+ * codeblitz 框架 hardcode `WORKSPACE_ROOT = '/workspace'`, codeUri.fsPath 形如
+ * `/workspace/数据结构.pdf`. numas `__APP_CONFIG__.cwd` 是 user 选的真实工作目录
+ * (如 `/Users/.../运营阵地/`), 文件实际在 cwd 下的 workspace/ 子目录
+ * (如 `/Users/.../运营阵地/workspace/数据结构.pdf`).
+ *
+ * 真实路径 = `__APP_CONFIG__.cwd + codeUri.path` (直接拼, codeblitz 的 /workspace/
+ * 段就是 cwd 下的子目录, 不能再剥). 给 `__APP_FS__.readBinary` 内部 `absPath = cwd + '/' + rel` 用.
+ *
+ * fallback: 拿不到 cwd 时用 localStorage APP_CWD; 再不行扫描 hostPath 找 /workspace/ 段.
  */
 function resolveHostPath(resource: any): string {
   const uri = resource?.uri;
   if (!uri) return '';
+  // 1) 优先用 codeUri.fsPath (codeblitz 给的虚拟路径, 直接拼 cwd 即可)
   let p = '';
   if (uri.codeUri?.fsPath) p = uri.codeUri.fsPath;
   else if (typeof uri.path === 'string') p = uri.path;
@@ -73,19 +80,21 @@ function resolveHostPath(resource: any): string {
     if (s.startsWith('file://')) p = decodeURIComponent(s.slice('file://'.length));
     else p = s;
   }
-  // numas: 剥掉 workspace 根目录前缀, 得到相对路径 (供 fs.readBinaryAbsolute)
-  let root = (window as any).__APP_FS__?.getWorkspaceDir?.() || (window as any).__APP_CONFIG__?.cwd || '';
-  if (!root) {
-    try { root = window.localStorage.getItem('APP_CWD') || ''; } catch { /* */ }
-  }
-  if (root) {
-    const rootName = String(root).split('/').pop();
-    if (rootName && p.startsWith(`/${rootName}/`)) {
-      p = p.slice(rootName.length + 1);          // 虚拟路径: 剥根目录名
-    } else if (p.startsWith(`${root}/`)) {
-      p = p.slice(root.length + 1);              // 绝对路径: 剥根目录
-    } else if (p === root) {
-      p = '';
+  if (!p) return '';
+  // 拿 numas 真实 cwd
+  const cwd = (window as any).__APP_FS__?.getWorkspaceDir?.()
+    || (window as any).__APP_CONFIG__?.cwd
+    || (() => { try { return window.localStorage.getItem('APP_CWD') || ''; } catch { return ''; } })()
+    || '';
+  if (cwd) {
+    const cwdNorm = cwd.replace(/\/+$/, '');
+    // 仅 codeblitz 虚拟路径 (以 /workspace/ 开头, WORKSPACE_ROOT 硬编码) 才拼 cwd
+    // 绝对路径 (cbr/...) 直接用
+    if (p.startsWith('/workspace/') || p === '/workspace') {
+      return cwdNorm + p;
+    }
+    if (p.startsWith('file:///workspace/')) {
+      return cwdNorm + p.slice('file:///workspace/'.length - 1);
     }
   }
   return p;
@@ -105,6 +114,7 @@ async function openPdfFromBytes(bytes: Uint8Array): Promise<any> {
 export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   const viewerRef = useRef<HTMLDivElement>(null);
   const pdfDocRef = useRef<any>(null);
+  const fileService = useInjectable<IFileServiceClient>(IFileServiceClient);
   /** 已渲染完成的 page idx 集合 */
   const renderedRef = useRef<Set<number>>(new Set());
   /** 正在渲染中的 page idx 集合 (防并发) */
@@ -273,17 +283,56 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       setError('');
       setProgress({ loaded: 0, total: 0 });
       try {
-        const fsApi = (window as any).__APP_FS__;
-        if (!fsApi?.readBinaryAbsolute) throw new Error('FS API not ready');
-        if (!hostPath) throw new Error('无法解析文件路径');
-        const bytes = await fsApi.readBinaryAbsolute(hostPath, {
-          signal: ac.signal,
-          onProgress: (loaded: number, total: number) => {
-            if (!cancelled) setProgress({ loaded, total });
-          },
-        });
-        if (cancelled) return;
-        const pdf = await openPdfFromBytes(bytes);
+        const fileServiceApi = fileService as any;
+        const u: any = resource?.uri;
+        const cwd = (window as any).__APP_CONFIG__?.cwd || '';
+        console.log('[pdf] resource.uri.toString(true):', u?.toString?.(true));
+        console.log('[pdf] __APP_CONFIG__.cwd:', cwd);
+
+        // 候选 URI: codeblitz 原生 file:///workspace/... (BrowserFS 自动映射),
+        // 失败用 numas cwd 拼真实路径 (避开 fs.readBinary 的 cwd 重复拼接)
+        const candidates: string[] = [];
+        if (u?.toString) candidates.push(u.toString(true));
+        if (cwd && u?.codeUri?.fsPath) {
+          const fsPath = String(u.codeUri.fsPath);
+          candidates.push(`file://${cwd.replace(/\/+$/, '')}${fsPath}`);
+        }
+        console.log('[pdf] candidates:', candidates);
+
+        // readFile 返回 BinaryBuffer (内部 this.buffer 是 Buffer 或 Uint8Array)
+        // 正确转 Uint8Array: 拿 data.buffer (ArrayBuffer 视图) + .byteOffset + .byteLength
+        let content: Uint8Array | undefined;
+        let lastErr: any = null;
+        for (const cand of candidates) {
+          try {
+            const r = await fileServiceApi.readFile(cand);
+            const data: any = r?.content;
+            const byteLen = data?.byteLength ?? 0;
+            console.log('[pdf] try', cand, '→ size:', byteLen, 'type:', data?.constructor?.name,
+              'innerBuffer:', data?.buffer?.constructor?.name);
+            if (data && byteLen > 0) {
+              // BinaryBuffer.buffer 是 Buffer (Node) 或 Uint8Array, 都暴露 .buffer (ArrayBuffer 视图)
+              const inner = data.buffer;
+              if (inner instanceof ArrayBuffer) {
+                content = new Uint8Array(inner);
+              } else if (inner && typeof inner.buffer !== 'undefined') {
+                // Buffer / Uint8Array 都有 .buffer (ArrayBuffer) + .byteOffset + .byteLength
+                content = new Uint8Array(inner.buffer, inner.byteOffset || 0, inner.byteLength);
+              } else {
+                // 兜底: 字符串 (utf-8 文本), 用 TextEncoder
+                content = new TextEncoder().encode(typeof data === 'string' ? data : String(data));
+              }
+              break;
+            }
+          } catch (e) {
+            console.log('[pdf] try', cand, '→ err:', String(e));
+            lastErr = e;
+          }
+        }
+        if (!content) throw lastErr || new Error('PDF readFile returned empty content');
+        console.log('[pdf] loaded', content.byteLength, 'bytes');
+
+        const pdf = await openPdfFromBytes(content);
         if (cancelled) return;
         pdfDocRef.current = pdf;
         setNumPages(pdf.numPages);
