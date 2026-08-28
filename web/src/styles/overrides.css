@@ -233,6 +233,24 @@ body.vs,
   --activityBar-background: #ffffff;
 }
 
+/* ============= Dark 主题: 撤销 light 写死, 让 --app-* 跟随 IDE 主题变量 ============= */
+/* 背景: codeblitz-root 永远挂着 codeblitz-light, 把 --app-* 写死为 #ffffff,
+   导致切到 dark 主题时, .ab-welcome 等拓展区域仍取浅色.
+   这里用 body.design-dark / .codeblitz-dark 选择器 (specificity ≥ .codeblitz-light)
+   覆盖写死, --app-* 走 IDE 主题变量, 真正跟随切主题. */
+body.design-dark,
+body.vs-dark,
+.codeblitz-dark,
+.codeblitz-root.codeblitz-dark {
+  --app-panel-bg: var(--editor-background, var(--vscode-editor-background, #181818));
+  --app-panel-fg: var(--editor-foreground, var(--vscode-editor-foreground, #e5e7eb));
+  --app-surface-base: var(--editor-background, #181818);
+  --app-surface-muted: color-mix(in srgb, var(--app-surface-base) 97%, #000);
+  --app-surface-raised: color-mix(in srgb, var(--app-surface-base) 97%, #fff);
+  --app-surface-edge: color-mix(in srgb, var(--app-surface-base) 94%, #000);
+  --app-border: var(--panel-border, var(--vscode-panel-border, rgba(255, 255, 255, 0.08)));
+}
+
 /* 编辑器组件本体背景统一 (#151b21 → #181818) */
 .kt_editor_component___hOjMR,
 .kt_editor_components___cmFFV,
