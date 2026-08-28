@@ -49,7 +49,7 @@ export const ActionsView: React.FC = () => {
     };
   }, []);
   const cwdName = useMemo(() => {
-    if (!cwd) return '未选择';
+    if (!cwd) return '未选择工作目录';
     return cwd.split('/').filter(Boolean).pop() || cwd;
   }, [cwd]);
 
