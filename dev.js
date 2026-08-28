@@ -6,18 +6,22 @@
  *   启动 dev = 启动整个 numas (web + opencode), 一行命令用户无需关注子项目.
  *
  * 流程:
+ *   0. Node 版本检查 (≥ 20, 用户唯一前置)
  *   1. 检查 web deps 完整性 (web/node_modules/.bin/webpack), 没装就 npm install
- *   2. 检查 opencode (web/node_modules/.bin/opencode), 没装就 npm install opencode-ai
- *   3. 启 opencode (serve 模式, detached, 进程组 pgid=-pid)
- *   4. 注入 env (APP_BASE_URL / OPENCODE_PORT / WEB_PORT) → spawn npm run dev
- *   5. 父进程 SIGINT/SIGTERM → kill 两组子进程 (opencode + webpack)
+ *   2. 检查 opencode (PATH 全局 + web 本地兜底), 没装就 npm i -g opencode-ai
+ *   3. 清掉端口残留 zombie (上轮跑剩的), 避免 listen EADDRINUSE
+ *   4. 启 opencode (serve 模式, detached, 进程组 pgid=-pid)
+ *   5. 注入 env (APP_BASE_URL / OPENCODE_PORT / WEB_PORT) → spawn npm run dev
+ *   6. 4s 后自动打开浏览器 7788
+ *   7. 父进程 SIGINT/SIGTERM → kill 两组子进程 (opencode + webpack)
  *
  * 命令行 flag (覆盖默认端口):
  *   --server-port <n>    opencode 端口 (默认 24096)
  *   --web-port <n>       webpack 端口 (默认 7788)
  *
  * 设计: 单文件入口, 跨平台, 不依赖额外进程编排器.
- *   npx tarball 装 numas, deps 走 web/ 一次性 install (~30s 首次).
+ *   用户唯一前置 = Node ≥ 20. 其他 (web deps / opencode) dev.js 自检自装.
+ *   npx tarball 装 numas, web deps 走 web/ 一次性 install, opencode 走全局 npm i -g.
  *   进程树: dev.js → { opencode, webpack } (两个独立 detached 进程组).
  */
 
@@ -31,6 +35,20 @@ const WEB = path.join(ROOT, 'web');
 /** 跨平台 */
 const isWin = process.platform === 'win32';
 const npmCmd = isWin ? 'npm.cmd' : 'npm';
+
+/** Node 版本检查 — 用户唯一前置条件是 Node ≥ 20 (LTS).
+ *  process.versions.node 形如 '24.15.0' → parseInt('24.15.0') === 24
+ */
+function checkNodeVersion() {
+  const major = parseInt(process.versions.node, 10);
+  if (Number.isNaN(major) || major < 20) {
+    console.error(`[numas] 需要 Node ≥ 20 (当前 v${process.versions.node})`);
+    console.error('[numas] 安装: https://nodejs.org (推荐 LTS) 或 nvm install 20');
+    process.exit(1);
+  }
+  console.log(`[numas] Node v${process.versions.node} ✓`);
+}
+checkNodeVersion();
 
 /** 端口 (默认 + 命令行 flag 覆盖; npx 调用时传 --server-port / --web-port) */
 function parsePortFlag(flag, fallback) {
@@ -47,14 +65,14 @@ const WEB_PORT = parsePortFlag('--web-port', parseInt(process.env.WEB_PORT || '7
 /** 关键 bin 路径 (opencode 优先 web local → which 全局) */
 const webWebpackBin = path.join(WEB, 'node_modules', '.bin', isWin ? 'webpack.cmd' : 'webpack');
 const webOpencodeBin = path.join(WEB, 'node_modules', '.bin', isWin ? 'opencode.cmd' : 'opencode');
-/** opencode binary 解析: 优先 web local shim, 退到 which 全局 */
+/** opencode binary 解析: 优先 PATH 全局 (npm i -g 安装), 兜底 web local shim (兼容老环境) */
 function resolveOpencodeBin() {
-  if (fs.existsSync(webOpencodeBin)) return webOpencodeBin;
   if (whichCmd('opencode')) {
     const out = isWin ? spawnSync('where', ['opencode']) : spawnSync('which', ['opencode']);
     const p = String(out.stdout || '').split('\n')[0].trim();
     if (p) return p;
   }
+  if (fs.existsSync(webOpencodeBin)) return webOpencodeBin;
   return null;
 }
 
@@ -68,16 +86,19 @@ function whichCmd(cmd) {
  *  --ignore-scripts: 跳过所有 postinstall (含 spdlog 的 node-gyp rebuild).
  *  spdlog 是 deprecated + native 包, Python 3.14 没 distutils 必崩.
  *  opensumi 用 JS fallback logger, 主流程不受影响.
+ *  global=true: 全局 install (npm i -g), 不传 cwd, 用于 opencode 这种工具
  */
-function ensureInstalled(label, ready, installCmd, installArgs, cwd) {
+function ensureInstalled(label, ready, installCmd, installArgs, cwd, opts = {}) {
   if (ready()) {
     console.log(`[numas] ${label} deps 已就绪 (复用)`);
     return;
   }
-  console.log(`[numas] 首次运行, 装 ${label} ...`);
+  console.log(`[numas] 首次运行, 装 ${label}${opts.global ? ' (全局)' : ''} ...`);
   let r;
   for (let attempt = 1; attempt <= 3; attempt++) {
-    r = spawnSync(installCmd, installArgs, { cwd, stdio: 'inherit', shell: isWin });
+    r = spawnSync(installCmd, installArgs, opts.global
+      ? { stdio: 'inherit', shell: isWin }
+      : { cwd, stdio: 'inherit', shell: isWin });
     if (r.status === 0) break;
     if (attempt < 3) console.warn(`[numas] ${label} 安装失败 (尝试 ${attempt}/3), 3s 后重试...`);
     if (attempt < 3) spawnSync(isWin ? 'powershell' : 'sleep', isWin
@@ -86,7 +107,12 @@ function ensureInstalled(label, ready, installCmd, installArgs, cwd) {
   }
   if (r.status !== 0) {
     console.error(`[numas] ${label} 安装失败 (status=${r.status})`);
-    console.error(`[numas] 手动: cd ${cwd} && ${installCmd} ${installArgs.join(' ')}`);
+    if (opts.global) {
+      console.error(`[numas] 手动: ${installCmd} ${installArgs.join(' ')}`);
+      console.error(`[numas] 系统 node 可能需 sudo, 或配置 npm prefix 到用户目录: npm config set prefix ~/.npm-global`);
+    } else {
+      console.error(`[numas] 手动: cd ${cwd} && ${installCmd} ${installArgs.join(' ')}`);
+    }
     process.exit(1);
   }
 }
@@ -100,24 +126,26 @@ ensureInstalled(
   ['install', '--include=dev', '--prefer-offline', '--ignore-scripts'],
   WEB,
 );
-// 2. opencode (opencode-ai 提供二进制, --no-save 装到 web/; 也可全局 opencode)
+// 2. opencode (opencode-ai 提供二进制, 全局装到 PATH 让 opencode 命令随时可用)
 ensureInstalled(
   'opencode',
   () => !!resolveOpencodeBin(),
   npmCmd,
-  ['install', '--no-save', '--prefer-offline', '--ignore-scripts', 'opencode-ai'],
+  ['install', '-g', '--prefer-offline', '--ignore-scripts', 'opencode-ai'],
   WEB,
+  { global: true },
 );
 const opencodeBin = resolveOpencodeBin();
 if (!opencodeBin) {
-  console.error('[numas] opencode 装上但找不到 binary, 检查 web/node_modules');
+  console.error('[numas] opencode 装上但找不到 binary, 检查 PATH 和 web/node_modules');
   process.exit(1);
 }
 
 // 3. 端口冲突清理 (上轮跑剩的 zombie, 避免 listen EADDRINUSE)
+//    macOS BSD lsof 必须用 `-ti :PORT` (带冒号), Linux 用 `-ti :PORT` 也 OK
 function killPort(port) {
   try {
-    const out = spawnSync('lsof', ['-ti', String(port)]);
+    const out = spawnSync('lsof', ['-ti', `:${port}`]);
     const pids = String(out.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
     for (const pid of pids) {
       try { process.kill(parseInt(pid, 10), 'SIGKILL'); } catch { /* */ }

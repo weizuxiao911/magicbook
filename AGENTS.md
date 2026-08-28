@@ -69,6 +69,9 @@
 | **spdlog node-gyp 失败** | 其他同学 macOS Python 3.14 删 distutils → `npm install` 跑 `node-gyp rebuild` 必崩 | `npm install --ignore-scripts` 跳过 spdlog native build, opensumi 走 JS fallback logger | `dev.js#ensureInstalled` installArgs 加 `--ignore-scripts` |
 | **npx 不提示确认** | npm exec 升级后, 未知包(github:) 默认要按 y | 文档提示用 `npx -y` | `README.md` 命令改 `npx -y` |
 | **启动后没自动开浏览器** | dev.js 启动后只 print, 用户得手动复制 URL | sleep 4s 后 spawn `open` / `xdg-open` / `start` | `dev.js` 末尾 `setTimeout(4000)` opener 分流 |
+| **Node 版本支持** | 用户唯一前置条件 = Node ≥ 20 | 启动顶部 `checkNodeVersion()`, < 20 报错退出给安装链接 | `dev.js` line 38-47 |
+| **opencode 装全局** | 用户要求 `npm i -g opencode-ai` | `ensureInstalled` 加 `global=true` 选项, npm i -g 安装 + PATH 全局优先解析 | `dev.js` line 87-133 |
+| **macOS killPort 失效** | BSD lsof `-ti <port>` 必须带冒号 `-ti :port`, 老代码不带冒号在 macOS 无效 | lsof args 改 `lsof -ti :PORT` | `dev.js#killPort` line 142-150 |
 
 ## 踩坑速查
 
@@ -78,6 +81,9 @@
 | --- | --- | --- |
 | npx 首次执行不提示确认 (y) | npm exec 升级后对未知包 (github:) 默认要确认, 且若 npm 缓存失败命中则跳过 | 文档统一 `npx -y github:weizuxiao911/numas`, -y 跳过确认; 缓存命中失败时手动 `rm -rf ~/.npm/_npx` 触发重新问 |
 | spdlog node-gyp rebuild 失败 (Python 3.14 没 distutils) | `@opensumi/ide-logs@3.6.5` deps `spdlog@^0.9.0` 是 deprecated + native; Python 3.14 删 distutils 后 node-gyp@9 必崩 | dev.js#ensureInstalled 加 `--ignore-scripts` 跳过 postinstall; spdlog 没 build 但 opensumi 自动 fallback JS logger, 主流程不受影响 |
+| Node 版本 < 20 不支持 | opensumi/codeblitz 最低需要 Node 20+; 用户唯一前置 | dev.js 顶部 `checkNodeVersion()` 强校验, < 20 exit 1 + 提示安装链接 |
+| opencode 没装全局 | 用户希望 `npm i -g opencode-ai`, 命令行随时可用 | `ensureInstalled` 加 `global=true` 选项 → `npm i -g opencode-ai --ignore-scripts`; `resolveOpencodeBin` 全局 PATH 优先 |
+| macOS BSD lsof `killPort` 无效 | 老代码 `lsof -ti <port>` 无冒号, BSD lsof 不识别 | `killPort` 改 `lsof -ti :PORT` (带冒号, mac/linux 通) |
 | 启动后没自动打开浏览器 | dev.js 启动完只 print URL | 末尾 sleep 4s + spawn `open` (mac) / `xdg-open` (linux) / `cmd /c start` (win) http://localhost:7788; 失败仅 warn 不阻塞 |
 | cli's --port 改了, 客户端连不上 | .env 跟 cli 漂移 | cli 注入 process.env.APP_BASE_URL, webpack 优先读 process.env, .env 兜底 |
 | 中文路径 fetch header 报 non-ISO-8859-1 | HTTP header 限制 | `encodeURI()` 包裹 x-opencode-directory; opencode 自动 decode |

@@ -58,12 +58,13 @@ npm run dev
 
 | 项 | 说明 |
 | --- | --- |
-| 环境要求 | Node ≥ 18 (推荐 LTS); macOS / Linux / Windows 全平台; npm 10+ |
-| 首次启动 | `dev.js` 会自动 `npm install --ignore-scripts` (跳过 native postinstall), 约 1-2 分钟装 web deps |
+| 环境要求 | **唯一前置 = Node ≥ 20** (推荐 LTS); macOS / Linux / Windows 全平台; npm 10+ |
+| 自装依赖 | `dev.js` 会自动 `npm install --ignore-scripts` (web deps, 跳过 native postinstall), `npm i -g opencode-ai --ignore-scripts` (opencode 全局), 约 1-2 分钟 |
+| 端口处理 | 启动前自动 `lsof -ti :7788 :24096` 清掉旧 zombie, 避免 listen EADDRINUSE |
 | 自动打开 | 启动后 4s 自动调系统浏览器打开 `http://localhost:7788` (mac=open / linux=xdg-open / win=start); 失败仅 warn |
 | 预期警告 | `npm warn deprecated spdlog@0.9.0` 可忽略 — spdlog 是 opensumi 传递依赖, native build 已用 `--ignore-scripts` 跳过, opensumi 走 JS fallback logger |
 | 关闭 | 终端 `Ctrl+C` → dev.js 杀整组进程 (opencode + webpack) |
-| 端口冲突 | 旧 dev 残留 → 手动 `lsof -ti :7788 :24096 \| xargs kill -9` (macOS BSD lsof 必须带冒号) |
+| sudo 提示 | 系统 node 全局 install 可能需 sudo; 推荐 `npm config set prefix ~/.npm-global` 写到用户目录免 sudo |
 | 升级异常 | npx 缓存命中失败记录 → 清掉重试: `rm -rf ~/.npm/_npx ~/.npm/_cacache` |
 
 ## 数据流
