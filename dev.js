@@ -64,7 +64,11 @@ function whichCmd(cmd) {
   return probe.status === 0;
 }
 
-/** 检查 + 自装 (跨平台) */
+/** 检查 + 自装 (跨平台)
+ *  --ignore-scripts: 跳过所有 postinstall (含 spdlog 的 node-gyp rebuild).
+ *  spdlog 是 deprecated + native 包, Python 3.14 没 distutils 必崩.
+ *  opensumi 用 JS fallback logger, 主流程不受影响.
+ */
 function ensureInstalled(label, ready, installCmd, installArgs, cwd) {
   if (ready()) {
     console.log(`[numas] ${label} deps 已就绪 (复用)`);
@@ -88,11 +92,12 @@ function ensureInstalled(label, ready, installCmd, installArgs, cwd) {
 }
 
 // 1. web deps (react + codeblitz + webpack)
+//   --ignore-scripts: 跳过 spdlog 等 native postinstall (Python 3.14 没 distutils 必崩)
 ensureInstalled(
   'web',
   () => fs.existsSync(webWebpackBin),
   npmCmd,
-  ['install', '--include=dev', '--prefer-offline'],
+  ['install', '--include=dev', '--prefer-offline', '--ignore-scripts'],
   WEB,
 );
 // 2. opencode (opencode-ai 提供二进制, --no-save 装到 web/; 也可全局 opencode)
@@ -100,7 +105,7 @@ ensureInstalled(
   'opencode',
   () => !!resolveOpencodeBin(),
   npmCmd,
-  ['install', '--no-save', '--prefer-offline', 'opencode-ai'],
+  ['install', '--no-save', '--prefer-offline', '--ignore-scripts', 'opencode-ai'],
   WEB,
 );
 const opencodeBin = resolveOpencodeBin();
@@ -186,3 +191,21 @@ process.on('exit',    () => {
   try { process.kill(-opencodeProc.pid, 'SIGTERM'); } catch { /* */ }
   try { process.kill(-webpackProc.pid, 'SIGTERM'); } catch { /* */ }
 });
+
+// 8. 自动打开浏览器 (sleep 4s 等 webpack-dev-server ready, 跨平台调用)
+//    失败仅 warn, 不阻塞进程 (headless server / 无桌面环境也兼容)
+const browserUrl = `http://localhost:${WEB_PORT}`;
+console.log(`[numas] 4s 后自动打开浏览器 ${browserUrl}`);
+setTimeout(() => {
+  let opener, args;
+  if (process.platform === 'darwin') { opener = 'open'; args = [browserUrl]; }
+  else if (process.platform === 'win32') { opener = 'cmd'; args = ['/c', 'start', '', browserUrl]; }
+  else { opener = 'xdg-open'; args = [browserUrl]; }
+  try {
+    const r = spawn(opener, args, { detached: true, stdio: 'ignore', shell: false });
+    r.on('error', (e) => console.warn(`[numas] 自动打开浏览器失败 (${e.message}), 请手动访问 ${browserUrl}`));
+    r.unref();
+  } catch (e) {
+    console.warn(`[numas] 自动打开浏览器失败 (${e.message}), 请手动访问 ${browserUrl}`);
+  }
+}, 4000);
