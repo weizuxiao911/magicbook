@@ -616,16 +616,16 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     <div className="ab-pdf">
       <style>{STYLES}</style>
       <div className="ab-pdf__body">
-        {/* 目录侧边栏 (可折叠) */}
+        {/* 目录侧边栏 (可折叠); 折叠时 width:0 完全隐藏 */}
         {!loading && !error && (
           <div className={tocOpen ? 'ab-pdf__toc ab-pdf__toc--open' : 'ab-pdf__toc'}>
             <div className="ab-pdf__toc-head">
+              <span className="ab-pdf__toc-title">目录</span>
               <button
                 className="ab-pdf__toc-toggle"
-                title={tocOpen ? '折叠目录' : '展开目录'}
-                onClick={() => setTocOpen((v) => !v)}
-              >{tocOpen ? '‹' : '›'}</button>
-              <span className="ab-pdf__toc-title">目录</span>
+                title="折叠目录"
+                onClick={() => setTocOpen(false)}
+              >‹</button>
             </div>
             {tocOpen && (
               <div className="ab-pdf__toc-tree">
@@ -643,6 +643,10 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         )}
         {/* viewer div: 永不包含 React children, page DOM 全部手动插入 */}
         <div className="ab-pdf__viewerContainer" ref={viewerRef} />
+        {/* 折叠后的展开入口: viewer 左上角浮动按钮 */}
+        {!tocOpen && !loading && !error && (
+          <button className="ab-pdf__toc-open-btn" title="展开目录" onClick={() => setTocOpen(true)}>☰ 目录</button>
+        )}
       </div>
       <AnnotationActions />
       {loading && (
@@ -841,13 +845,14 @@ const STYLES = `
   flex: 1; min-height: 0;
   display: flex; flex-direction: row;
   overflow: hidden;
+  position: relative;
 }
 /* ===== 目录侧边栏 ===== */
 .ab-pdf__toc {
   flex-shrink: 0;
   display: flex; flex-direction: column;
-  width: 40px;
-  background: var(--app-surface-muted, var(--editorWidget-background, #252526));
+  width: 0;
+  background: transparent;
   overflow: hidden;
   transition: width .18s ease;
 }
@@ -857,6 +862,7 @@ const STYLES = `
   padding: 6px 8px;
   font-size: 12.5px; font-weight: 600;
   white-space: nowrap; overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
 }
 .ab-pdf__toc-toggle {
   width: 22px; height: 22px;
@@ -893,6 +899,18 @@ const STYLES = `
   border-radius: 4px;
 }
 .ab-pdf__toc-label:hover { background: var(--list-hoverBackground, rgba(128,128,128,0.2)); }
+.ab-pdf__toc-open-btn {
+  position: absolute;
+  top: 8px; left: 8px;
+  z-index: 10;
+  padding: 4px 10px;
+  background: var(--button-secondaryBackground, rgba(128,128,128,0.15));
+  color: inherit;
+  border: 1px solid var(--panel-border, var(--vscode-panel-border, rgba(128,128,128,0.2)));
+  border-radius: 6px;
+  font-size: 12px; cursor: pointer;
+}
+.ab-pdf__toc-open-btn:hover { background: var(--button-secondaryHoverBackground, rgba(128,128,128,0.3)); }
 .ab-pdf__viewerContainer {
   flex: 1; min-height: 0;
   position: relative;
