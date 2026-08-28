@@ -393,9 +393,11 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       const div = document.createElement('div');
       div.className = 'ab-pdf-page';
       div.dataset['page'] = String(i);
-      // fit-to-height: canvas 高度占可视窗口 (100vh), 宽度按 PDF 原始宽高比
-      // aspect-ratio 自动算; max-height: 100vh 防止超窗口. canvas 100%×100% 自然保持比例.
-      div.style.cssText = `width:auto;height:100vh;max-height:100vh;aspect-ratio:${pb.width}/${pb.height};margin:0 auto ${pageGap}px;`;
+      // fit-to-height: canvas 高度 = viewer 可视高度 (已扣底部面板/顶部 bar 占用),
+      // 宽度按 PDF 原始宽高比 aspect-ratio 自动算. 不硬编码 100vh (会跟可视区不匹配
+      // 产生多余滚动/空白). canvas 100%×100% 自然保持比例.
+      const viewH = Math.max(viewer.clientHeight, 1);
+      div.style.cssText = `width:auto;height:${viewH}px;aspect-ratio:${pb.width}/${pb.height};margin:0 auto ${pageGap}px;`;
       viewer.appendChild(div);
       pageElsRef.current.set(i, div);
 
