@@ -133,6 +133,10 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   const [numPages, setNumPages] = useState(0);
   const [progress, setProgress] = useState({ loaded: 0, total: 0 });
   const [currentPage, setCurrentPage] = useState(1);
+  /** PDF 目录树 (pdf.getOutline() 嵌套结构) */
+  const [outline, setOutline] = useState<any[]>([]);
+  /** 目录面板是否展开 */
+  const [tocOpen, setTocOpen] = useState(true);
   /** resize 触发重建的 tick (每次宽度变化 +1, 触发 effect 重跑) */
   const [rebuildTick, setRebuildTick] = useState(0);
   /** 页码输入框 (非受控, 输入时不被滚动同步抢走) */
@@ -336,6 +340,13 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         if (cancelled) return;
         pdfDocRef.current = pdf;
         setNumPages(pdf.numPages);
+        // 目录: pdf.getOutline() 拿嵌套书签树
+        try {
+          const o = await (pdf as any).getOutline();
+          if (!cancelled) setOutline(Array.isArray(o) ? o : []);
+        } catch {
+          if (!cancelled) setOutline([]);
+        }
       } catch (e) {
         if (!cancelled) setError(String((e as any)?.message || e));
       } finally {
@@ -565,6 +576,25 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     if (el) el.scrollIntoView({ behavior: 'auto', block: 'start' });
   }, [numPages, syncPageDisplay]);
 
+  // ---------- 目录项点击: 解析 dest → 页号 → 跳转 ----------
+  const jumpToOutlineDest = useCallback(async (dest: any) => {
+    const pdf = pdfDocRef.current;
+    if (!pdf || !dest) return;
+    try {
+      let resolved: any = dest;
+      if (typeof dest === 'string') {
+        const explicit = (pdf as any).getDestination ? await (pdf as any).getDestination(dest) : null;
+        if (explicit) resolved = explicit;
+      }
+      if (Array.isArray(resolved) && resolved[0]) {
+        const pageIndex = (pdf as any).getPageIndex ? await (pdf as any).getPageIndex(resolved[0]) : -1;
+        if (pageIndex >= 0) jumpToPage(pageIndex + 1);
+      }
+    } catch {
+      /* 解析失败静默 */
+    }
+  }, [jumpToPage]);
+
   // ---------- 键盘翻页 ----------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -585,8 +615,35 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   return (
     <div className="ab-pdf">
       <style>{STYLES}</style>
-      {/* viewer div: 永不包含 React children, page DOM 全部手动插入 */}
-      <div className="ab-pdf__viewerContainer" ref={viewerRef} />
+      <div className="ab-pdf__body">
+        {/* 目录侧边栏 (可折叠) */}
+        {!loading && !error && (
+          <div className={tocOpen ? 'ab-pdf__toc ab-pdf__toc--open' : 'ab-pdf__toc'}>
+            <div className="ab-pdf__toc-head">
+              <button
+                className="ab-pdf__toc-toggle"
+                title={tocOpen ? '折叠目录' : '展开目录'}
+                onClick={() => setTocOpen((v) => !v)}
+              >{tocOpen ? '‹' : '›'}</button>
+              <span className="ab-pdf__toc-title">目录</span>
+            </div>
+            {tocOpen && (
+              <div className="ab-pdf__toc-tree">
+                {outline.length === 0
+                  ? <div className="ab-pdf__toc-empty">暂无目录</div>
+                  : <TocTree
+                      items={outline}
+                      depth={0}
+                      defaultCollapsed={new Set<string>()}
+                      onJump={jumpToOutlineDest}
+                    />}
+              </div>
+            )}
+          </div>
+        )}
+        {/* viewer div: 永不包含 React children, page DOM 全部手动插入 */}
+        <div className="ab-pdf__viewerContainer" ref={viewerRef} />
+      </div>
       <AnnotationActions />
       {loading && (
         <div className="ab-pdf__loading">
@@ -651,6 +708,58 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     </div>
   );
 };
+
+/* ========== 目录树 (TOC) 递归组件 ========== */
+function TocTree({ items, depth, defaultCollapsed, onJump }: {
+  items: any[];
+  depth: number;
+  defaultCollapsed: Set<string>;
+  onJump: (dest: any) => void;
+}): React.ReactElement {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set(defaultCollapsed));
+  const toggle = (title: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title); else next.add(title);
+      return next;
+    });
+  };
+  return (
+    <ul className="ab-pdf__toc-list" style={{ paddingLeft: depth * 12 }}>
+      {items.map((item, i) => {
+        const key = `${depth}-${i}-${item.title || ''}`;
+        const hasChildren = Array.isArray(item.items) && item.items.length > 0;
+        const isCollapsed = hasChildren && collapsed.has(item.title || key);
+        return (
+          <li key={key} className="ab-pdf__toc-item">
+            <div className="ab-pdf__toc-row" style={{ paddingLeft: hasChildren ? 0 : 14 }}>
+              {hasChildren ? (
+                <button
+                  className="ab-pdf__toc-caret"
+                  onClick={() => toggle(item.title || key)}
+                  title={isCollapsed ? '展开' : '折叠'}
+                >{isCollapsed ? '▸' : '▾'}</button>
+              ) : <span className="ab-pdf__toc-dot" />}
+              <button
+                className="ab-pdf__toc-label"
+                title={item.title || ''}
+                onClick={() => { if (item.dest) onJump(item.dest); }}
+              >{item.title || '(无标题)'}</button>
+            </div>
+            {hasChildren && !isCollapsed && (
+              <TocTree
+                items={item.items}
+                depth={depth + 1}
+                defaultCollapsed={defaultCollapsed}
+                onJump={onJump}
+              />
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -728,6 +837,64 @@ const STYLES = `
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
   overflow: hidden;
 }
+.ab-pdf__body {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: row;
+  overflow: hidden;
+}
+/* ===== 目录侧边栏 ===== */
+.ab-pdf__toc {
+  flex-shrink: 0;
+  display: flex; flex-direction: column;
+  width: 40px;
+  background: var(--app-surface-muted, var(--editorWidget-background, #252526));
+  border-right: 1px solid var(--panel-border, var(--vscode-panel-border, rgba(128,128,128,0.2)));
+  overflow: hidden;
+  transition: width .18s ease;
+}
+.ab-pdf__toc--open { width: 240px; }
+.ab-pdf__toc-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--panel-border, var(--vscode-panel-border, rgba(128,128,128,0.2)));
+  font-size: 12.5px; font-weight: 600;
+  white-space: nowrap; overflow: hidden;
+}
+.ab-pdf__toc-toggle {
+  width: 22px; height: 22px;
+  background: var(--button-secondaryBackground, rgba(128,128,128,0.15));
+  color: inherit;
+  border: none; border-radius: 5px;
+  cursor: pointer; font-size: 13px; line-height: 1;
+  flex-shrink: 0;
+}
+.ab-pdf__toc-toggle:hover { background: var(--button-secondaryHoverBackground, rgba(128,128,128,0.3)); }
+.ab-pdf__toc-title { flex: 1; text-align: left; }
+.ab-pdf__toc-tree {
+  flex: 1; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding: 4px 0;
+}
+.ab-pdf__toc-empty { padding: 12px 10px; font-size: 12px; color: var(--descriptionForeground, #888); }
+.ab-pdf__toc-list { list-style: none; margin: 0; padding: 0; }
+.ab-pdf__toc-item { margin: 0; }
+.ab-pdf__toc-row { display: flex; align-items: center; min-height: 24px; }
+.ab-pdf__toc-caret {
+  width: 20px; height: 24px;
+  background: none; border: none; color: inherit;
+  cursor: pointer; font-size: 10px; line-height: 1;
+  flex-shrink: 0; padding: 0;
+}
+.ab-pdf__toc-dot { width: 20px; flex-shrink: 0; }
+.ab-pdf__toc-label {
+  flex: 1; min-width: 0;
+  background: none; border: none; color: inherit;
+  text-align: left; font: inherit; font-size: 12.5px;
+  cursor: pointer; padding: 3px 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-radius: 4px;
+}
+.ab-pdf__toc-label:hover { background: var(--list-hoverBackground, rgba(128,128,128,0.2)); }
 .ab-pdf__viewerContainer {
   flex: 1; min-height: 0;
   position: relative;
