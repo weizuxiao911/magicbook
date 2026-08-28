@@ -342,6 +342,18 @@ body.design-dark [class*="design-kt_editor_tabs_scroll"] {
   background-image: none !important;
 }
 
+/* ============= Dark 主题: 覆盖 active tab 容器 ::before/::after 伪元素写死浅色 ============= */
+/* OpenSumi 给 .kt_editor_tab.current 的 ::before 写死 background: #ffffff (active tab
+   撕角/指示条, 12x36px), dark 主题下显示为白色竖条, 显式覆盖. */
+body.design-dark [class*="kt_editor_tab___"][class*="current"]::before,
+body.design-dark [class*="kt_editor_tab___"][class*="current"]::after,
+body.design-dark [class*="design-kt_editor_tab_current"]::before,
+body.design-dark [class*="design-kt_editor_tab_current"]::after {
+  background: var(--app-panel-bg) !important;
+  background-color: var(--app-panel-bg) !important;
+  border-color: var(--app-panel-bg) !important;
+}
+
 /* ============= Dark 主题: 撤销 light 写死的 IDE 主题变量 ============= */
 /* overrides.css:208-233 在 .codeblitz-light 等选择器下写死 --editorWidget-background / 
    --sideBar-background / --activityBar-background / --input-background / --button-background 
