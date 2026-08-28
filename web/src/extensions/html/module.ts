@@ -18,12 +18,15 @@ function getExt(path: string): string {
 }
 
 /**
- * HTML 预览/编辑插件 — .html/.htm 默认 webview 渲染, 可切换文本编辑模式.
+ * HTML 预览拓展 — .html/.htm 文件支持 "HTML 预览" webview 渲染.
  *
  * 注册:
- *   - EditorComponent uid = HTML_COMPONENT_ID (scheme = file)
- *   - registerEditorComponentResolver for file scheme, 命中 .html/.htm 时 weight: 'default'
- *     让默认 Monaco text editor 也出现在「打开方式」菜单, 不被 numas 完全覆盖
+ *   - EditorComponent uid = HTML_COMPONENT_ID (scheme = file).
+ *     「打开方式」菜单会列出这个 component (OpenSumi 的 MenuId.EditorTitle
+ *     submenu 自动收集所有已注册的 EditorComponent).
+ *   - registerEditorComponentResolver weight=100 但**不调 resolve**,
+ *     让 OpenSumi 默认 monaco text editor resolver 先匹配, .html 走默认 webview/code.
+ *     用户可右键 "打开方式" 选 "HTML 预览" 切到 numas 的 webview 实现.
  */
 @Injectable()
 @Domain(CommandContribution, ClientAppContribution, BrowserEditorContribution)
@@ -48,17 +51,24 @@ export class HtmlContribution implements CommandContribution, ClientAppContribut
         const pathStr = (uri?.path?.toString?.() || '').toLowerCase();
         const codeFsPath = String(uri?.codeUri?.fsPath || '').toLowerCase();
         const ext = getExt(pathStr || codeFsPath);
-        if (HTML_EXTS.has(ext)) {
-          resolve([
-            {
-              componentId: HTML_COMPONENT_ID,
-              type: 'component',
-              title: 'HTML 预览',
-              weight: 'default',
-            },
-          ]);
+        if (!HTML_EXTS.has(ext)) {
+          return; // 非 .html/.htm: 不调 resolve, 让 OpenSumi 默认 chain 继续
         }
-        // 非 html: 不 resolve, 让后续 resolver 继续 (resolve 会截断链)
+        // 返回 2 个打开方式: HTML 预览 (numas webview) + 代码 (OpenSumi monaco text editor)
+        // weight 'default' 让两个并列出现, 不互相覆盖
+        resolve([
+          {
+            componentId: HTML_COMPONENT_ID,
+            type: 'component',
+            title: 'HTML 预览',
+            weight: 'default',
+          },
+          {
+            type: 'code',
+            title: '代码',
+            weight: 'default',
+          },
+        ]);
       },
     );
   }
