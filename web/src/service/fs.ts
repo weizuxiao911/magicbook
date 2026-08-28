@@ -77,8 +77,11 @@ function absPath(idePath: string): string {
 //
 // 协议:
 //   → {"id":"1","op":"write","path":"/abs","b64":"..."}
-//   ← {"id":"1","ok":true,"data":{...}} | {"id":"1","ok":false,"err":"..."}
-// op: write(覆盖)/append(追加)/mkdir/rm/rmdir/move/readB64/stat
+//   ← {"id":"1","ok":true,"data":{...}} | {"id":"1","ok":false,"err":"...","code":"ENOTEMPTY"}
+// op: write(覆盖)/append(追加)/mkdir/rm(递归)/rmdir(真 rmdir)/move/readB64/stat
+//
+// 注: err 带 node 错误 code — OpenSumi fse.remove (rimraf) 靠 ENOTEMPTY/EISDIR/EPERM
+// 判断目录递归; rmdir 用真 fs.rmdirSync (非空目录返 ENOTEMPTY, 而不是 rm 的 EISDIR)
 
 const FS_PTY_WORKER = [
   "const fs=require('fs'),path=require('path');",
@@ -86,18 +89,18 @@ const FS_PTY_WORKER = [
   "process.stdin.on('data',c=>{buf+=c;let i;while((i=buf.indexOf('\\n'))>=0){",
   "  const line=buf.slice(0,i);buf=buf.slice(i+1);",
   "  let r;try{r=JSON.parse(line)}catch(e){continue}",
-  "  const id=r.id,out=(ok,data,err)=>{try{process.stdout.write(JSON.stringify({id,ok,data,err})+'\\n')}catch(e){}};",
+  "  const id=r.id,out=(ok,data,err,code)=>{try{process.stdout.write(JSON.stringify({id,ok,data,err,code})+'\\n')}catch(e){}};",
   "  try{",
   "    if(r.op==='write'){fs.mkdirSync(path.dirname(r.path),{recursive:true});fs.writeFileSync(r.path,Buffer.from(r.b64,'base64'));out(true,{bytes:r.b64.length});}",
   "    else if(r.op==='append'){fs.appendFileSync(r.path,Buffer.from(r.b64,'base64'));out(true,{bytes:r.b64.length});}",
   "    else if(r.op==='mkdir'){fs.mkdirSync(r.path,{recursive:true});out(true);}",
   "    else if(r.op==='rm'){fs.rmSync(r.path,{recursive:true,force:true});out(true);}",
-  "    else if(r.op==='rmdir'){fs.rmSync(r.path,{force:true});out(true);}",
+  "    else if(r.op==='rmdir'){fs.rmdirSync(r.path);out(true);}",
   "    else if(r.op==='move'){fs.mkdirSync(path.dirname(r.to),{recursive:true});fs.renameSync(r.from,r.to);out(true);}",
   "    else if(r.op==='readB64'){out(true,{b64:fs.readFileSync(r.path).toString('base64')});}",
   "    else if(r.op==='stat'){const s=fs.statSync(r.path);out(true,{size:s.size,mtimeMs:Math.floor(s.mtimeMs),isDir:s.isDirectory()});}",
   "    else out(false,null,'unknown op '+r.op);",
-  "  }catch(e){out(false,null,String(e&&e.message||e));}",
+  "  }catch(e){out(false,null,String(e&&e.message||e),e&&e.code||'');}",
   "}});",
 ].join('');
 
@@ -190,7 +193,7 @@ class FsPty {
     }
   }
 
-  private dispatch(msg: { id?: string; ok?: boolean; data?: any; err?: string }): void {
+  private dispatch(msg: { id?: string; ok?: boolean; data?: any; err?: string; code?: string }): void {
     // 只认带 ok 字段的 worker 响应; tty 会回显请求行 ({id,op,...} 无 ok) → 忽略
     if (!msg || msg.id === undefined || !('ok' in msg)) return;
     const p = this.pending.get(String(msg.id));
@@ -198,7 +201,11 @@ class FsPty {
     this.pending.delete(String(msg.id));
     if (p.timer) clearTimeout(p.timer);
     if (msg.ok) p.resolve({ ok: true, data: msg.data });
-    else p.reject(new Error(msg.err || 'fs pty op failed'));
+    else {
+      const err = new Error(msg.err || 'fs pty op failed');
+      (err as any).code = msg.code;
+      p.reject(err);
+    }
   }
 
   /** 执行一个 node fs 操作 (串行化 promise chain) */

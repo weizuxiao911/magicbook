@@ -11,7 +11,7 @@
  */
 
 import { BaseFileSystem } from '@codeblitzjs/ide-browserfs/lib/core/file_system';
-import { ApiError } from '@codeblitzjs/ide-browserfs/lib/core/api_error';
+import { ApiError, ErrorCode } from '@codeblitzjs/ide-browserfs/lib/core/api_error';
 import { FileFlag } from '@codeblitzjs/ide-browserfs/lib/core/file_flag';
 import Stats, { FileType } from '@codeblitzjs/ide-browserfs/lib/core/node_fs_stats';
 import { NoSyncFile } from '@codeblitzjs/ide-browserfs/lib/generic/preload_file';
@@ -22,6 +22,18 @@ import { getFileSystemService } from '../service/fs';
 import type { FileMeta } from '../commands/fs';
 
 type Cb<T = void> = (err: ApiError | null, result?: T) => void;
+
+/**
+ * 把 service 层错误包装成 BrowserFS ApiError, 保留 node 错误 code (如 ENOTEMPTY/EISDIR/ENOENT).
+ * OpenSumi fse.remove (rimraf) 靠 er.code === 'ENOTEMPTY'/'EISDIR' 判断目录递归;
+ * 直接传 Error 给 ApiError.FileError 会得到 code=undefined (报 "undefined: undefined").
+ */
+function toApiError(e: unknown, path: string, fallback: ErrorCode = ErrorCode.EIO): ApiError {
+  const msg = ((e as Error)?.message) || 'operation failed';
+  const codeStr = ((e as any)?.code as string) || '';
+  const codeNum = codeStr && (ErrorCode as any)[codeStr] !== undefined ? ((ErrorCode as any)[codeStr] as ErrorCode) : fallback;
+  return new ApiError(codeNum, msg, path);
+}
 
 /** BrowserFS 路径 → IDE 相对路径（去 /workspace 前缀） */
 function workspaceRel(path: string): string {
@@ -126,41 +138,38 @@ export class RemoteFS extends BaseFileSystem {
     getFileSystemService()
       .write(rel, content)
       .then(() => cb(null))
-      .catch((e: Error) => cb(ApiError.FileError(e as never, e?.message || 'write failed')));
+      .catch((e: Error) => cb(toApiError(e, fname)));
   }
 
   unlink(p: string, cb: Cb): void {
-    // 区分文件/目录: unlink 只删文件, 目录走 rmdir (ENOTSUP 否则报 "Operation is not supported")
+    // 统一走递归 rm (node fs.rmSync recursive): 文件/目录/非空目录都能删.
+    //   rimraf (OpenSumi fse.remove) 对目录顶层调 unlink/lstat 后走 rmdir, 这里一并兜底.
     getFileSystemService()
-      .meta(workspaceRel(p))
-      .then((meta) => {
-        if (meta.type === 'directory') {
-          return getFileSystemService().rmdir(workspaceRel(p));
-        }
-        return getFileSystemService().rm(workspaceRel(p));
-      })
+      .rm(workspaceRel(p))
       .then(() => cb(null))
-      .catch((e: Error) => cb(ApiError.FileError(e as never, e?.message || 'unlink failed')));
+      .catch((e: Error) => cb(toApiError(e, p)));
   }
 
   rmdir(p: string, cb: Cb): void {
+    // 递归删整个子树 (node fs.rmSync recursive) — rimraf 顶层 rmdir 一次搞定,
+    //   不用它逐文件 readdir/unlink/rmdir 递归 (那套在 FsPty 响应匹配下不可靠).
     getFileSystemService()
-      .rmdir(workspaceRel(p))
+      .rm(workspaceRel(p))
       .then(() => cb(null))
-      .catch((e: Error) => cb(ApiError.FileError(e as never, e?.message || 'rmdir failed')));
+      .catch((e: Error) => cb(toApiError(e, p)));
   }
 
   mkdir(p: string, _mode: number, cb: Cb): void {
     getFileSystemService()
       .mkdirp(workspaceRel(p))
       .then(() => cb(null))
-      .catch((e: Error) => cb(ApiError.FileError(e as never, e?.message || 'mkdir failed')));
+      .catch((e: Error) => cb(toApiError(e, p)));
   }
 
   rename(oldPath: string, newPath: string, cb: Cb): void {
     getFileSystemService()
       .move(workspaceRel(oldPath), workspaceRel(newPath))
       .then(() => cb(null))
-      .catch((e: Error) => cb(ApiError.FileError(e as never, e?.message || 'rename failed')));
+      .catch((e: Error) => cb(toApiError(e, oldPath)));
   }
 }
