@@ -848,7 +848,6 @@ const STYLES = `
   display: flex; flex-direction: column;
   width: 40px;
   background: var(--app-surface-muted, var(--editorWidget-background, #252526));
-  border-right: 1px solid var(--panel-border, var(--vscode-panel-border, rgba(128,128,128,0.2)));
   overflow: hidden;
   transition: width .18s ease;
 }
@@ -856,7 +855,6 @@ const STYLES = `
 .ab-pdf__toc-head {
   display: flex; align-items: center; gap: 6px;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--panel-border, var(--vscode-panel-border, rgba(128,128,128,0.2)));
   font-size: 12.5px; font-weight: 600;
   white-space: nowrap; overflow: hidden;
 }
