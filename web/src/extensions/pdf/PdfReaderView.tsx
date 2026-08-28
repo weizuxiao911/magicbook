@@ -487,7 +487,32 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     renderedRef.current = new Set(Array.from({ length: numPages }, (_, k) => k + 1));
     syncPageDisplay(currentPage);
     if (viewer.scrollHeight > prevScrollTop) viewer.scrollTop = prevScrollTop;
-  }, [numPages, currentPage, syncPageDisplay]);
+    // 注意: 依赖不含 currentPage / rebuildViewer — 滚动同步 currentPage 只影响显示,
+    // 不应触发重建 (重建会 reset scrollTop → 反向影响 PDF 滚动位置).
+    // 不含 rebuildViewer 是因为它在下面的 useCallback 定义, effect 求值依赖时 TDZ 报错.
+  }, [numPages, rebuildTick, syncPageDisplay]);
+
+  // ---------- 滚动同步当前页码 ----------
+  useEffect(() => {
+    if (!numPages) return;
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const onScroll = () => {
+      // 用 viewer 可视区中点的 y 找当前页: 中点下方第一页 = 当前页
+      const midY = viewer.scrollTop + viewer.clientHeight / 2;
+      const pages = pageElsRef.current;
+      let current = 1;
+      for (const [idx, el] of pages) {
+        if (!el) continue;
+        const top = el.offsetTop;
+        if (midY >= top) current = idx;
+      }
+      setCurrentPage((prev) => (prev === current ? prev : current));
+      syncPageDisplay(current);
+    };
+    viewer.addEventListener('scroll', onScroll);
+    return () => viewer.removeEventListener('scroll', onScroll);
+  }, [numPages, syncPageDisplay]);
 
   // ---------- 初始加载 (一次性渲染, 不懒加载, 滚动不会空白) ----------
   useEffect(() => {
@@ -621,6 +646,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
           <div className={tocOpen ? 'ab-pdf__toc ab-pdf__toc--open' : 'ab-pdf__toc'}>
             <div className="ab-pdf__toc-head">
               <span className="ab-pdf__toc-title">目录</span>
+              <span className="ab-pdf__toc-pageno">{currentPage} / {numPages}</span>
               <button
                 className="ab-pdf__toc-toggle"
                 title="折叠目录"
@@ -874,6 +900,11 @@ const STYLES = `
 }
 .ab-pdf__toc-toggle:hover { background: var(--button-secondaryHoverBackground, rgba(128,128,128,0.3)); }
 .ab-pdf__toc-title { flex: 1; text-align: left; }
+.ab-pdf__toc-pageno {
+  font-size: 11px; font-weight: 400;
+  color: var(--descriptionForeground, var(--vscode-descriptionForeground, #9ca3af));
+  white-space: nowrap;
+}
 .ab-pdf__toc-tree {
   flex: 1; min-height: 0;
   overflow-y: auto; overflow-x: hidden;
