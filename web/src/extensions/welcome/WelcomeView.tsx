@@ -79,9 +79,10 @@ export const WelcomeView: React.FC<{ resource?: any }> = () => {
         <h1 className="ab-welcome__title">{brand.name}</h1>
         {brand.tagline && <p className="ab-welcome__subtitle">{brand.tagline}</p>}
 
-        {workspaceDir && (
+        {/* workspaceDir 显示 (按需求去掉) */}
+        {/* {workspaceDir && (
           <p className="ab-welcome__cwd" title={workspaceDir}>工作区: {workspaceDir}</p>
-        )}
+        )} */}
 
         <div className="ab-welcome__actions">
           {/* 上传文件入口已移到 chat 顶部 + 按钮 (showOpenFilePicker), welcome 不再提供 */}
