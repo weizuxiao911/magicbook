@@ -382,7 +382,9 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       const div = document.createElement('div');
       div.className = 'ab-pdf-page';
       div.dataset['page'] = String(i);
-      div.style.cssText = `width:100%;height:${pageH}px;margin-bottom:${pageGap}px;`;
+      // 关键: 用 aspect-ratio 锁 PDF 原始宽高比, div 宽 100% (跟父容器 viewer) 时
+      // 高度按比例自动计算 → canvas 100%×100% 也按比例, 不会变形.
+      div.style.cssText = `width:100%;aspect-ratio:${pb.width}/${pb.height};margin-bottom:${pageGap}px;`;
       viewer.appendChild(div);
       pageElsRef.current.set(i, div);
 
