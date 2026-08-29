@@ -806,11 +806,12 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   /**
-   * 订阅 opencode 事件流. fs 相关 (file.edited / file.watcher.updated) 全部跳过:
-   *   - PTY fs.watch (通道 1) 已是 fs 事件唯一来源
-   *   - opencode 服务端的 file.watcher.updated 跟 host fs.watch 重复, 双源触发
-   *     onDidDeleteFiles 把 sidecar 写入事件当删除 (历史教训)
-   *   - 本通道仅用于非 fs 事件 (message.* / a2ui.* 等), 暂时仅 log
+   * 订阅 opencode 事件流. fs 相关 (file.edited / file.watcher.updated) 全部订阅:
+   *   - 跟 host PTY fs.watch (通道 1) 双源重复 → OpenSumi BrowserFS 内部去重, 不冲突
+   *   - 必须订阅, 否则 editor stat cache 跟 host disk 失同步 → "操作过于频繁" 冲突
+   *     (实测: 2e8f06f 屏蔽后, editor 跟 host disk 12 个文件 stat cache 不一致, 弹同步提示)
+   *   - 注: onDidDeleteFiles 误触侧已实测不存在 (BrowserFS RemoteFS.writeFile 内部不 unlink,
+   *     走 open+write), 所以订阅 fs.* 事件不会引发误删
    */
   private async connectEvents(): Promise<void> {
     const base = appBaseUrl();
@@ -818,17 +819,37 @@ export class FileSystemServiceImpl implements IFileSystem {
     if (this.eventAbort) return;
     const abort = new AbortController();
     this.eventAbort = abort;
+    const typeMap: Record<string, FileChangeType> = {
+      add: FileChangeType.ADDED,
+      change: FileChangeType.UPDATED,
+      unlink: FileChangeType.DELETED,
+    };
     try {
       const client = this.ensureClient();
       const events = await client.event.subscribe(undefined, { signal: abort.signal });
-      console.log('[filesystem] event.subscribe ok (fs 事件已跳过, 仅收非 fs 事件)');
+      console.log('[filesystem] event.subscribe ok (fs 事件已重新订阅, 修 editor stat 同步)');
       for await (const evt of events.stream) {
         const t = (evt as any).type as string;
         if (!t) continue;
-        // fs 事件全部跳过: PTY fs.watch (通道 1) 是唯一 fs 事件源
-        if (t === 'file.edited' || t === 'file.watcher.updated') continue;
-        // 其他事件 (message.* / a2ui.* 等) 暂时仅 log
-        console.log('[filesystem] non-fs event:', t, (evt as any).properties);
+        // fs 事件重新订阅: file.edited / file.watcher.updated → fireFilesChange + dispatch fs:changed
+        let changeType: string | null = null;
+        let relPath = '';
+        if (t === 'file.edited') {
+          changeType = 'change';
+          relPath = ((evt as any).properties?.file || '').toString();
+        } else if (t === 'file.watcher.updated') {
+          changeType = ((evt as any).properties?.event || '').toString();
+          relPath = ((evt as any).properties?.file || '').toString();
+        }
+        if (!changeType || !relPath) continue;
+        const rel = relPath.startsWith('/') ? relPath : `/${relPath}`;
+        const uri = `file://${WORKSPACE_ROOT}${rel}`;
+        console.log('[filesystem] fs event:', t, rel, '→ fireFilesChange', uri);
+        invalidateStat(rel);
+        this.fileService.fireFilesChange({
+          changes: [{ uri, type: typeMap[changeType] ?? FileChangeType.UPDATED }],
+        });
+        window.dispatchEvent(new CustomEvent('fs:changed', { detail: { type: changeType, path: rel } }));
       }
     } catch (e) {
       if ((e as Error)?.name !== 'AbortError') {
