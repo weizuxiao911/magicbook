@@ -8,6 +8,7 @@
  *   - baseContent 读自 overlay 本地层 → 保存前后内容一致 → 无 md5 对比误报
  */
 
+import fs from '@codeblitzjs/ide-browserfs/lib/core/node_fs';
 import { FileType } from '@codeblitzjs/ide-browserfs/lib/core/node_fs_stats';
 import { WORKSPACE_ROOT, type IAppRendererProps } from '@codeblitzjs/ide-core';
 
@@ -62,7 +63,31 @@ export const runtimeConfig: IAppRendererProps['runtimeConfig'] = {
         console.warn('[runtime] sync write failed:', filepath, err);
       }
     },
-    // 注意: onDidChangeFiles / onDidCreateFiles 由 IFileServiceClient.onFilesChanged 驱动,
+    // 建: explorer 新建目录/文件 → BrowserFS 本地 stat 判类型 → 目录 mkdirp 落服务器;
+    //     文件由保存 (onDidSaveTextDocument) 推, 这里不动 (避免空文件覆盖)
+    onDidCreateFiles: (files) => {
+      (files || []).forEach(async (f) => {
+        const rel = workspaceRel(f);
+        // 本地 overlay 里 stat 判类型 (新建的目录/文件都在 writable InMemory)
+        let isDir = false;
+        try {
+          const browserPath = f.startsWith(WORKSPACE_ROOT) ? f : `${WORKSPACE_ROOT}${f.startsWith('/') ? '' : '/'}${f}`;
+          isDir = fs.statSync(browserPath).isDirectory();
+        } catch (e) {
+          console.warn('[runtime] sync create stat failed:', f, e);
+          return;
+        }
+        if (!isDir) return; // 文件: 等保存推
+        const fsApi = getFileSystemService();
+        try {
+          await fsApi.mkdirp(rel);
+          console.log(`[runtime] sync mkdir → opencode: ${rel}`);
+        } catch (err) {
+          console.warn('[runtime] sync mkdir failed:', f, err);
+        }
+      });
+    },
+    // 注意: onDidChangeFiles 由 IFileServiceClient.onFilesChanged 驱动,
     // 而 onFilesChanged 会收到我们 fireFilesChange 的"外部变化"事件 → 写回旧内容/覆盖新建, 形成循环。
     // 读侧走 DynamicRequest, 写侧走本钩子单推, 无需这些钩子。
     onDidChangeTextDocument: (_args) => {
