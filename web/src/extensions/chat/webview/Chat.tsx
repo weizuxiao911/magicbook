@@ -1458,7 +1458,7 @@ export const Chat: React.FC = () => {
               <div className="chat__preview-head">
                 <span className="chat__preview-name">{previewAttachment.name}</span>
                 <button type="button" className="chat__modal-back" title="关闭" onClick={() => setPreviewAttachment(null)}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
                 </button>
               </div>
               <div className="chat__preview-body">
@@ -1467,7 +1467,7 @@ export const Chat: React.FC = () => {
                 ) : (
                   <div className="chat__preview-file">
                     <span className="chat__attach-ic chat__attach-ic--lg">
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                     </span>
                     <span className="chat__preview-path">{previewAttachment.path}</span>
                   </div>
@@ -1836,7 +1836,7 @@ export const Chat: React.FC = () => {
                   disabled={!input.trim() && attachments.length === 0}
                   title={attachments.length && !input.trim() ? `发送 ${attachments.length} 个附件` : '发送 (Enter)'}
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
                 </button>
               )}
             </div>
