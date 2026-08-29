@@ -21,7 +21,7 @@ import { SyncKeyValueFileSystem } from '@codeblitzjs/ide-browserfs/lib/generic/k
 import { BrowserFS } from '@codeblitzjs/ide-sumi-core/lib/server/node';
 import { WORKSPACE_ROOT, type IAppRendererProps } from '@codeblitzjs/ide-core';
 
-import { getFileSystemService } from '../service/fs';
+import { getFileSystemService, recordSyncedHash } from '../service/fs';
 
 /** BrowserFS 路径 → IDE 相对路径（去 /workspace 前缀） */
 function workspaceRel(path: string): string {
@@ -83,6 +83,9 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
     try {
       const content = data.toString('utf8');
       await getFileSystemService().write(rel, content);
+      // 断循环: 记录自己写的内容 hash, watcher 事件对比一致 skip 不 fire.
+      // await 保证 hash 先于 watcher 防抖对比写入 (否则 fire-and-forget 竞态 → 还是 fire)
+      await recordSyncedHash(rel, content);
       console.log(`[bfs] write → opencode: ${rel}`, JSON.stringify(content.slice(0, 40)));
     } catch (e) {
       console.warn('[bfs] sync write failed:', rel, e);
@@ -92,6 +95,8 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
   private async syncMkdir(rel: string): Promise<void> {
     try {
       await getFileSystemService().mkdirp(rel);
+      // 记录"自己建过" (watcher rename 事件对比 skip, 不断循环)
+      recordSyncedHash(rel, null);
       console.log(`[bfs] mkdir → opencode: ${rel}`);
     } catch (e) {
       console.warn('[bfs] sync mkdir failed:', rel, e);
@@ -101,6 +106,8 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
   private async syncRm(rel: string): Promise<void> {
     try {
       await getFileSystemService().rm(rel);
+      // 记录"自己删过" → watcher 事件 readPathHash 返 null, 对比一致 skip
+      recordSyncedHash(rel, null);
       console.log(`[bfs] rm → opencode: ${rel}`);
     } catch (e) {
       console.warn('[bfs] sync rm failed:', rel, e);
@@ -110,6 +117,9 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
   private async syncMove(from: string, to: string): Promise<void> {
     try {
       await getFileSystemService().move(from, to);
+      // 记录"自己移过": 源已不存在 (null), 目标新内容未知 → 记 null 让 watcher 跳过 rename 事件
+      recordSyncedHash(from, null);
+      recordSyncedHash(to, null);
       console.log(`[bfs] move → opencode: ${from} → ${to}`);
     } catch (e) {
       console.warn('[bfs] sync move failed:', from, to, e);

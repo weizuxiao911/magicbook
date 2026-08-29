@@ -36,6 +36,15 @@ import {
 
 // ---- 工具函数 ----
 
+/** file:///workspace/1.txt → /1.txt (IDE 相对路径) */
+function uriToRel(uri: string): string {
+  const marker = `file://${WORKSPACE_ROOT}`;
+  if (uri.startsWith(marker)) return uri.slice(marker.length) || '/';
+  const idx = uri.indexOf('://');
+  const path = idx >= 0 ? uri.slice(idx + 3).replace(/^\/+/, '/') : uri;
+  return path.startsWith('/') ? path : `/${path}`;
+}
+
 /** IDE 路径 → opencode /api/fs/read 用的相对路径（去前导 / 和 /workspace 前缀, 跟 opencode 端 cwd 拼接） */
 function relPathForRead(idePath: string): string {
   let p = idePath.replace(/^\/+/, '');
@@ -315,6 +324,22 @@ let watcherFireFn: ((changes: Array<{ uri: string; type: FileChangeType }>) => v
 /** 已同步路径 → 内容 hash (fs.watch 事件对比: 一致 = 自己写/无变化, 跳过不 fire; 不一致 = 外部改, fire) */
 const watcherSyncedHashes = new Map<string, string | null>();
 
+/** 记录"自己写的"内容 hash — WriteSyncFS 写服务器成功后调用.
+ *  断循环: 编辑器保存 → 写服务器 → fs.watch 事件 → hash 对比一致 → skip 不 fire;
+ *  外部修改 (vim/Finder) 无记录 → hash 不同 → fire 通知 codeblitz.
+ *  @param content 内容 (string/Uint8Array); null 表示"已删除" (watcher 读不到文件时对比 null)
+ *  @returns Promise: 调用方 (WriteSyncFS.syncWrite) await 保证 hash 先于 watcher 对比写入 */
+export function recordSyncedHash(relPath: string, content: string | Uint8Array | null): Promise<void> {
+  if (content === null) {
+    watcherSyncedHashes.set(relPath, null);
+    return Promise.resolve();
+  }
+  const bytes = typeof content === 'string' ? new TextEncoder().encode(content) : content;
+  return contentHash(bytes).then((h) => {
+    watcherSyncedHashes.set(relPath, h);
+  });
+}
+
 // ---- 真实 stat (FsPty node worker 'stat' op) ----
 
 /** 真实 stat 缓存 (IDE 路径 → {size,mtimeMs}): FsPty stat 结果; 写/外部修改后 invalidateStat 清 */
@@ -404,12 +429,14 @@ function handleJsonObject(obj: any): void {
   if ('cursor' in obj || obj.type === 'cursor' || obj.type === 'resize' || 'method' in obj) return;
   if (typeof obj.e !== 'string' || typeof obj.p !== 'string') return;
   // fs.watch → OpenSumi 事件类型转换:
-  //   node:fs.watch (跨平台) 的 'rename' 事件语义是 "路径节点被重命名/创建/删除",
-  //   filename 是否存在区分 add/unlink. 用 client.file.list 父目录看 entry 判断 (不走 PTY).
-  //   注: 别用 UPDATED — OpenSumi editor 收到 UPDATED 报 "已经被在磁盘上修改,不能保存"
+  //   node:fs.watch (跨平台) 的 'rename' 事件语义是 "路径节点被重命名/创建/删除/修改",
+  //   macOS 上外部写入 (vim/Finder) 常表现为 rename 而非 change.
+  //   OpenSumi fs-resource 的 onFilesChanged 只对 ADDED/DELETED 触发编辑器 reload (清缓存+ResourceNeedUpdateEvent),
+  //   UPDATED 分支仅当缓存 undefined 才更新 → 已打开文件不 reload.
+  //   故外部修改: 文件仍存在 → ADDED (reload 已打开编辑器); 不存在 → DELETED.
   let opencodeEvent: FileChangeType;
   if (obj.e === 'rename') {
-    opencodeEvent = FileChangeType.ADDED;  // 先 ADDED, OpenSumi 自己 stat 修正
+    opencodeEvent = FileChangeType.ADDED;  // 防抖后 readPathHash null (不存在) 再改 DELETED
   } else {
     const t = TYPE_MAP[obj.e];
     if (t === undefined) { console.log('[watcher] unknown event type:', obj.e); return; }
@@ -425,7 +452,9 @@ function handleJsonObject(obj: any): void {
   //   自己保存 (editor 记录 hash) / 无变化 → 跳过不 fire (断循环)
   //   外部修改 → hash 不同 → fire
   //   防抖: fs.watch 高频触发时合并, 且等 editor 保存 hash 记录完成
-  const key = obj.p;
+  // key 统一 IDE 相对路径格式 (带前导 /), 跟 recordSyncedHash 的 workspaceRel 一致 —
+  // 否则 WriteSyncFS 写后记录的是 /1.txt, watcher 对比的是 1.txt → 永远匹配不上, 断循环失效
+  const key = obj.p.startsWith('/') ? obj.p : `/${obj.p}`;
   const prev = debounceMap.get(key);
   if (prev) clearTimeout(prev.timer);
   const timer = setTimeout(() => {
@@ -438,11 +467,16 @@ function handleJsonObject(obj: any): void {
         console.log('[watcher] skip (hash same)', key, h);
         return;
       }
-      console.log('[watcher] → fireFilesChange', uri, opencodeEvent, { old: synced, now: h });
+      // rename 事件按最终状态修正: 文件不存在 → DELETED; 存在 → UPDATED (已默认)
+      let finalEvent = opencodeEvent;
+      if (h === null) {
+        finalEvent = FileChangeType.DELETED;
+      }
+      console.log('[watcher] → fireFilesChange', uri, finalEvent, { old: synced, now: h });
       // 外部修改: 清 stat 缓存, 下次 stat 拿新 mtime/size (编辑器重载后 checkInSync 同值)
       invalidateStat(key);
       if (watcherFireFn) {
-        watcherFireFn([{ uri, type: opencodeEvent }]);
+        watcherFireFn([{ uri, type: finalEvent }]);
       }
       // 更新已同步 hash (文件存在 → hash; 不存在 → null)
       watcherSyncedHashes.set(key, h);
@@ -634,8 +668,12 @@ export class FileSystemServiceImpl implements IFileSystem {
     // 页面卸载: 停 watcher + 杀 server 端 pty (防 reload 后僵尸 watcher 堆积)
     window.addEventListener('pagehide', () => stopFsWatcher());
     window.addEventListener('beforeunload', () => stopFsWatcher());
-    // 把 fireFilesChange 注入到 watcher 模块 (避免循环 import)
-    bindWatcherFireFilesChange((changes) => this.fileService.fireFilesChange({ changes }));
+    // 把 fireFilesChange 注入到 watcher 模块 (避免循环 import) + 同步打开的编辑器 (外部修改 → reload)
+    bindWatcherFireFilesChange((changes) => {
+      this.fileService.fireFilesChange({ changes });
+      // 外部修改 → 已打开且不 dirty 的编辑器直接更新内容 (绕开 OpenSumi getMd5 缓存链路)
+      changes.forEach((c) => this.syncOpenEditor(uriToRel(c.uri)));
+    });
     const onReady = () => {
       this.connectEvents();
       void this.startWatcher();
@@ -649,6 +687,39 @@ export class FileSystemServiceImpl implements IFileSystem {
       onReady();
     } else {
       window.addEventListener('runtime-ready', onReady);
+    }
+  }
+
+  /** 外部修改 → 同步已打开的编辑器: 文件在打开 tab 且不 dirty 时, 读服务器新内容更新 monaco model.
+   *  绕开 OpenSumi 原生链路 (fireFilesChange → getMd5 走 BrowserFS 缓存 → md5 对比 → reload, 不可靠). */
+  private syncOpenEditor(relPath: string): void {
+    if (!relPath || relPath === '/') return;
+    try {
+      const monaco: any = (window as any).monaco;
+      if (!monaco?.editor) return;
+      // 找对应 model (uri: file:///workspace/<rel>)
+      const models = monaco.editor.getModels();
+      const target = models.find((m: any) => {
+        const s = String(m.uri?.toString?.() || '');
+        return s === `file://${WORKSPACE_ROOT}${relPath}` || s.endsWith(relPath);
+      });
+      if (!target) return;
+      // dirty (用户有未保存修改) → 不覆盖
+      const ed = monaco.editor.getEditors?.().find((e: any) => e.getModel?.() === target);
+      if (ed && ed.getModifiedLinesCount?.() > 0) return;
+      if (target.getAlternativeVersionId() !== target.getVersionId()) return; // dirty 兜底
+      // 读服务器新内容 → 更新 model (保留 undo 栈)
+      void getFileSystemService()
+        .read(relPath)
+        .then((bytes) => {
+          const content = new TextDecoder().decode(bytes);
+          if (content === target.getValue()) return;
+          target.pushEditOperations([], [{ range: target.getFullModelRange(), text: content }], () => null);
+          console.log('[fs] 外部修改 → 已同步编辑器:', relPath);
+        })
+        .catch(() => {});
+    } catch (e) {
+      console.warn('[fs] syncOpenEditor failed:', relPath, e);
     }
   }
 
