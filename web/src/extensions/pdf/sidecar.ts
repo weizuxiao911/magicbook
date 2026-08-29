@@ -67,6 +67,7 @@ export class SidecarWriter {
   private deleteIds: string[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lastWrittenHash: string = '';
+  private retryCount: number = 0;
   private onError: (err: Error) => void;
 
   constructor(relPath: string, onError: (err: Error) => void = () => {}) {
@@ -108,30 +109,38 @@ export class SidecarWriter {
     const fs = (window as any).__APP_FS__;
     if (!fs?.write) {
       this.onError(new Error('__APP_FS__ not available'));
-      // 放回去, 等下次
       this.pending.unshift(...incoming);
       this.deleteIds.unshift(...deletes);
       return;
     }
     try {
-      // read 已有
       const existing = await readSidecar(this.relPath);
       const merged = mergeItems(existing.items, incoming);
-      // 过滤被删的 id
       const filtered = merged.filter((a) => !deletes.includes(a.id));
       const file: SidecarAnnotFile = { version: 1, items: filtered };
       const json = JSON.stringify(file, null, 2);
       const hash = await contentHash(json);
-      // 自写去重: 如果内容跟上一次写的一样, 跳过
       if (hash === this.lastWrittenHash) return;
       await fs.write(this.relPath, json);
       this.lastWrittenHash = hash;
+      this.retryCount = 0;
     } catch (e: any) {
-      console.error('[sidecar] write failed:', e?.message || e);
-      this.onError(e instanceof Error ? e : new Error(String(e)));
-      // 放回去重试
+      console.error('[sidecar] write failed (attempt ' + (this.retryCount + 1) + '):', e?.message || e);
       this.pending.unshift(...incoming);
       this.deleteIds.unshift(...deletes);
+      this.retryCount++;
+      if (this.retryCount === 1) {
+        // 第一次失败, 大概率 FsPty 卡住 (PTY 内部状态异常), 立即 reset 让下次重建.
+        // 不增加 retry 次数, 让第二次 retry 走新 PTY 真的有重试价值.
+        try { fs.resetFsPty?.(); } catch { /* */ }
+      }
+      if (this.retryCount < 3) {
+        const delay = 5000 * Math.pow(2, this.retryCount - 1);
+        this.timer = setTimeout(() => this.flush(), delay);
+        console.log('[sidecar] retry in', delay, 'ms');
+      } else {
+        this.onError(e instanceof Error ? e : new Error(String(e)));
+      }
     }
   }
 

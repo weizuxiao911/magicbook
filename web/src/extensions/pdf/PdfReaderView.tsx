@@ -170,7 +170,9 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   const [error, setError] = useState('');
   const [numPages, setNumPages] = useState(0);
   const [progress, setProgress] = useState({ loaded: 0, total: 0 });
-  const [currentPage, setCurrentPage] = useState(1);
+  /** 当前页码 (ref, 避免放入 rebuildViewer deps 触发死循环) */
+  const currentPageRef = useRef<number>(1);
+  const [currentPage, _setCurrentPage] = useState(1);
   /** PDF 目录树 (pdf.getOutline() 嵌套结构) */
   const [outline, setOutline] = useState<any[]>([]);
   /** 目录面板是否展开 */
@@ -422,7 +424,196 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     };
   }, [hostPath]);
 
-  // ---------- 重建占位 + 一次性渲染所有页 (不懒加载, 避免滚动空白) ----------
+  // ---------- 单页完整重建 (page div + canvas + text layer + 内嵌 + sidecar 标注) ----------
+  // 全 rebuild (rebuildViewer) 和局部重建 (sidecar 变化 useEffect) 都调此.
+  // myBuildId: 并发守卫, 全 rebuild 期间新 build 来了, 旧 build bail.
+  const rebuildSinglePage = useCallback(async (pageIdx: number, myBuildId?: number) => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const pdf = pdfDocRef.current;
+    if (!pdf) return;
+    if (pageIdx < 1 || pageIdx > numPages) return;
+
+    const edEl = document.getElementById('opensumi-editor');
+    const viewBaseH = Math.max((edEl?.clientHeight ?? viewer.clientHeight) || 1, 1);
+    const viewH = viewBaseH * USER_SCALES[userScaleIdx];
+    const pageGap = 8;
+    const dpr = window.devicePixelRatio || 1;
+
+    // 删旧 page div (幂等)
+    const oldDiv = pageElsRef.current.get(pageIdx);
+    if (oldDiv && oldDiv.parentNode === viewer) {
+      viewer.removeChild(oldDiv);
+    }
+    pageElsRef.current.delete(pageIdx);
+
+    // 拿 page
+    const p = await pdf.getPage(pageIdx);
+    if (myBuildId !== undefined && buildIdRef.current !== myBuildId) return;
+    const pb = p.getViewport({ scale: 1 });
+
+    // 找插入位置 (按 page 顺序)
+    const nextSibling = pageElsRef.current.get(pageIdx + 1)?.parentNode === viewer
+      ? pageElsRef.current.get(pageIdx + 1) || null
+      : null;
+
+    // page div
+    const pageH = viewH;
+    const pageW = viewH * (pb.width / pb.height);
+    const div = document.createElement('div');
+    div.className = 'ab-pdf-page';
+    div.dataset['page'] = String(pageIdx);
+    div.style.cssText = `width:${pageW}px;height:${pageH}px;margin:0 auto ${pageGap}px;`;
+    if (nextSibling && nextSibling.parentNode === viewer) {
+      viewer.insertBefore(div, nextSibling);
+    } else {
+      viewer.appendChild(div);
+    }
+    pageElsRef.current.set(pageIdx, div);
+
+    // canvas
+    const renderScale = (pageW / pb.width) * dpr;
+    const viewport = p.getViewport({ scale: renderScale });
+    const canvas = document.createElement('canvas');
+    canvas.className = 'ab-pdf-canvas';
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    canvas.style.cssText = 'width:100%;height:100%;display:block;opacity:0;transition:opacity 0.12s ease;';
+    div.appendChild(canvas);
+    const ctx = canvas.getContext('2d');
+    if (ctx) await p.render({ canvasContext: ctx, viewport }).promise;
+    if (myBuildId !== undefined && buildIdRef.current !== myBuildId) return;
+    canvas.style.opacity = '1';
+
+    // text layer (备用, 当前用 Rect 选择)
+    try {
+      const textContent = await p.getTextContent();
+      if (myBuildId !== undefined && buildIdRef.current !== myBuildId) return;
+      const textLayerDiv = document.createElement('div');
+      textLayerDiv.className = 'textLayer';
+      textLayerDiv.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;overflow:hidden;opacity:0;transition:opacity 0.12s ease;line-height:1;pointer-events:none;user-select:text;-webkit-user-select:text;color:rgba(0,0,0,0.005);z-index:1;';
+      div.appendChild(textLayerDiv);
+      const cssViewport = p.getViewport({ scale: pageW / pb.width });
+      const TL = (pdfjsLib as any).TextLayer;
+      if (TL) {
+        const tl = new TL({ textContentSource: textContent, container: textLayerDiv, viewport: cssViewport });
+        await tl.render();
+        if (myBuildId !== undefined && buildIdRef.current !== myBuildId) return;
+        textLayerDiv.style.opacity = '1';
+      }
+    } catch (e) {
+      console.warn('[pdf] text layer page', pageIdx, 'failed:', e);
+    }
+
+    // 标注 (内嵌 + sidecar)
+    const embeddedMetas: PdfAnnotMeta[] = (await p.getAnnotations() || [])
+      .map((a: any) => toAnnotMeta(a, pageIdx))
+      .filter((m: PdfAnnotMeta) => m.action && m.raw?.rect);
+    const sidecarMetas: PdfAnnotMeta[] = (sidecarAnnotsRef.current.get(pageIdx) || [] as SidecarAnnot[])
+      .map(sidecarToAnnotMeta)
+      .filter((m: PdfAnnotMeta) => m.raw?.rect);
+    if (embeddedMetas.length > 0 || sidecarMetas.length > 0) {
+      const overlay = document.createElement('div');
+      overlay.className = 'ab-pdf-annot-layer';
+      overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:hidden;';
+      div.appendChild(overlay);
+      renderAnnotsForPage(overlay, pageIdx, embeddedMetas, sidecarMetas, canvas, pb, renderScale);
+    }
+  }, [numPages, userScaleIdx]);
+
+  // ---------- 标注热区渲染 (内嵌 + sidecar, 给 rebuildSinglePage 用) ----------
+  const renderAnnotsForPage = useCallback((overlay: HTMLDivElement, pageIdx: number, embeddedMetas: PdfAnnotMeta[], sidecarMetas: PdfAnnotMeta[], canvas: HTMLCanvasElement, pb: any, renderScale: number) => {
+    const scaleX = canvas.width / canvas.clientWidth;
+    const scaleY = canvas.height / canvas.clientHeight;
+    const pageH0 = pb.height;
+
+    const renderMeta = (meta: PdfAnnotMeta, opts: { withTip: boolean; withClick: boolean; withDelete?: boolean }) => {
+      const rect = meta.raw.rect as [number, number, number, number];
+      if (!rect || rect.length !== 4) return;
+      const [x1, y1, x2, y2] = rect;
+      const px1 = x1 * renderScale / scaleX;
+      const py1 = (pageH0 - y1) * renderScale / scaleY;
+      const px2 = x2 * renderScale / scaleX;
+      const py2 = (pageH0 - y2) * renderScale / scaleY;
+      const left = Math.min(px1, px2);
+      const top = Math.min(py1, py2);
+      const w = Math.abs(px2 - px1);
+      const h = Math.abs(py2 - py1);
+
+      const c: any = meta.raw?.color;
+      let r = 153, g = 153, b = 255;
+      if (c && c.length >= 3) {
+        r = Number(c[0]) || r;
+        g = Number(c[1]) || g;
+        b = Number(c[2]) || b;
+      }
+
+      const el = document.createElement('button');
+      el.className = 'ab-pdf-annot';
+      el.dataset['page'] = String(pageIdx);
+      el.dataset['annotId'] = meta.id;
+      el.dataset['sidecar'] = opts.withDelete ? '1' : '0';
+      el.dataset['origLeft'] = String(left * scaleX);
+      el.dataset['origTop'] = String(top * scaleY);
+      el.dataset['origW'] = String(w * scaleX);
+      el.dataset['origH'] = String(h * scaleY);
+      el.style.cssText = `position:absolute;left:${left}px;top:${top}px;width:${w}px;height:${h}px;pointer-events:auto;background:rgba(${r},${g},${b},0.08);border:1px dashed rgba(${r},${g},${b},0.25);`;
+      if (opts.withTip) el.title = meta.preview || meta.title;
+      if (opts.withTip) {
+        el.addEventListener('mouseenter', () => {
+          el.style.background = `rgba(${r},${g},${b},0.35)`;
+          el.style.boxShadow = `0 0 0 2px rgba(${r},${g},${b},0.6)`;
+          showAnnotTip(el, meta);
+        });
+        el.addEventListener('mouseleave', () => {
+          el.style.background = `rgba(${r},${g},${b},0.08)`;
+          el.style.boxShadow = 'none';
+          hideAnnotTip();
+        });
+      } else if (opts.withDelete) {
+        const delBtn = document.createElement('span');
+        el.addEventListener('mouseenter', () => {
+          el.style.background = `rgba(${r},${g},${b},0.18)`;
+          el.style.boxShadow = `0 0 0 1.5px rgba(${r},${g},${b},0.5)`;
+          if (delBtn) delBtn.style.opacity = '1';
+        });
+        el.addEventListener('mouseleave', () => {
+          el.style.background = `rgba(${r},${g},${b},0.08)`;
+          el.style.boxShadow = 'none';
+          if (delBtn) delBtn.style.opacity = '0';
+        });
+        delBtn.className = 'ab-pdf-annot__del';
+        delBtn.textContent = '×';
+        delBtn.title = '取消标注';
+        delBtn.style.cssText = `position:absolute;right:-7px;top:-7px;width:14px;height:14px;line-height:12px;font-size:12px;font-weight:600;color:#fff;background:rgba(220,60,60,0.95);border-radius:50%;text-align:center;cursor:pointer;opacity:0;pointer-events:auto;transition:opacity 0.12s, transform 0.12s;z-index:3;user-select:none;`;
+        delBtn.addEventListener('mouseenter', () => { delBtn.style.transform = 'scale(1.2)'; });
+        delBtn.addEventListener('mouseleave', () => { delBtn.style.transform = 'scale(1)'; });
+        delBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          ev.preventDefault();
+          handleDeleteAnnot(meta.id);
+        });
+        el.appendChild(delBtn);
+      }
+      if (opts.withClick) {
+        el.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          hideAnnotTip();
+          if (meta.action) void runAnnotAction(meta.action, annotHandlersRef.current);
+        });
+      }
+      overlay.appendChild(el);
+    };
+
+    for (const meta of embeddedMetas) {
+      renderMeta(meta, { withTip: true, withClick: true });
+    }
+    for (const meta of sidecarMetas) {
+      renderMeta(meta, { withTip: false, withClick: false, withDelete: true });
+    }
+  }, []);
+
+  // ---------- 重建占位 + 一次性渲染所有页 (size 变化才触发) ----------
   const rebuildViewer = useCallback(async () => {
     if (!numPages) return;
     const viewer = viewerRef.current;
@@ -432,204 +623,37 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     // 并发守卫: 入口拿 myBuildId, 后续 await 后检查; 不一致 → 旧 build bail, 不再 appendChild.
     // 否则连续 click 缩放时, 上一次 build 在 await 链里又 appendChild 老 div, 跟新 build 撞车.
     const myBuildId = ++buildIdRef.current;
+    console.log('[pdf] rebuild enter myBuildId=', myBuildId, 'scrollTop=', viewer.scrollTop);
 
     // 高度主导缩放: div 高度 = viewer 视口高 × userScale, 宽度按 PDF aspect-ratio 算.
-    // viewer 视口高取 #opensumi-editor 视觉窗口 (fallback viewer.clientHeight), 不依赖 viewer 视口宽,
-    // div 用固定像素宽高 → 滚动总高 = sum(viewH × (1+gap)) 稳定, viewer 宽度变化不触发 reflow.
     const edEl = document.getElementById('opensumi-editor');
     const viewBaseH = Math.max((edEl?.clientHeight ?? viewer.clientHeight) || 1, 1);
     const viewH = viewBaseH * USER_SCALES[userScaleIdx];
+    const pageGap = 8;
+    const dpr = window.devicePixelRatio || 1;
 
-    // 清空, 建所有页 (占位 div + canvas + 标注热区)
+    // 清空, 建所有页
     const prevScrollTop = viewer.scrollTop;
     viewer.innerHTML = '';
     pageElsRef.current.clear();
     renderedRef.current.clear();
-    const pageGap = 8;
-    const dpr = window.devicePixelRatio || 1;
 
     for (let i = 1; i <= numPages; i++) {
-      const p = await pdf.getPage(i);
-      if (buildIdRef.current !== myBuildId) return; // 已被新 build 覆盖, 旧 build 立即退出
-      const pb = p.getViewport({ scale: 1 });
-      // pageH = viewH; pageW = viewH × aspectRatio (PDF 宽高比)
-      const pageH = viewH;
-      const pageW = viewH * (pb.width / pb.height);
-
-      const div = document.createElement('div');
-      div.className = 'ab-pdf-page';
-      div.dataset['page'] = String(i);
-      // 固定像素宽高, canvas 100%×100% 填充, 1:1 保持 PDF 比例. 初始 opacity:0 防 reflow,
-      // p.render 完设 opacity:1, 滚动不被打乱.
-      div.style.cssText = `width:${pageW}px;height:${pageH}px;margin:0 auto ${pageGap}px;`;
-      viewer.appendChild(div);
-      pageElsRef.current.set(i, div);
-
-      // canvas 内部像素 = (pageW × dpr, pageH × dpr) = (css 显示尺寸 × dpr),
-      // CSS 100% 缩放 1:1, PDF 文字 / 标注 都不变形. 渲染 scale = pageW/pb.width × dpr.
-      const renderScale = (pageW / pb.width) * dpr;
-      const viewport = p.getViewport({ scale: renderScale });
-      const canvas = document.createElement('canvas');
-      canvas.className = 'ab-pdf-canvas';
-      canvas.width = Math.floor(viewport.width);
-      canvas.height = Math.floor(viewport.height);
-      // 初始 opacity:0 (占位但隐藏), 渲染完再 opacity:1. 配合 div 固定像素高度, 不触发
-      // reflow → scrollTop 不会因 canvas 异步渲染变化. transition 让出现平滑.
-      canvas.style.cssText = 'width:100%;height:100%;display:block;opacity:0;transition:opacity 0.12s ease;';
-      div.appendChild(canvas);
-
-      const ctx = canvas.getContext('2d');
-      if (ctx) await p.render({ canvasContext: ctx, viewport }).promise;
-      if (buildIdRef.current !== myBuildId) return; // 渲染完也检查, 避免后续 op 操作老 div
-      // 渲染完显示 (同步 opacity, 不修改 width/height → 无 reflow)
-      canvas.style.opacity = '1';
-
-      // text layer: 用户能选中文字触发圈选 popover. 文字**接近透明** (alpha 0.005) 让 PDF
-      // canvas 文字透过来, 但保持可被浏览器 selection 抓取. pointer-events:none 让 mouse
-      // 事件穿透 (不拦截 viewer mouseup), user-select:text 允许选区.
-      // selection 高亮由浏览器 ::selection 样式控制 (chrome 默认蓝色背景).
-      try {
-        const textContent = await p.getTextContent();
-        if (buildIdRef.current !== myBuildId) return;
-        const textLayerDiv = document.createElement('div');
-        textLayerDiv.className = 'textLayer';
-        textLayerDiv.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;overflow:hidden;opacity:0;transition:opacity 0.12s ease;line-height:1;pointer-events:none;user-select:text;-webkit-user-select:text;color:rgba(0,0,0,0.005);z-index:1;';
-        div.appendChild(textLayerDiv);
-        const cssViewport = p.getViewport({ scale: pageW / pb.width });
-        const TL = (pdfjsLib as any).TextLayer;
-        if (TL) {
-          const tl = new TL({ textContentSource: textContent, container: textLayerDiv, viewport: cssViewport });
-          await tl.render();
-          if (buildIdRef.current !== myBuildId) return;
-          textLayerDiv.style.opacity = '1';
-        }
-      } catch (e) {
-        console.warn('[pdf] text layer page', i, 'failed:', e);
-      }
-
-      // 标注热区: 内嵌 (有 action, 挂 hover tip + click) + sidecar (无 action, 只视觉高亮) 分别渲染
-      try {
-        const annots = await p.getAnnotations();
-        if (buildIdRef.current !== myBuildId) return;
-        const embeddedMetas: PdfAnnotMeta[] = (annots || [])
-          .map((a: any) => toAnnotMeta(a, i))
-          .filter((m: PdfAnnotMeta) => m.action && m.raw?.rect);
-        const sidecarMetas: PdfAnnotMeta[] = (sidecarAnnotsRef.current.get(i) || [] as SidecarAnnot[])
-          .map(sidecarToAnnotMeta)
-          .filter((m: PdfAnnotMeta) => m.raw?.rect);
-        if (embeddedMetas.length > 0 || sidecarMetas.length > 0) {
-            const overlay = document.createElement('div');
-            overlay.className = 'ab-pdf-annot-layer';
-            overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:hidden;';
-            div.appendChild(overlay);
-
-            const scaleX = canvas.width / canvas.clientWidth;
-            const scaleY = canvas.height / canvas.clientHeight;
-            const pageH0 = pb.height;
-
-            const renderMeta = (meta: PdfAnnotMeta, opts: { withTip: boolean; withClick: boolean; withDelete?: boolean }) => {
-              const rect = meta.raw.rect as [number, number, number, number];
-              if (!rect || rect.length < 4) return;
-              const [x1, y1, x2, y2] = rect;
-              const px1 = x1 * renderScale / scaleX;
-              const py1 = (pageH0 - y1) * renderScale / scaleY;
-              const px2 = x2 * renderScale / scaleX;
-              const py2 = (pageH0 - y2) * renderScale / scaleY;
-              const left = Math.min(px1, px2);
-              const top = Math.min(py1, py2);
-              const w = Math.abs(px2 - px1);
-              const h = Math.abs(py2 - py1);
-
-              const c: any = meta.raw?.color;
-              let r = 153, g = 153, b = 255;
-              if (c && c.length >= 3) {
-                r = Number(c[0]) || r;
-                g = Number(c[1]) || g;
-                b = Number(c[2]) || b;
-              }
-
-              const el = document.createElement('button');
-              el.className = 'ab-pdf-annot';
-              el.dataset['page'] = String(i);
-              el.dataset['annotId'] = meta.id;
-              el.dataset['origLeft'] = String(left * scaleX);
-              el.dataset['origTop'] = String(top * scaleY);
-              el.dataset['origW'] = String(w * scaleX);
-              el.dataset['origH'] = String(h * scaleY);
-              el.style.cssText = `position:absolute;left:${left}px;top:${top}px;width:${w}px;height:${h}px;pointer-events:auto;background:rgba(${r},${g},${b},0.08);border:1px dashed rgba(${r},${g},${b},0.25);`;
-              if (opts.withTip) el.title = meta.preview || meta.title;
-              if (opts.withTip) {
-                el.addEventListener('mouseenter', () => {
-                  el.style.background = `rgba(${r},${g},${b},0.35)`;
-                  el.style.boxShadow = `0 0 0 2px rgba(${r},${g},${b},0.6)`;
-                  showAnnotTip(el, meta);
-                });
-                el.addEventListener('mouseleave', () => {
-                  el.style.background = `rgba(${r},${g},${b},0.08)`;
-                  el.style.boxShadow = 'none';
-                  hideAnnotTip();
-                });
-              } else if (opts.withDelete) {
-                // sidecar 标注: 视觉高亮 + hover 显示 X 取消按钮
-                el.addEventListener('mouseenter', () => {
-                  el.style.background = `rgba(${r},${g},${b},0.18)`;
-                  el.style.boxShadow = `0 0 0 1.5px rgba(${r},${g},${b},0.5)`;
-                  if (delBtn) delBtn.style.opacity = '1';
-                });
-                el.addEventListener('mouseleave', () => {
-                  el.style.background = `rgba(${r},${g},${b},0.08)`;
-                  el.style.boxShadow = 'none';
-                  if (delBtn) delBtn.style.opacity = '0';
-                });
-                // X 按钮 (右上角, 14x14 圆)
-                const delBtn = document.createElement('span');
-                delBtn.className = 'ab-pdf-annot__del';
-                delBtn.textContent = '×';
-                delBtn.title = '取消标注';
-                delBtn.style.cssText = `position:absolute;right:-7px;top:-7px;width:14px;height:14px;line-height:12px;font-size:12px;font-weight:600;color:#fff;background:rgba(220,60,60,0.95);border-radius:50%;text-align:center;cursor:pointer;opacity:0;pointer-events:auto;transition:opacity 0.12s, transform 0.12s;z-index:3;user-select:none;`;
-                delBtn.addEventListener('mouseenter', () => { delBtn.style.transform = 'scale(1.2)'; });
-                delBtn.addEventListener('mouseleave', () => { delBtn.style.transform = 'scale(1)'; });
-                delBtn.addEventListener('click', (ev) => {
-                  ev.stopPropagation();
-                  ev.preventDefault();
-                  handleDeleteAnnot(meta.id);
-                });
-                el.appendChild(delBtn);
-              } else {
-                el.addEventListener('mouseenter', () => {
-                  el.style.background = `rgba(${r},${g},${b},0.25)`;
-                  el.style.boxShadow = `0 0 0 1.5px rgba(${r},${g},${b},0.5)`;
-                });
-                el.addEventListener('mouseleave', () => {
-                  el.style.background = `rgba(${r},${g},${b},0.08)`;
-                  el.style.boxShadow = 'none';
-                });
-              }
-              if (opts.withClick) {
-                el.addEventListener('click', (ev) => {
-                  ev.stopPropagation();
-                  hideAnnotTip();
-                  if (meta.action) void runAnnotAction(meta.action, annotHandlersRef.current);
-                });
-              }
-              overlay.appendChild(el);
-            };
-
-            for (const meta of embeddedMetas) {
-              renderMeta(meta, { withTip: true, withClick: true });
-            }
-            for (const meta of sidecarMetas) {
-              renderMeta(meta, { withTip: false, withClick: false, withDelete: true });
-            }
-        }
-        } catch (e) {
-          console.warn('[pdf] annot overlay page', i, 'failed:', e);
-        }
+      await rebuildSinglePage(i, myBuildId);
     }
 
-    // rebuild 时不渲染任何页 (懒加载, IO 进入视口才画)
-    // renderedRef 保持空, IO 触发 renderPage 后填入
-  }, [numPages, rebuildTick, syncPageDisplay, sidecarTick]);
+    // 重建后恢复滚动位置 (viewer.innerHTML = '' 会 reset scrollTop, 用户期望停在当前页)
+    if (currentPageRef.current > 1) {
+      console.log('[pdf] restore scroll to page', currentPageRef.current, 'myBuildId=', myBuildId);
+      requestAnimationFrame(() => {
+        const target = pageElsRef.current.get(currentPageRef.current);
+        if (target) {
+          target.scrollIntoView({ block: 'start', behavior: 'auto' });
+          console.log('[pdf] restored to page', currentPageRef.current, 'myBuildId=', myBuildId);
+        }
+      });
+    }
+  }, [numPages, rebuildTick, syncPageDisplay, rebuildSinglePage]);
 
   // ---------- 滚动同步当前页码 ----------
   useEffect(() => {
@@ -646,7 +670,11 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         const top = el.offsetTop;
         if (midY >= top) current = idx;
       }
-      setCurrentPage((prev) => (prev === current ? prev : current));
+      if (currentPageRef.current !== current) {
+        currentPageRef.current = current;
+        _setCurrentPage(current);
+        console.log('[pdf] onScroll -> currentPage=', current, 'midY=', midY);
+      }
       syncPageDisplay(current);
     };
     viewer.addEventListener('scroll', onScroll);
@@ -691,46 +719,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       setLoading(false);
     })();
 
-    // resize 只重算热区位置 (canvas 100% 自适应不丢内容, 热区是像素定位需按新比例重算)
-    // 用父容器宽度 (viewer 内滚动条出现/消失不影响, 避免滚动误触发)
-    const parentEl = viewer.parentElement as HTMLElement | null;
-    const widthSource = parentEl || viewer;
-    let lastWidth = widthSource.getBoundingClientRect().width;
-    let roTimer: ReturnType<typeof setTimeout> | null = null;
-    const ro = new ResizeObserver(() => {
-      const w = widthSource.getBoundingClientRect().width;
-      if (Math.abs(w - lastWidth) < 2) return;
-      lastWidth = w;
-      if (roTimer) clearTimeout(roTimer);
-      roTimer = setTimeout(() => {
-        // 每个 page 的热区按该页 canvas 新比例重算
-        for (const el of pageElsRef.current.values()) {
-          const canvas = el.querySelector('canvas') as HTMLCanvasElement | null;
-          if (!canvas) continue;
-          const annots = el.querySelectorAll('.ab-pdf-annot');
-          if (!annots.length) continue;
-          const scaleX = canvas.width / canvas.clientWidth;
-          const scaleY = canvas.height / canvas.clientHeight;
-          for (const a of Array.from(annots) as HTMLElement[]) {
-            const origLeft = parseFloat(a.dataset['origLeft'] || '0');
-            const origTop = parseFloat(a.dataset['origTop'] || '0');
-            const origW = parseFloat(a.dataset['origW'] || '0');
-            const origH = parseFloat(a.dataset['origH'] || '0');
-            if (!a.dataset['origLeft']) continue;
-            a.style.left = `${origLeft / scaleX}px`;
-            a.style.top = `${origTop / scaleY}px`;
-            a.style.width = `${origW / scaleX}px`;
-            a.style.height = `${origH / scaleY}px`;
-          }
-        }
-      }, 300);
-    });
-    ro.observe(widthSource);
-
     return () => {
       disposed = true;
-      ro.disconnect();
-      if (roTimer) clearTimeout(roTimer);
     };
   }, [numPages, rebuildViewer]);
 
@@ -756,6 +746,15 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     };
   }, [hostPath]);
 
+  // ---------- sidecar 变化 (保存/删除/外部同步) → 重建当前页 ----------
+  // rebuildViewer 只在 size 变化触发, 不全 rebuild. sidecar 变化只重建当前页 (用户拍板).
+  useEffect(() => {
+    if (!sidecarTick || !numPages) return;
+    const page = currentPageRef.current;
+    if (page < 1 || page > numPages) return;
+    void rebuildSinglePage(page);
+  }, [sidecarTick, numPages, rebuildSinglePage]);
+
   // ---------- 监听 sidecar 外部修改 (fs:changed) ----------
   // 已有 PTY node:fs.watch + opencode SSE 双层基础设施, 业务用 window 'fs:changed'.
   useEffect(() => {
@@ -764,6 +763,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       const path: string = String(detail.path || '');
       const sp = sidecarPathRef.current;
       if (!sp || path !== sp) return;
+      console.log('[pdf] fs:changed received for', path);
       // 自写去重: 跟当前 writer.lastWrittenHash 比, 相同则跳过
       const writer = sidecarWriterRef.current;
       if (writer && path === writer.path) {
@@ -932,6 +932,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     // 3. 触发 rebuild (新标注立刻显示)
     setSidecarTick((t) => t + 1);
     setDirty(false);
+    setWriteError('');  // 清除旧失败提示 (新操作覆盖)
     // 4. 关闭 popover + 移除选择矩形蒙层
     setPopoverState(null);
     popoverOpenRef.current = false;
@@ -969,7 +970,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   // ---------- 跳转到指定页 ----------
   const jumpToPage = useCallback((n: number) => {
     const clamped = Math.min(numPages, Math.max(1, n));
-    setCurrentPage(clamped);
+    currentPageRef.current = clamped;
+    _setCurrentPage(clamped);
     syncPageDisplay(clamped);
     const el = pageElsRef.current.get(clamped);
     if (el) el.scrollIntoView({ behavior: 'auto', block: 'start' });

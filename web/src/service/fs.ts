@@ -99,6 +99,7 @@ const FS_PTY_WORKER = [
   "    else if(r.op==='move'){fs.mkdirSync(path.dirname(r.to),{recursive:true});fs.renameSync(r.from,r.to);out(true);}",
   "    else if(r.op==='readB64'){out(true,{b64:fs.readFileSync(r.path).toString('base64')});}",
   "    else if(r.op==='stat'){const s=fs.statSync(r.path);out(true,{size:s.size,mtimeMs:Math.floor(s.mtimeMs),isDir:s.isDirectory()});}",
+  "    else if(r.op==='ping'){out(true,{pong:true});}",
   "    else out(false,null,'unknown op '+r.op);",
   "  }catch(e){out(false,null,String(e&&e.message||e),e&&e.code||'');}",
   "}});",
@@ -208,7 +209,8 @@ class FsPty {
     }
   }
 
-  /** 执行一个 node fs 操作 (串行化 promise chain) */
+  /** 执行一个 node fs 操作 (串行化 promise chain).
+   *  自愈: 超时 (PTY 卡住) 时清 self 状态, 下次 init 重建 PTY, 业务 retry 透明恢复. */
   async request<T = any>(op: string, payload: Record<string, unknown>, timeoutMs = 10000): Promise<{ ok: boolean; data: T }> {
     const next = this.queue.then(async () => {
       await this.init();
@@ -218,6 +220,13 @@ class FsPty {
       const p = new Promise<{ ok: boolean; data: T }>((resolve, reject) => {
         const timer = setTimeout(() => {
           this.pending.delete(id);
+          // 自愈: 超时 = PTY 卡住, 清 self 状态让下次 request 重建 PTY.
+          this.initPromise = null;
+          if (this.ws) {
+            try { this.ws.close(); } catch { /* */ }
+            this.ws = null;
+          }
+          this.ptyId = null;
           reject(new Error(`fs pty op timeout (${timeoutMs}ms): ${op}`));
         }, timeoutMs);
         this.pending.set(id, { resolve: resolve as any, reject, timer });
@@ -228,12 +237,69 @@ class FsPty {
     this.queue = next;
     return next;
   }
+
+  /** 强制销毁: 关 ws + 清 pending + 拒新请求. 下次 init() 重建 PTY.
+   *  用于 cwd 切换 / PTY 异常卡住 (写盘 timeout) 后让下次请求重新走新 PTY. */
+  reset(): void {
+    if (this.ws) {
+      try { this.ws.close(); } catch { /* */ }
+      this.ws = null;
+    }
+    if (this.ptyId) {
+      // 不直接调 pty.kill (SDK 没暴露), 让 opencode server 自己回收 idle pty
+      this.ptyId = null;
+    }
+    this.pending.forEach((p) => { if (p.timer) clearTimeout(p.timer); p.reject(new Error('fs pty: reset')); });
+    this.pending.clear();
+    this.initPromise = null;
+  }
+
+  /** 心跳: 每 5s ping 一次, 连续失败 2 次 (10s 内无响应) → 强制 reset.
+   *  PTY 卡住时即使 request 自愈也未必能重建 (queue 里有挂死 promise), 心跳主动 reset 兜底.
+   *  worker 必须支持 'ping' op (立即返 {pong:true}). */
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatFailCount = 0;
+  startHeartbeat(): void {
+    if (this.heartbeatTimer) return;
+    this.heartbeatTimer = setInterval(async () => {
+      try {
+        await this.request('ping', {}, 3000);
+        this.heartbeatFailCount = 0;
+      } catch (e) {
+        this.heartbeatFailCount++;
+        if (this.heartbeatFailCount >= 2) {
+          // 连续 2 次失败 (~10s 无响应) → 强制 reset, 下次 ping 走新 PTY
+          console.warn('[fs-pty] heartbeat failed x2, forcing reset');
+          this.reset();
+          this.heartbeatFailCount = 0;
+        }
+      }
+    }, 5000);
+  }
+  stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
 }
 
 let _fsPty: FsPty | null = null;
 function getFsPty(): FsPty {
-  if (!_fsPty) _fsPty = new FsPty();
+  if (!_fsPty) {
+    _fsPty = new FsPty();
+    _fsPty.startHeartbeat();
+  }
   return _fsPty;
+}
+/** 强制销毁当前 FsPty 单例. 下次 getFsPty() 重建.
+ *  用于 cwd 切换 / PTY 卡住后自动恢复. */
+export function resetFsPty(): void {
+  if (_fsPty) {
+    _fsPty.stopHeartbeat();
+    _fsPty.reset();
+    _fsPty = null;
+  }
 }
 
 // ---- FsWatcher (合并自 service/watcher.ts) ----
