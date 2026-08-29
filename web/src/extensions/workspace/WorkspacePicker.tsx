@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 import { notification } from '@opensumi/ide-components/lib/notification';
 
-import { appBaseUrl, cwdHeader, effectiveCwd } from '../../service/env';
+import { appBaseUrl, cwdHeader, effectiveCwd, isPathNotFoundError } from '../../service/env';
 import { setCwd } from '../../service/env';
 import { getRecent, removeRecent } from './recent';
 
@@ -98,14 +98,23 @@ export const WorkspacePicker: React.FC = () => {
       setDirs(r.directories);
       setSelected(null); setActive(0);
     } catch (e: any) {
-      // APP_CWD stale 检测: 失败路径 === localStorage APP_CWD 时, 仅弹 toast 提示, 不静默清
-      // (避免 opencode 短暂不可用 / PTY 未就绪 / 网络 race 误判 stale 把用户已选工作目录重置)
-      // 用户拍板: 不要老是清掉我已选择的工作目录
+      // APP_CWD stale 检测: 失败路径 === localStorage APP_CWD 时分流
+      //   - 真删 (not found / ENOENT) → 重置 APP_CWD + reload, 提示 "工作目录不存在"
+      //   - 短暂不可用 (connection / timeout / 5xx) → 保留 APP_CWD, 弹 toast
+      //   用户业务规则: 有 APP_CWD 但宿主机不存在 → 重置 + reload
       if (!isRetry) {
         const stored = (() => { try { return localStorage.getItem('APP_CWD') || ''; } catch { return ''; } })();
         if (stored && stored === dir) {
-          console.warn('[picker] APP_CWD browse 失败, 保留 localStorage:', dir, e?.message);
-          notifyError(`上次选择的工作目录 ${dir} 当前不可访问,稍后重试或手动重选`);
+          if (isPathNotFoundError(e)) {
+            console.warn('[picker] APP_CWD 宿主机不存在, 重置 + reload:', dir, e?.message);
+            try { localStorage.removeItem('APP_CWD'); } catch { /* */ }
+            notifyError('工作目录不存在,已重置');
+            setTimeout(() => window.location.reload(), 600);
+            return;
+          }
+          // 短暂不可用: 保留 APP_CWD
+          console.warn('[picker] APP_CWD browse 失败 (短暂不可用), 保留 localStorage:', dir, e?.message);
+          notifyError(`工作目录 ${dir} 当前不可访问,稍后重试`);
           return;
         }
       }
@@ -134,9 +143,9 @@ export const WorkspacePicker: React.FC = () => {
       setTimeout(async () => {
         inputRef.current?.focus();
         // 初始路径: APP_CWD (用户选) 优先; 没设才走 __APP_CONFIG__.cwd (hostCwd)
-        // 预校验: browseDir(stored) 失败时仅 console.warn, 不静默清 localStorage
-        //   (用户拍板: 不要老是清掉我已选择的工作目录)
-        //   失败 → doBrowse(stored) 再次触发, 在 doBrowse catch 内 toast 提示
+        // 预校验: browseDir(stored) 失败时按错误类型分流
+        //   - 真删 (not found / ENOENT) → 重置 APP_CWD + reload
+        //   - 短暂不可用 → 保留 APP_CWD, 路径栏显示 stored
         const stored = (() => { try { return localStorage.getItem('APP_CWD') || ''; } catch { return ''; } })();
         const fallback = (window as any).__APP_CONFIG__?.cwd || '';
         const start = stored || fallback || '/';
@@ -145,8 +154,15 @@ export const WorkspacePicker: React.FC = () => {
             await browseDir(stored);
             // stored 有效, 保持 start=stored
           } catch (e: any) {
-            console.warn('[picker] APP_CWD stored 暂不可访问, 保留 localStorage:', stored, e?.message);
-            // 让路径栏显示 stored, 即便后续 browse 失败, 用户能知道上次选的是啥
+            if (isPathNotFoundError(e)) {
+              console.warn('[picker] APP_CWD stored 宿主机不存在, 重置 + reload:', stored, e?.message);
+              try { localStorage.removeItem('APP_CWD'); } catch { /* */ }
+              notifyError('工作目录不存在,已重置');
+              setTimeout(() => window.location.reload(), 600);
+              return;
+            }
+            // 短暂不可用: 保留 APP_CWD, 路径栏显示 stored, 让用户知道上次选的是啥
+            console.warn('[picker] APP_CWD stored 暂不可访问 (短暂), 保留 localStorage:', stored, e?.message);
             setCurrentPath(stored);
           }
         }
