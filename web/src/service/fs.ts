@@ -108,6 +108,10 @@ const FS_PTY_WORKER = [
 class FsPty {
   private ptyId: string | null = null;
   private ws: WebSocket | null = null;
+  /** SDK client (init 时设, dispose 时用 pty.remove 主动 kill server 端 pty) */
+  private sdk: ReturnType<typeof createOpencodeClient> | null = null;
+  /** page unload 监听是否已注册 (防止重复) */
+  private unloadRegistered = false;
   /** 串行化: 上一个请求的 promise */
   private queue: Promise<unknown> = Promise.resolve();
   /** 等待中的请求 (id → resolve/reject/timer) */
@@ -131,7 +135,21 @@ class FsPty {
     const cwd = effectiveCwd();
     if (!cwd) throw new Error('fs pty: no cwd (APP_CWD unset and hostCwd not yet probed)');
 
+    // 清理老 pty 资源 (page reload 后, server 端可能还有老 pty 跟新 client 失联,
+    //   老 pty 上的 op 没人收, 导致新 op 排队 32s timeout 触发)
+    //   主动 kill 老 pty + 清本地 ws / pending, 保证新 init 干净
+    if (this.ptyId && this.sdk) {
+      try { await this.sdk.pty.remove({ ptyID: this.ptyId }); }
+      catch { /* 忽略, server 可能已回收 */ }
+    }
+    if (this.ws) { try { this.ws.close(); } catch { /* */ } this.ws = null; }
+    this.ptyId = null;
+    this.pending.forEach((p) => { if (p.timer) clearTimeout(p.timer); p.reject(new Error('fs pty: reinit')); });
+    this.pending.clear();
+    this.respBuf = '';
+
     const sdk = createOpencodeClient({ baseUrl: base, headers: cwdHeader(), responseStyle: 'fields', throwOnError: true });
+    this.sdk = sdk;
     console.log('[fs-pty] init node worker, cwd=', cwd);
     const { data: createData, error: createErr } = await sdk.pty.create({ directory: cwd, command: 'node', args: ['-e', FS_PTY_WORKER], cwd });
     if (createErr || !createData) throw new Error(`fs pty: create worker failed: ${(createErr as any)?.message || 'no data'}`);
@@ -159,6 +177,31 @@ class FsPty {
       this.ptyId = null;
       this.initPromise = null;
     };
+
+    // page unload 监听: 关闭 ws + kill server 端 pty, 防老 pty 跟新 client 失联
+    if (!this.unloadRegistered && typeof window !== 'undefined') {
+      this.unloadRegistered = true;
+      const unloadHandler = () => { void this.dispose(); };
+      window.addEventListener('pagehide', unloadHandler);
+      window.addEventListener('beforeunload', unloadHandler);
+    }
+  }
+
+  /** 主动清理: 关 ws + reject pending + 杀 server 端 pty. 幂等.
+   *  触发场景:
+   *    1. pagehide/beforeunload 监听 (防止老 pty 跟新 client 失联)
+   *    2. doInit 之前 (老 pty 资源清理)
+   *    3. cwd 切换 / 模块卸载 显式调用 */
+  private async dispose(): Promise<void> {
+    if (this.ptyId && this.sdk) {
+      try { await this.sdk.pty.remove({ ptyID: this.ptyId }); }
+      catch { /* server 可能已断, 忽略 */ }
+    }
+    this.ptyId = null;
+    if (this.ws) { try { this.ws.close(); } catch { /* */ } this.ws = null; }
+    this.pending.forEach((p) => { if (p.timer) clearTimeout(p.timer); p.reject(new Error('fs pty: dispose')); });
+    this.pending.clear();
+    this.initPromise = null;
   }
 
   /** 处理一段 ws 数据: 剥离控制帧 → 按 \n 切 JSON 响应行 → dispatch */
@@ -238,20 +281,11 @@ class FsPty {
     return next;
   }
 
-  /** 强制销毁: 关 ws + 清 pending + 拒新请求. 下次 init() 重建 PTY.
-   *  用于 cwd 切换 / PTY 异常卡住 (写盘 timeout) 后让下次请求重新走新 PTY. */
+  /** 强制销毁: 关 ws + 清 pending + 杀 server 端 pty. 下次 init() 重建.
+   *  用于 cwd 切换 / PTY 异常卡住 (写盘 timeout) 后让下次请求重新走新 PTY.
+   *  dispose 是 async (要 await sdk.pty.remove), reset 是 sync void 包一层 fire-and-forget. */
   reset(): void {
-    if (this.ws) {
-      try { this.ws.close(); } catch { /* */ }
-      this.ws = null;
-    }
-    if (this.ptyId) {
-      // 不直接调 pty.kill (SDK 没暴露), 让 opencode server 自己回收 idle pty
-      this.ptyId = null;
-    }
-    this.pending.forEach((p) => { if (p.timer) clearTimeout(p.timer); p.reject(new Error('fs pty: reset')); });
-    this.pending.clear();
-    this.initPromise = null;
+    void this.dispose();
   }
 
   /** 心跳: 每 5s ping 一次, 连续失败 2 次 (10s 内无响应) → 强制 reset.
