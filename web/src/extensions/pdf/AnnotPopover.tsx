@@ -10,7 +10,8 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { SidecarAnnot, SidecarAnnotBehavior } from './annotations';
+import type { SidecarAnnot, SidecarInteraction } from './annotations';
+import { requestFilePicker } from '../filepicker/FilePicker';
 
 const COLORS: Array<{ name: string; rgb: [number, number, number] }> = [
   { name: '蓝', rgb: [55, 148, 255] },
@@ -45,9 +46,16 @@ export interface AnnotPopoverProps {
 
 export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCancel }) => {
   const [colorIdx, setColorIdx] = useState(0);
-  /** 交互行为: null = 无; 'comment' = 批注; 'prompt' = 提示词 */
-  const [behavior, setBehavior] = useState<'comment' | 'prompt' | null>(null);
-  const [behaviorText, setBehaviorText] = useState('');
+  /** 交互 toggle: 多选 (comment/prompt/file), 点击选中再点取消 */
+  const [commentOn, setCommentOn] = useState(false);
+  const [promptOn, setPromptOn] = useState(false);
+  const [commentText, setCommentText] = useState('');
+  const [promptText, setPromptText] = useState('');
+  /** 文件交互 (可选): 选中后从服务器文件树选文件 */
+  const [fileOn, setFileOn] = useState(false);
+  const [fileRef, setFileRef] = useState<{ name: string; path: string } | null>(null);
+  /** 当前显示哪个交互的表单 (单显示, 切到哪个显示哪个) */
+  const [activeForm, setActiveForm] = useState<'comment' | 'prompt' | 'file' | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   // 每次 state 变化时重置 (新建) 或预填 (编辑 existing)
@@ -57,10 +65,39 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
       // 找颜色索引 (编辑时按现有色匹配)
       const ci = ex?.color ? COLORS.findIndex((c) => c.rgb[0] === ex.color![0] && c.rgb[1] === ex.color![1] && c.rgb[2] === ex.color![2]) : -1;
       setColorIdx(ci >= 0 ? ci : 0);
-      setBehavior(ex?.behavior?.type || null);
-      setBehaviorText(ex?.behavior?.text || '');
+      const inter = ex?.interactions || [];
+      const comment = inter.find((i) => i.type === 'comment');
+      const prompt = inter.find((i) => i.type === 'prompt');
+      setCommentOn(!!comment);
+      setPromptOn(!!prompt);
+      setCommentText(comment?.text || '');
+      setPromptText(prompt?.text || '');
+      setFileOn(!!ex?.file);
+      setFileRef(ex?.file || null);
+      // 编辑时表单显示第一个交互
+      setActiveForm(comment ? 'comment' : prompt ? 'prompt' : ex?.file ? 'file' : null);
     }
   }, [state]);
+
+  /** toggle 点击: 选中则切表单到该交互; 取消则该交互关掉 (表单切到其他选中的) */
+  const toggleInteract = (type: 'comment' | 'prompt' | 'file') => {
+    if (type === 'comment') {
+      const next = !commentOn;
+      setCommentOn(next);
+      if (next) setActiveForm('comment');
+      else setActiveForm(promptOn ? 'prompt' : fileOn ? 'file' : null);
+    } else if (type === 'prompt') {
+      const next = !promptOn;
+      setPromptOn(next);
+      if (next) setActiveForm('prompt');
+      else setActiveForm(commentOn ? 'comment' : fileOn ? 'file' : null);
+    } else {
+      const next = !fileOn;
+      setFileOn(next);
+      if (next) { setActiveForm('file'); setFileRef(null); }
+      else setActiveForm(commentOn ? 'comment' : promptOn ? 'prompt' : null);
+    }
+  };
 
   // Esc 取消
   useEffect(() => {
@@ -79,8 +116,8 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
   if (!state) return null;
 
   // 边界修正: 选区下方居中, 超出视口时调整
-  const W = 320;
-  const H = 300;
+  const W = 340;
+  const H = 340;
   const PAD = 8;
   // 默认: 选区下方居中
   let left = state.x - W / 2;
@@ -92,6 +129,16 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
   }
 
   const color = COLORS[colorIdx].rgb;
+
+  /** 打开服务器文件选择器 (复用 filepicker 拓展, 仅文件模式) */
+  const openPicker = () => {
+    requestFilePicker({
+      mode: 'files',
+      onPick: (f) => {
+        setFileRef({ name: f.name, path: f.path });
+      },
+    });
+  };
 
   const handleSave = () => {
     const ex = state.existing;
@@ -105,11 +152,13 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
       color,
       createdAt: ex?.createdAt || new Date().toISOString(),
     };
-    // 行为: 有文本才带, 无文本 = 无行为
-    const bText = behaviorText.trim();
-    if (behavior && bText) {
-      annot.behavior = { type: behavior, text: bText } as SidecarAnnotBehavior;
-    }
+    // 多交互: 有文本才带
+    const interactions: SidecarInteraction[] = [];
+    if (commentOn && commentText.trim()) interactions.push({ type: 'comment', text: commentText.trim() });
+    if (promptOn && promptText.trim()) interactions.push({ type: 'prompt', text: promptText.trim() });
+    if (interactions.length > 0) annot.interactions = interactions;
+    // 文件交互
+    if (fileOn && fileRef) annot.file = fileRef;
     onSave(annot);
   };
 
@@ -136,44 +185,58 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
           {previewText}
         </div>
       )}
-      {/* 交互行为: 无 / 批注 / 提示词 */}
+      {/* 交互 toggle (多选): 批注 / 提示词 / 文件; 表单单显示 (切到哪个显示哪个) */}
       <div className="ab-annot-popover__behavior">
         <span className="ab-annot-popover__behavior-label">交互</span>
         <span className="ab-annot-popover__behavior-toggle">
           <button
             type="button"
-            className={`ab-annot-popover__type-btn ${behavior === null ? 'is-active' : ''}`}
-            onClick={() => { setBehavior(null); setBehaviorText(''); }}
-          >无</button>
-          <button
-            type="button"
-            className={`ab-annot-popover__type-btn ${behavior === 'comment' ? 'is-active' : ''}`}
-            onClick={() => setBehavior('comment')}
+            className={`ab-annot-popover__type-btn ${commentOn ? 'is-active' : ''}`}
+            onClick={() => toggleInteract('comment')}
           >批注</button>
           <button
             type="button"
-            className={`ab-annot-popover__type-btn ${behavior === 'prompt' ? 'is-active' : ''}`}
-            onClick={() => setBehavior('prompt')}
+            className={`ab-annot-popover__type-btn ${promptOn ? 'is-active' : ''}`}
+            onClick={() => toggleInteract('prompt')}
           >提示词</button>
+          <button
+            type="button"
+            className={`ab-annot-popover__type-btn ${fileOn ? 'is-active' : ''}`}
+            onClick={() => toggleInteract('file')}
+          >文件</button>
         </span>
       </div>
-      {behavior === 'comment' && (
+      {activeForm === 'comment' && commentOn && (
         <textarea
           className="ab-annot-popover__note"
           placeholder="批注内容 (悬停显示)"
-          value={behaviorText}
-          onChange={(e) => setBehaviorText(e.target.value)}
+          value={commentText}
+          onChange={(e) => setCommentText(e.target.value)}
           rows={2}
+          autoFocus={!state.existing}
         />
       )}
-      {behavior === 'prompt' && (
+      {activeForm === 'prompt' && promptOn && (
         <textarea
           className="ab-annot-popover__note"
           placeholder="提示词 (悬停显示「发送给AI」按钮)"
-          value={behaviorText}
-          onChange={(e) => setBehaviorText(e.target.value)}
+          value={promptText}
+          onChange={(e) => setPromptText(e.target.value)}
           rows={2}
         />
+      )}
+      {activeForm === 'file' && fileOn && (
+        <div className="ab-annot-popover__file">
+          <div className="ab-annot-popover__file-head">
+            <span className="ab-annot-popover__file-label">{fileRef ? `已选: ${fileRef.name}` : '选择服务器文件'}</span>
+            {fileRef && (
+              <button type="button" className="ab-annot-popover__file-clear" onClick={() => setFileRef(null)} title="移除文件">×</button>
+            )}
+          </div>
+          <button type="button" className="ab-annot-popover__btn ab-annot-popover__btn--pick" onClick={openPicker}>
+            {fileRef ? `更换: ${fileRef.name}` : '选择文件'}
+          </button>
+        </div>
       )}
       <div className="ab-annot-popover__palette">
         {COLORS.map((c, i) => (
@@ -348,5 +411,42 @@ const POPOVER_STYLES = `
 }
 .ab-annot-popover__btn--save:hover {
   filter: brightness(1.1);
+}
+.ab-annot-popover__file {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ab-annot-popover__file-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.ab-annot-popover__file-label {
+  font-size: 11px;
+  color: var(--descriptionForeground, var(--vscode-descriptionForeground, #9ca3af));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ab-annot-popover__btn--pick {
+  background: rgba(128,128,128,0.12);
+  color: inherit;
+  padding: 4px 10px;
+  text-align: center;
+}
+.ab-annot-popover__btn--pick:hover {
+  background: rgba(128,128,128,0.2);
+}
+.ab-annot-popover__file-clear {
+  font: 600 12px/1 sans-serif;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(220,60,60,0.9);
+  color: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 `;

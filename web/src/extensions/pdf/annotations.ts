@@ -141,10 +141,18 @@ export async function runAnnotAction(action: AnnotAction, handlers: AnnotHandler
 
 export type SidecarAnnotType = 'highlight' | 'note';
 
-/** 标注交互行为: comment = 悬停显示批注文本; prompt = 悬停显示"发送给AI"按钮 */
-export interface SidecarAnnotBehavior {
+/** 单个交互行为: comment = 悬停显示批注文本; prompt = 悬停显示"发送给AI"按钮 */
+export interface SidecarInteraction {
   type: 'comment' | 'prompt';
   text: string;
+}
+
+/** 文件交互: 标注关联一个 workspace 文件, 悬停显示"打开{文件名}"按钮 */
+export interface SidecarFileRef {
+  /** 文件名 (显示用) */
+  name: string;
+  /** IDE 相对路径 (打开用, 如 /docs/a.txt) */
+  path: string;
 }
 
 export interface SidecarAnnot {
@@ -156,8 +164,12 @@ export interface SidecarAnnot {
   note: string;
   color: [number, number, number];
   createdAt: string;
-  /** 可选交互行为 (批注/提示词), 无则纯高亮 */
-  behavior?: SidecarAnnotBehavior;
+  /** 交互行为 (可多选: 批注/提示词), 无则纯高亮 */
+  interactions?: SidecarInteraction[];
+  /** 文件交互 (可选) */
+  file?: SidecarFileRef;
+  /** 旧版单交互字段 (兼容读) */
+  behavior?: SidecarInteraction;
 }
 
 export interface SidecarAnnotFile {
@@ -184,13 +196,30 @@ export function parseSidecarAnnot(raw: any): SidecarAnnot | null {
     Number(rect[3]) || 0,
   ];
   const type: SidecarAnnotType = VALID_TYPES.includes(raw.type) ? raw.type : 'highlight';
-  // behavior: {type: 'comment'|'prompt', text}
-  let behavior: SidecarAnnotBehavior | undefined;
-  const rawBehavior = raw.behavior;
-  if (rawBehavior && typeof rawBehavior === 'object' &&
-      (rawBehavior.type === 'comment' || rawBehavior.type === 'prompt') &&
-      typeof rawBehavior.text === 'string') {
-    behavior = { type: rawBehavior.type, text: rawBehavior.text };
+  // interactions: [{type:'comment'|'prompt', text}] (多选)
+  let interactions: SidecarInteraction[] | undefined;
+  if (Array.isArray(raw.interactions)) {
+    const list: SidecarInteraction[] = [];
+    for (const it of raw.interactions) {
+      if (it && typeof it === 'object' &&
+          (it.type === 'comment' || it.type === 'prompt') &&
+          typeof it.text === 'string') {
+        list.push({ type: it.type, text: it.text });
+      }
+    }
+    if (list.length > 0) interactions = list;
+  }
+  // 兼容旧版单 behavior 字段
+  if (!interactions && raw.behavior && typeof raw.behavior === 'object' &&
+      (raw.behavior.type === 'comment' || raw.behavior.type === 'prompt') &&
+      typeof raw.behavior.text === 'string') {
+    interactions = [{ type: raw.behavior.type, text: raw.behavior.text }];
+  }
+  // file: {name, path}
+  let file: SidecarFileRef | undefined;
+  const rawFile = raw.file;
+  if (rawFile && typeof rawFile === 'object' && typeof rawFile.path === 'string' && rawFile.path) {
+    file = { name: String(rawFile.name || rawFile.path.split('/').pop() || rawFile.path), path: rawFile.path };
   }
   return {
     id,
@@ -203,7 +232,9 @@ export function parseSidecarAnnot(raw: any): SidecarAnnot | null {
       ? [Number(raw.color[0]) || DEFAULT_COLOR[0], Number(raw.color[1]) || DEFAULT_COLOR[1], Number(raw.color[2]) || DEFAULT_COLOR[2]]
       : DEFAULT_COLOR,
     createdAt: String(raw.createdAt || new Date().toISOString()),
-    behavior,
+    interactions,
+    file,
+    behavior: interactions?.[0],
   };
 }
 
@@ -220,23 +251,24 @@ export function parseSidecarFile(raw: any): SidecarAnnotFile {
 }
 
 /** sidecar annot → 跟内嵌 PdfAnnotMeta 同形, 复用现有渲染热区代码.
- *  有 behavior (comment/prompt) 时 title/preview 取 behavior.text, 供悬停显示. */
+ *  有交互时 title/preview 取首个 comment/prompt 文本; raw 带完整 interactions + file 供渲染. */
 export function sidecarToAnnotMeta(s: SidecarAnnot): PdfAnnotMeta {
-  const behaviorText = s.behavior?.text || '';
+  const firstText = s.interactions?.find((i) => i.text)?.text || '';
   return {
     id: s.id,
     subtype: s.type === 'note' ? 'Note' : 'Highlight',
     page: s.page,
-    title: behaviorText || s.note || (s.selectedText ? s.selectedText.split('\n')[0].slice(0, 60) : '已批注'),
-    preview: behaviorText || s.note || s.selectedText.slice(0, 120),
+    title: firstText || s.note || (s.selectedText ? s.selectedText.split('\n')[0].slice(0, 60) : '已批注'),
+    preview: firstText || s.note || s.selectedText.slice(0, 120),
     action: null,
     raw: {
       id: s.id,
       subtype: s.type === 'note' ? 'Note' : 'Highlight',
       rect: s.rect,
-      contentsObj: { str: behaviorText || s.note || s.selectedText },
+      contentsObj: { str: firstText || s.note || s.selectedText },
       color: new Uint8ClampedArray(s.color),
-      behavior: s.behavior,
+      interactions: s.interactions,
+      file: s.file,
     },
   };
 }

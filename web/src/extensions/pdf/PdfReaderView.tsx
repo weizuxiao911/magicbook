@@ -426,29 +426,42 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         });
       } else if (opts.withDelete) {
         const delBtn = document.createElement('span');
-        // prompt 行为: 标注框内右下角按钮, hover 时显示, 离开隐藏
-        let promptBtn: HTMLButtonElement | null = null;
-        const behavior0 = meta.raw?.behavior;
-        if (behavior0?.type === 'prompt' && behavior0.text) {
-          promptBtn = createPromptSendBtn(behavior0.text);
-          el.appendChild(promptBtn);
+        // 交互: comment → hover 显示批注 tip; prompt/file → 标注框内右下角按钮行 (hover 显示)
+        const interactions: Array<{ type: 'comment' | 'prompt'; text: string }> = meta.raw?.interactions || [];
+        const fileRef = meta.raw?.file as { name: string; path: string } | undefined;
+        // 按钮行容器: absolute 右下角, flex 一行右对齐
+        const btnRow = document.createElement('div');
+        btnRow.className = 'ab-pdf-annot__actions';
+        btnRow.style.cssText = `
+          position: absolute; right: 4px; bottom: 4px; z-index: 5; display: flex;
+          flex-direction: row; gap: 4px; align-items: center;
+        `;
+        const actionBtns: HTMLButtonElement[] = [];
+        for (const it of interactions) {
+          if (it.type === 'prompt' && it.text) {
+            const b = createPromptSendBtn(it.text);
+            actionBtns.push(b);
+          }
         }
+        if (fileRef) actionBtns.push(createOpenFileBtn(fileRef));
+        actionBtns.forEach((b) => { b.style.display = 'none'; btnRow.appendChild(b); });
+        el.appendChild(btnRow);
         el.addEventListener('mouseenter', () => {
           el.style.background = `rgba(${r},${g},${b},0.18)`;
           el.style.boxShadow = `0 0 0 1.5px rgba(${r},${g},${b},0.5)`;
           if (delBtn) delBtn.style.opacity = '1';
-          // 行为悬停: comment → 只显示批注内容 (无标题); prompt → 显示发送按钮
-          const behavior = meta.raw?.behavior;
-          if (behavior?.type === 'comment' && behavior.text) {
-            showAnnotTip(el, { ...meta, preview: behavior.text, title: '' }, true);
+          // comment → 只显示批注内容 (无标题); 多个 comment 合并显示
+          const comments = interactions.filter((i) => i.type === 'comment' && i.text);
+          if (comments.length > 0) {
+            showAnnotTip(el, { ...meta, preview: comments.map((c) => c.text).join('\n'), title: '' }, true);
           }
-          if (promptBtn) promptBtn.style.display = 'block';
+          actionBtns.forEach((b) => { b.style.display = 'inline-block'; });
         });
         el.addEventListener('mouseleave', () => {
           el.style.background = `rgba(${r},${g},${b},0.08)`;
           el.style.boxShadow = 'none';
           if (delBtn) delBtn.style.opacity = '0';
-          if (promptBtn) promptBtn.style.display = 'none';
+          actionBtns.forEach((b) => { b.style.display = 'none'; });
           hideAnnotTip();
         });
         // 双击 → 编辑标注 (从 ref 反查完整 annot)
@@ -1214,19 +1227,17 @@ function hideAnnotTip() {
   document.querySelectorAll('.ab-pdf-annot.is-hover').forEach((el) => el.classList.remove('is-hover'));
 }
 
-/* ========== 提示词"发送给AI"按钮 (悬停显示在标注右下角) ========== */
-/* ========== 提示词"发送给AI"按钮 (标注框内右下角, hover 显示) ========== */
-/** 创建内嵌"发送给AI"按钮 (标注元素子元素, absolute 右下角).
- *  显示由 hover 控制: renderAnnotsForPage 里初始 display:none, hover 显示, 离开隐藏. */
+/* ========== 提示词"发送给AI"按钮 (右下角按钮行, hover 显示) ========== */
+/** 创建"发送给AI"按钮 (放按钮行容器内, flex 一行排列). 显示由 hover 控制. */
 function createPromptSendBtn(promptText: string): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.className = 'ab-pdf-prompt-send';
   btn.textContent = '发送给 AI';
   btn.style.cssText = `
-    position: absolute; right: 4px; bottom: 4px; z-index: 5; display: none;
+    display: none;
     font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
     color: #fff; background: #3794ff; border: none; border-radius: 6px;
-    padding: 6px 10px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    padding: 5px 10px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
     pointer-events: auto; white-space: nowrap;
   `;
   btn.addEventListener('mouseenter', () => { btn.style.filter = 'brightness(1.1)'; });
@@ -1241,6 +1252,31 @@ function createPromptSendBtn(promptText: string): HTMLButtonElement {
     } else {
       console.warn('[pdf] chat api not ready');
     }
+  };
+  return btn;
+}
+
+/* ========== 文件交互"打开{文件名}"按钮 (右下角按钮行, hover 显示) ========== */
+/** 创建"打开{文件名}"按钮 (放按钮行容器内): 点击派发 animbook:pdf-annot-openfile (AnnotationActions 打开编辑器). */
+function createOpenFileBtn(fileRef: { name: string; path: string }): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.className = 'ab-pdf-openfile';
+  btn.textContent = `打开 ${fileRef.name}`;
+  btn.style.cssText = `
+    display: none;
+    font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
+    color: #fff; background: #2d8f4e; border: none; border-radius: 6px;
+    padding: 5px 10px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    pointer-events: auto; white-space: nowrap;
+  `;
+  btn.addEventListener('mouseenter', () => { btn.style.filter = 'brightness(1.1)'; });
+  btn.addEventListener('mouseleave', () => { btn.style.filter = 'none'; });
+  btn.onclick = (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    window.dispatchEvent(new CustomEvent('animbook:pdf-annot-openfile', {
+      detail: { name: fileRef.name, path: fileRef.path },
+    }));
   };
   return btn;
 }

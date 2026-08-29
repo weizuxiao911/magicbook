@@ -91,13 +91,31 @@ export const AnnotationActions: React.FC = () => {
       })();
     };
 
+    // ---------- openfile: 打开 workspace 文件 (标注文件交互) ----------
+    const onOpenFile = (e: Event) => {
+      const d = (e as CustomEvent).detail || {};
+      const path: string = d.path || '';
+      if (!path) return;
+      void (async () => {
+        try {
+          // path 是 IDE 相对路径 (如 /docs/a.txt) → file:///workspace/docs/a.txt
+          const uri = new URI(`file://${path.startsWith('/') ? path : `/${path}`}`);
+          await editorService.open(uri, { preview: false, focus: true });
+        } catch (err) {
+          console.warn('[annot] open file failed:', path, err);
+        }
+      })();
+    };
+
     window.addEventListener('animbook:pdf-annot-modal', onModal);
     window.addEventListener('animbook:pdf-annot-tab', onTab);
     window.addEventListener('animbook:pdf-annot-terminal', onTerminal);
+    window.addEventListener('animbook:pdf-annot-openfile', onOpenFile);
     return () => {
       window.removeEventListener('animbook:pdf-annot-modal', onModal);
       window.removeEventListener('animbook:pdf-annot-tab', onTab);
       window.removeEventListener('animbook:pdf-annot-terminal', onTerminal);
+      window.removeEventListener('animbook:pdf-annot-openfile', onOpenFile);
     };
   }, [terminalController, editorService]);
 

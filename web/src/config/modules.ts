@@ -10,6 +10,7 @@ import { ActionsModule } from '../extensions/actions';
 import { WelcomeModule } from '../extensions/welcome';
 import { ChatModule } from '../extensions/chat';
 import { WorkspaceModule } from '../extensions/workspace';
+import { FilePickerModule } from '../extensions/filepicker';
 import { PdfReaderModule } from '../extensions/pdf';
 import { HtmlModule } from '../extensions/html';
 import { AgentModule } from '../service/agent';
@@ -31,6 +32,7 @@ export function getBuiltinModules(_opts?: { vsixMetadata?: any[] }): any[] {
     WelcomeModule,
     ChatModule,
     WorkspaceModule,
+    FilePickerModule,
     PdfReaderModule,
     HtmlModule,
   ];
