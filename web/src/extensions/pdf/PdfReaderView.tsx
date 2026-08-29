@@ -23,6 +23,7 @@ import { AnnotationActions } from './AnnotationActions';
 import { AnnotPopover, type PopoverState } from './AnnotPopover';
 import { readSidecar, SidecarWriter, contentHash } from './sidecar';
 import type { SidecarAnnot } from './annotations';
+import { getChatPanelApi } from '../chat/commands/chatApi';
 
 const PDF_WORKER_CACHE_KEY = '__ANIMBOOK_PDF_WORKER_URL__';
 function setupPdfWorker() {
@@ -429,11 +430,42 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
           el.style.background = `rgba(${r},${g},${b},0.18)`;
           el.style.boxShadow = `0 0 0 1.5px rgba(${r},${g},${b},0.5)`;
           if (delBtn) delBtn.style.opacity = '1';
+          // 行为悬停: comment → 只显示批注内容 (无标题); prompt → 显示"发送给AI"按钮
+          const behavior = meta.raw?.behavior;
+          if (behavior?.type === 'comment' && behavior.text) {
+            showAnnotTip(el, { ...meta, preview: behavior.text, title: '' }, true);
+          } else if (behavior?.type === 'prompt' && behavior.text) {
+            showPromptSendBtn(el, behavior.text);
+          }
         });
         el.addEventListener('mouseleave', () => {
           el.style.background = `rgba(${r},${g},${b},0.08)`;
           el.style.boxShadow = 'none';
           if (delBtn) delBtn.style.opacity = '0';
+          hideAnnotTip();
+          hidePromptSendBtn();
+        });
+        // 双击 → 编辑标注 (从 ref 反查完整 annot)
+        el.addEventListener('dblclick', (ev) => {
+          ev.stopPropagation();
+          ev.preventDefault();
+          const m = sidecarAnnotsRef.current;
+          let annot: SidecarAnnot | null = null;
+          for (const [, arr] of m) {
+            const found = arr.find((a) => a.id === meta.id);
+            if (found) { annot = found; break; }
+          }
+          if (!annot) return;
+          const r = el.getBoundingClientRect();
+          setPopoverState({
+            x: r.right,
+            y: r.top,
+            page: annot.page,
+            rect: annot.rect,
+            selectedText: annot.selectedText,
+            existing: annot,
+          });
+          popoverOpenRef.current = true;
         });
         delBtn.className = 'ab-pdf-annot__del';
         delBtn.textContent = '×';
@@ -464,7 +496,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     for (const meta of sidecarMetas) {
       renderMeta(meta, { withTip: false, withClick: false, withDelete: true });
     }
-  }, []);
+  }, [setPopoverState]);
 
   // ---------- 占位骨架 + 视口懒加载 (size/scale 变化才重建骨架) ----------
   // 1) 建 274 个占位 page div (仅尺寸, 无 canvas) — 秒级, 滚动结构立即可用
@@ -810,14 +842,20 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
 
   // ---------- popover 保存: 写 sidecar + 触发 rebuild + 清空选择矩形蒙层 ----------
   const handlePopoverSave = useCallback((annot: SidecarAnnot) => {
-    // 1. 写盘 (debounce 500ms)
+    // 1. 写盘 (debounce 500ms; mergeItems 按 id 幂等, 编辑已有 id 时覆盖)
     if (sidecarWriterRef.current) {
       sidecarWriterRef.current.push([annot]);
     }
-    // 2. 更新 in-memory ref
+    // 2. 更新 in-memory ref (编辑已有 id → 替换; 新建 → 追加)
     const m = sidecarAnnotsRef.current;
-    if (!m.has(annot.page)) m.set(annot.page, []);
-    m.get(annot.page)!.push(annot);
+    const arr = m.get(annot.page);
+    if (arr) {
+      const idx = arr.findIndex((a) => a.id === annot.id);
+      if (idx >= 0) arr[idx] = annot;
+      else arr.push(annot);
+    } else {
+      m.set(annot.page, [annot]);
+    }
     // 3. 触发 rebuild (重建标注所在页, 而非当前页 — 修复跨页新增不显示)
     pendingRebuildPageRef.current = annot.page;
     setSidecarTick((t) => t + 1);
@@ -1125,14 +1163,17 @@ function ensureAnnotTip() {
   return el;
 }
 
-function showAnnotTip(anchor: HTMLElement, meta: PdfAnnotMeta) {
+/** 显示标注 tip. contentOnly=true 时只显示内容 (批注场景, 不显示标题) */
+function showAnnotTip(anchor: HTMLElement, meta: PdfAnnotMeta, contentOnly = false) {
   const tip = ensureAnnotTip();
   const actionLabel = meta.action ? ACTION_LABEL[meta.action.type] : '';
   tip.innerHTML = '';
-  const title = document.createElement('div');
-  title.className = 'ab-pdf-tip__title';
-  title.textContent = meta.title || meta.subtype;
-  tip.appendChild(title);
+  if (!contentOnly) {
+    const title = document.createElement('div');
+    title.className = 'ab-pdf-tip__title';
+    title.textContent = meta.title || meta.subtype;
+    tip.appendChild(title);
+  }
   if (meta.preview) {
     const preview = document.createElement('div');
     preview.className = 'ab-pdf-tip__preview';
@@ -1165,6 +1206,49 @@ function hideAnnotTip() {
     annotTipEl.style.display = 'none';
   }
   document.querySelectorAll('.ab-pdf-annot.is-hover').forEach((el) => el.classList.remove('is-hover'));
+}
+
+/* ========== 提示词"发送给AI"按钮 (悬停显示在标注右下角) ========== */
+/** 在标注元素右下角显示"发送给AI"按钮 (按钮是标注的子元素, 随标注定位) */
+function showPromptSendBtn(anchor: HTMLElement, promptText: string) {
+  // 复用或新建按钮 (挂在标注元素上, 右下角)
+  let btn = anchor.querySelector<HTMLButtonElement>('.ab-pdf-prompt-send');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.className = 'ab-pdf-prompt-send';
+    btn.textContent = '发送给 AI';
+    btn.style.cssText = `
+      position: absolute; right: -30px; bottom: -26px; z-index: 5;
+      font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
+      color: #fff; background: #3794ff; border: none; border-radius: 6px;
+      padding: 6px 10px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+      pointer-events: auto; white-space: nowrap;
+    `;
+    const b = btn;
+    b.addEventListener('mouseenter', () => { b.style.filter = 'brightness(1.1)'; });
+    b.addEventListener('mouseleave', () => { b.style.filter = 'none'; });
+    anchor.appendChild(b);
+  }
+  const sendBtn = btn;
+  // 每次悬停更新点击行为 (发当前标注的提示词)
+  sendBtn.onclick = (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    const api = getChatPanelApi();
+    if (api) {
+      void api.send(promptText);
+      console.log('[pdf] 提示词 → chat:', promptText.slice(0, 60));
+    } else {
+      console.warn('[pdf] chat api not ready');
+    }
+  };
+  sendBtn.style.display = 'block';
+}
+
+function hidePromptSendBtn() {
+  document.querySelectorAll('.ab-pdf-prompt-send').forEach((b) => {
+    (b as HTMLElement).style.display = 'none';
+  });
 }
 
 const STYLES = `

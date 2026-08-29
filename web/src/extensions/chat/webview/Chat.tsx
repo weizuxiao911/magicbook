@@ -33,6 +33,7 @@ import {
   getQuestionStore, subscribeQuestionChange, setQuestion, clearQuestion,
 } from './helpers';
 import { getBrand } from '../scheme';
+import { registerChatPanelApi } from '../commands/chatApi';
 import { styles } from './styles';
 import { ConnectingView } from './components/ConnectingView';
 import { WelcomeScreen } from './components/WelcomeScreen';
@@ -894,6 +895,17 @@ export const Chat: React.FC = () => {
     // 切完会话回 input, 继续输入 (双 rAF 避开 React 提交 + Portal 卸载)
     requestAnimationFrame(() => requestAnimationFrame(() => taRef.current?.focus()));
   }, [cleanupDraft, refreshSessionStatuses]);
+
+  // 注册 ChatPanelApi (供 PDF 提示词等外部调 send 发消息; 卸载注销)
+  useEffect(() => {
+    registerChatPanelApi({
+      newSession: () => { void onNewSession?.(); },
+      sessions: () => { /* 历史会话弹窗由内部 UI 管理 */ },
+      send: (text) => { void sendPrompt(text); },
+      changeSession: (sid) => onSwitchSession(sid),
+    });
+    return () => registerChatPanelApi(null);
+  }, [sendPrompt, onSwitchSession]);
 
   const onDeleteSession = useCallback(async (sid: string) => {
     if (!client) return;

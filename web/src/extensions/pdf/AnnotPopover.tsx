@@ -1,20 +1,26 @@
 /**
  * AnnotPopover — 文本圈选后悬浮操作窗口
  *
- * 在文本选区右上角弹小 popover, 选类型 / 颜色 / 备注, 保存触发 onSave, 取消触发 onCancel.
- * 一期类型: highlight (默认) / note.
- * 颜色: 4 色快速选择 (蓝/黄/绿/红), 主题色自适应.
+ * 在文本选区右上角弹小 popover, 选类型 / 颜色 / 交互行为, 保存触发 onSave, 取消触发 onCancel.
+ * 类型: highlight (默认) / note.
+ * 颜色: 8 色快速选择, 主题色自适应.
+ * 交互行为 (可选): comment = 批注 (悬停显示文本); prompt = 提示词 (悬停显示"发送给AI"按钮).
+ * 编辑模式: 双击已有标注时传入 existing, 预填并保存覆盖.
  */
 
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { SidecarAnnot, SidecarAnnotType } from './annotations';
+import type { SidecarAnnot, SidecarAnnotBehavior } from './annotations';
 
 const COLORS: Array<{ name: string; rgb: [number, number, number] }> = [
   { name: '蓝', rgb: [55, 148, 255] },
   { name: '黄', rgb: [255, 200, 60] },
   { name: '绿', rgb: [80, 200, 120] },
   { name: '红', rgb: [240, 90, 90] },
+  { name: '紫', rgb: [160, 100, 240] },
+  { name: '橙', rgb: [255, 140, 40] },
+  { name: '青', rgb: [40, 200, 200] },
+  { name: '粉', rgb: [240, 120, 170] },
 ];
 
 export interface PopoverState {
@@ -27,6 +33,8 @@ export interface PopoverState {
   rect: [number, number, number, number];
   /** 选中文本快照 */
   selectedText: string;
+  /** 编辑模式: 双击已有标注时传入, 预填 + 保存覆盖 */
+  existing?: SidecarAnnot;
 }
 
 export interface AnnotPopoverProps {
@@ -36,17 +44,21 @@ export interface AnnotPopoverProps {
 }
 
 export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCancel }) => {
-  const [type, setType] = useState<SidecarAnnotType>('highlight');
   const [colorIdx, setColorIdx] = useState(0);
-  const [note, setNote] = useState('');
+  /** 交互行为: null = 无; 'comment' = 批注; 'prompt' = 提示词 */
+  const [behavior, setBehavior] = useState<'comment' | 'prompt' | null>(null);
+  const [behaviorText, setBehaviorText] = useState('');
   const ref = useRef<HTMLDivElement>(null);
 
-  // 每次 state 变化时重置
+  // 每次 state 变化时重置 (新建) 或预填 (编辑 existing)
   useEffect(() => {
     if (state) {
-      setType('highlight');
-      setColorIdx(0);
-      setNote('');
+      const ex = state.existing;
+      // 找颜色索引 (编辑时按现有色匹配)
+      const ci = ex?.color ? COLORS.findIndex((c) => c.rgb[0] === ex.color![0] && c.rgb[1] === ex.color![1] && c.rgb[2] === ex.color![2]) : -1;
+      setColorIdx(ci >= 0 ? ci : 0);
+      setBehavior(ex?.behavior?.type || null);
+      setBehaviorText(ex?.behavior?.text || '');
     }
   }, [state]);
 
@@ -68,7 +80,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
 
   // 边界修正: 选区下方居中, 超出视口时调整
   const W = 320;
-  const H = type === 'note' ? 260 : 180;
+  const H = 300;
   const PAD = 8;
   // 默认: 选区下方居中
   let left = state.x - W / 2;
@@ -82,16 +94,22 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
   const color = COLORS[colorIdx].rgb;
 
   const handleSave = () => {
+    const ex = state.existing;
     const annot: SidecarAnnot = {
-      id: 'a-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+      id: ex?.id || 'a-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
       page: state.page,
-      type,
+      type: ex?.type || 'highlight',
       rect: state.rect,
       selectedText: state.selectedText,
-      note: type === 'note' ? note.trim() : '',
+      note: '',
       color,
-      createdAt: new Date().toISOString(),
+      createdAt: ex?.createdAt || new Date().toISOString(),
     };
+    // 行为: 有文本才带, 无文本 = 无行为
+    const bText = behaviorText.trim();
+    if (behavior && bText) {
+      annot.behavior = { type: behavior, text: bText } as SidecarAnnotBehavior;
+    }
     onSave(annot);
   };
 
@@ -109,31 +127,52 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
     >
       <style>{POPOVER_STYLES}</style>
       <div className="ab-annot-popover__head">
-        <span className="ab-annot-popover__type-toggle">
-          <button
-            className={`ab-annot-popover__type-btn ${type === 'highlight' ? 'is-active' : ''}`}
-            onClick={() => setType('highlight')}
-            type="button"
-          >高亮</button>
-          <button
-            className={`ab-annot-popover__type-btn ${type === 'note' ? 'is-active' : ''}`}
-            onClick={() => setType('note')}
-            type="button"
-          >便签</button>
+        <span className="ab-annot-popover__title">
+          {state.existing ? '编辑标注' : `第 ${state.page} 页`}
         </span>
-        <span className="ab-annot-popover__hint">第 {state.page} 页</span>
       </div>
-      <div className="ab-annot-popover__preview" title={state.selectedText}>
-        {previewText || <em className="ab-annot-popover__preview-empty">区域标注 (第 {state.page} 页)</em>}
+      {previewText && (
+        <div className="ab-annot-popover__preview" title={state.selectedText}>
+          {previewText}
+        </div>
+      )}
+      {/* 交互行为: 无 / 批注 / 提示词 */}
+      <div className="ab-annot-popover__behavior">
+        <span className="ab-annot-popover__behavior-label">交互</span>
+        <span className="ab-annot-popover__behavior-toggle">
+          <button
+            type="button"
+            className={`ab-annot-popover__type-btn ${behavior === null ? 'is-active' : ''}`}
+            onClick={() => { setBehavior(null); setBehaviorText(''); }}
+          >无</button>
+          <button
+            type="button"
+            className={`ab-annot-popover__type-btn ${behavior === 'comment' ? 'is-active' : ''}`}
+            onClick={() => setBehavior('comment')}
+          >批注</button>
+          <button
+            type="button"
+            className={`ab-annot-popover__type-btn ${behavior === 'prompt' ? 'is-active' : ''}`}
+            onClick={() => setBehavior('prompt')}
+          >提示词</button>
+        </span>
       </div>
-      {type === 'note' && (
+      {behavior === 'comment' && (
         <textarea
           className="ab-annot-popover__note"
-          placeholder="备注内容 (可空)"
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          rows={3}
-          autoFocus
+          placeholder="批注内容 (悬停显示)"
+          value={behaviorText}
+          onChange={(e) => setBehaviorText(e.target.value)}
+          rows={2}
+        />
+      )}
+      {behavior === 'prompt' && (
+        <textarea
+          className="ab-annot-popover__note"
+          placeholder="提示词 (悬停显示「发送给AI」按钮)"
+          value={behaviorText}
+          onChange={(e) => setBehaviorText(e.target.value)}
+          rows={2}
         />
       )}
       <div className="ab-annot-popover__palette">
@@ -153,7 +192,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
           取消
         </button>
         <button type="button" className="ab-annot-popover__btn ab-annot-popover__btn--save" onClick={handleSave}>
-          保存
+          {state.existing ? '保存修改' : '保存'}
         </button>
       </div>
     </div>,
@@ -228,9 +267,6 @@ const POPOVER_STYLES = `
   white-space: pre-wrap;
   word-break: break-word;
 }
-.ab-annot-popover__preview-empty {
-  opacity: 0.5;
-}
 .ab-annot-popover__note {
   font: inherit;
   font-size: 12px;
@@ -245,6 +281,23 @@ const POPOVER_STYLES = `
 }
 .ab-annot-popover__note:focus {
   border-color: var(--textLink-foreground, var(--vscode-textLink-foreground, #3794ff));
+}
+.ab-annot-popover__behavior {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ab-annot-popover__behavior-label {
+  font-size: 10px;
+  color: var(--descriptionForeground, var(--vscode-descriptionForeground, #9ca3af));
+  white-space: nowrap;
+}
+.ab-annot-popover__behavior-toggle {
+  display: inline-flex;
+  background: rgba(128,128,128,0.12);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
 }
 .ab-annot-popover__palette {
   display: flex;

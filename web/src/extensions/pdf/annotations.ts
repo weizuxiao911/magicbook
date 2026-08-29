@@ -141,6 +141,12 @@ export async function runAnnotAction(action: AnnotAction, handlers: AnnotHandler
 
 export type SidecarAnnotType = 'highlight' | 'note';
 
+/** 标注交互行为: comment = 悬停显示批注文本; prompt = 悬停显示"发送给AI"按钮 */
+export interface SidecarAnnotBehavior {
+  type: 'comment' | 'prompt';
+  text: string;
+}
+
 export interface SidecarAnnot {
   id: string;
   page: number;
@@ -150,6 +156,8 @@ export interface SidecarAnnot {
   note: string;
   color: [number, number, number];
   createdAt: string;
+  /** 可选交互行为 (批注/提示词), 无则纯高亮 */
+  behavior?: SidecarAnnotBehavior;
 }
 
 export interface SidecarAnnotFile {
@@ -176,6 +184,14 @@ export function parseSidecarAnnot(raw: any): SidecarAnnot | null {
     Number(rect[3]) || 0,
   ];
   const type: SidecarAnnotType = VALID_TYPES.includes(raw.type) ? raw.type : 'highlight';
+  // behavior: {type: 'comment'|'prompt', text}
+  let behavior: SidecarAnnotBehavior | undefined;
+  const rawBehavior = raw.behavior;
+  if (rawBehavior && typeof rawBehavior === 'object' &&
+      (rawBehavior.type === 'comment' || rawBehavior.type === 'prompt') &&
+      typeof rawBehavior.text === 'string') {
+    behavior = { type: rawBehavior.type, text: rawBehavior.text };
+  }
   return {
     id,
     page,
@@ -187,6 +203,7 @@ export function parseSidecarAnnot(raw: any): SidecarAnnot | null {
       ? [Number(raw.color[0]) || DEFAULT_COLOR[0], Number(raw.color[1]) || DEFAULT_COLOR[1], Number(raw.color[2]) || DEFAULT_COLOR[2]]
       : DEFAULT_COLOR,
     createdAt: String(raw.createdAt || new Date().toISOString()),
+    behavior,
   };
 }
 
@@ -203,21 +220,23 @@ export function parseSidecarFile(raw: any): SidecarAnnotFile {
 }
 
 /** sidecar annot → 跟内嵌 PdfAnnotMeta 同形, 复用现有渲染热区代码.
- *  一期无 action, 渲染为纯高亮 / 便签图标, 无点击. */
+ *  有 behavior (comment/prompt) 时 title/preview 取 behavior.text, 供悬停显示. */
 export function sidecarToAnnotMeta(s: SidecarAnnot): PdfAnnotMeta {
+  const behaviorText = s.behavior?.text || '';
   return {
     id: s.id,
     subtype: s.type === 'note' ? 'Note' : 'Highlight',
     page: s.page,
-    title: s.note || (s.selectedText ? s.selectedText.split('\n')[0].slice(0, 60) : '已批注'),
-    preview: s.note || s.selectedText.slice(0, 120),
+    title: behaviorText || s.note || (s.selectedText ? s.selectedText.split('\n')[0].slice(0, 60) : '已批注'),
+    preview: behaviorText || s.note || s.selectedText.slice(0, 120),
     action: null,
     raw: {
       id: s.id,
       subtype: s.type === 'note' ? 'Note' : 'Highlight',
       rect: s.rect,
-      contentsObj: { str: s.note || s.selectedText },
+      contentsObj: { str: behaviorText || s.note || s.selectedText },
       color: new Uint8ClampedArray(s.color),
+      behavior: s.behavior,
     },
   };
 }
