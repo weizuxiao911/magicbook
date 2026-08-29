@@ -33,13 +33,14 @@ export async function contentHash(s: string): Promise<string> {
     .join('');
 }
 
-/** IDE 相对路径 (/.foo.annotation) → file:// URI (拼 cwd). */
+/** IDE 相对路径 (/.foo.annotation) → file:// URI.
+ *  走 codeblitz workspace 路径 (file:///workspace/.foo), 跟 explorer 写 .x.ts 一样,
+ *  不要用绝对路径 (file:///Users/.../cwd/.foo) — codeblitz IFileServiceClient 对绝对路径 hang.
+ *  绝对路径 PdfReaderView 读 PDF 时也用过 (作为 fallback 候选), 但首选是 workspace. */
 function sidecarUri(relPath: string): string {
-  const cwd = (typeof window !== 'undefined'
-    ? (window as any).__APP_CONFIG__?.cwd
-    : '') || '';
-  const abs = cwd + relPath.replace(/^\/+/, '');
-  return `file://${abs}`;
+  // 直接用 /workspace + relPath (relPath 形如 /.foo.annotation)
+  // 不依赖 cwd, 跟 explorer 写 .x.ts 走同条路
+  return `file:///workspace${relPath}`;
 }
 
 /** 读取 sidecar 文件. 不存在 (404) 返空 {version:1, items:[]}, 解析失败同. */
