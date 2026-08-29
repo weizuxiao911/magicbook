@@ -141,6 +141,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   const USER_SCALES = [0.5, 0.75, 1.0, 1.25, 1.5];
   /** 每页占位 div 引用 */
   const pageElsRef = useRef<Map<number, HTMLDivElement>>(new Map());
+  /** 懒加载防抖 timer */
+  const lazyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** rebuildViewer 并发守卫: 每次 rebuildViewer 入口 +1, await 后检查; 不一致 → 旧 build bail.
    *  防止连续 click 缩放按钮时, 上一次 build 在 await 链里又 appendChild 老 div, 跟新 build 撞车. */
   const buildIdRef = useRef(0);
@@ -162,12 +164,24 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   const hostPath = useMemo(() => resolveHostPath(resource), [resource]);
 
   const [loading, setLoading] = useState(true);
+  /** 缩放重建中: 全量重建 274 页需数秒, 期间盖遮罩 (否则用户看到内容清空/第一页闪烁) */
+  const [zooming, setZooming] = useState(false);
   const [error, setError] = useState('');
   const [numPages, setNumPages] = useState(0);
   const [progress, setProgress] = useState({ loaded: 0, total: 0 });
   /** 当前页码 (ref, 避免放入 rebuildViewer deps 触发死循环) */
   const currentPageRef = useRef<number>(1);
+  /** 缩放锚点页: 点击缩放按钮瞬间记录真实页 (rebuild 异步触发, 期间 onScroll 会污染 currentPageRef 成 1) */
+  const zoomAnchorPageRef = useRef<number | null>(null);
+  /** rebuild 进行中 (计数): 期间 onScroll 不更新 currentPageRef (防 innerHTML='' 后 scrollTop 归零污染成 1) */
+  const rebuildingRef = useRef(0);
   const [currentPage, _setCurrentPage] = useState(1);
+  /** 缩放按钮点击: 记录锚点页 + 同步回写 currentPageRef (连续缩放时各 build 都能拿到真实页) */
+  const markZoomAnchor = () => {
+    const p = currentPageRef.current;
+    zoomAnchorPageRef.current = p;
+    currentPageRef.current = p;
+  };
   /** PDF 目录树 (pdf.getOutline() 嵌套结构) */
   const [outline, setOutline] = useState<any[]>([]);
   /** 目录面板是否展开 */
@@ -293,8 +307,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     };
   }, [hostPath]);
 
-  // ---------- 单页完整重建 (page div + canvas + text layer + 内嵌 + sidecar 标注) ----------
-  // 全 rebuild (rebuildViewer) 和局部重建 (sidecar 变化 useEffect) 都调此.
+  // ---------- 懒加载单页真实内容 (canvas + 内嵌 + sidecar 标注) ----------
+  // 骨架已建 page div; 此函数只在 div 上补 canvas + 标注 (幂等: 已渲染过直接返回).
   // myBuildId: 并发守卫, 全 rebuild 期间新 build 来了, 旧 build bail.
   const rebuildSinglePage = useCallback(async (pageIdx: number, myBuildId?: number) => {
     const viewer = viewerRef.current;
@@ -302,45 +316,25 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     const pdf = pdfDocRef.current;
     if (!pdf) return;
     if (pageIdx < 1 || pageIdx > numPages) return;
+    // 已渲染过 (懒加载缓存), 跳过
+    if (renderedRef.current.has(pageIdx)) return;
+
+    const div = pageElsRef.current.get(pageIdx);
+    if (!div || div.parentNode !== viewer) return;
 
     const edEl = document.getElementById('opensumi-editor');
     const viewBaseH = Math.max((edEl?.clientHeight ?? viewer.clientHeight) || 1, 1);
     const viewH = viewBaseH * USER_SCALES[userScaleIdx];
-    const pageGap = 8;
     const dpr = window.devicePixelRatio || 1;
-
-    // 删旧 page div (幂等)
-    const oldDiv = pageElsRef.current.get(pageIdx);
-    if (oldDiv && oldDiv.parentNode === viewer) {
-      viewer.removeChild(oldDiv);
-    }
-    pageElsRef.current.delete(pageIdx);
 
     // 拿 page
     const p = await pdf.getPage(pageIdx);
     if (myBuildId !== undefined && buildIdRef.current !== myBuildId) return;
     const pb = p.getViewport({ scale: 1 });
 
-    // 找插入位置 (按 page 顺序)
-    const nextSibling = pageElsRef.current.get(pageIdx + 1)?.parentNode === viewer
-      ? pageElsRef.current.get(pageIdx + 1) || null
-      : null;
-
-    // page div
-    const pageH = viewH;
-    const pageW = viewH * (pb.width / pb.height);
-    const div = document.createElement('div');
-    div.className = 'ab-pdf-page';
-    div.dataset['page'] = String(pageIdx);
-    div.style.cssText = `width:${pageW}px;height:${pageH}px;margin:0 auto ${pageGap}px;`;
-    if (nextSibling && nextSibling.parentNode === viewer) {
-      viewer.insertBefore(div, nextSibling);
-    } else {
-      viewer.appendChild(div);
-    }
-    pageElsRef.current.set(pageIdx, div);
-
-    // canvas
+    // canvas (占位 div 尺寸已定, 按它渲染)
+    const pageW = div.clientWidth || div.offsetWidth;
+    const pageH = div.clientHeight || div.offsetHeight;
     const renderScale = (pageW / pb.width) * dpr;
     const viewport = p.getViewport({ scale: renderScale });
     const canvas = document.createElement('canvas');
@@ -353,6 +347,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     if (ctx) await p.render({ canvasContext: ctx, viewport }).promise;
     if (myBuildId !== undefined && buildIdRef.current !== myBuildId) return;
     canvas.style.opacity = '1';
+    div.classList.remove('ab-pdf-page--skeleton');
 
     // 标注 (内嵌 + sidecar)
     const embeddedMetas: PdfAnnotMeta[] = (await p.getAnnotations() || [])
@@ -368,7 +363,23 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       div.appendChild(overlay);
       renderAnnotsForPage(overlay, pageIdx, embeddedMetas, sidecarMetas, canvas, pb, renderScale);
     }
+    renderedRef.current.add(pageIdx);
   }, [numPages, userScaleIdx]);
+
+  // ---------- 懒加载可见页 ±5 (滚动/缩放后调度) ----------
+  const lazyLoadRange = useCallback(async (centerPage: number, myBuildId?: number) => {
+    if (!numPages) return;
+    const LOAD_RADIUS = 5;
+    const from = Math.max(1, centerPage - LOAD_RADIUS);
+    const to = Math.min(numPages, centerPage + LOAD_RADIUS);
+    for (let i = from; i <= to; i++) {
+      try {
+        await rebuildSinglePage(i, myBuildId);
+      } catch (e) {
+        console.warn('[pdf] lazy render failed, page=', i, e);
+      }
+    }
+  }, [numPages, rebuildSinglePage]);
 
   // ---------- 标注热区渲染 (内嵌 + sidecar, 给 rebuildSinglePage 用) ----------
   const renderAnnotsForPage = useCallback((overlay: HTMLDivElement, pageIdx: number, embeddedMetas: PdfAnnotMeta[], sidecarMetas: PdfAnnotMeta[], canvas: HTMLCanvasElement, pb: any, renderScale: number) => {
@@ -455,7 +466,10 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     }
   }, []);
 
-  // ---------- 重建占位 + 一次性渲染所有页 (size 变化才触发) ----------
+  // ---------- 占位骨架 + 视口懒加载 (size/scale 变化才重建骨架) ----------
+  // 1) 建 274 个占位 page div (仅尺寸, 无 canvas) — 秒级, 滚动结构立即可用
+  // 2) 滚动/缩放时懒加载可见页 ±5 页 (pdf.getPage + render canvas + 标注), 离开不释放
+  // 3) 缩放只重建骨架 + 重懒加载当前页 (不再全量渲染, 4s → 即时)
   const rebuildViewer = useCallback(async () => {
     if (!numPages) return;
     const viewer = viewerRef.current;
@@ -465,37 +479,72 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     // 并发守卫: 入口拿 myBuildId, 后续 await 后检查; 不一致 → 旧 build bail, 不再 appendChild.
     // 否则连续 click 缩放时, 上一次 build 在 await 链里又 appendChild 老 div, 跟新 build 撞车.
     const myBuildId = ++buildIdRef.current;
-    console.log('[pdf] rebuild enter myBuildId=', myBuildId, 'scrollTop=', viewer.scrollTop);
+    console.log('[pdf] rebuild skeleton myBuildId=', myBuildId, 'scrollTop=', viewer.scrollTop);
 
     // 高度主导缩放: div 高度 = viewer 视口高 × userScale, 宽度按 PDF aspect-ratio 算.
     const edEl = document.getElementById('opensumi-editor');
     const viewBaseH = Math.max((edEl?.clientHeight ?? viewer.clientHeight) || 1, 1);
     const viewH = viewBaseH * USER_SCALES[userScaleIdx];
     const pageGap = 8;
-    const dpr = window.devicePixelRatio || 1;
 
-    // 清空, 建所有页
-    const prevScrollTop = viewer.scrollTop;
-    viewer.innerHTML = '';
-    pageElsRef.current.clear();
-    renderedRef.current.clear();
+    // 用局部变量记当前页: 优先缩放锚点 (点击瞬间真实页), 否则 currentPageRef.
+    const prevPage = zoomAnchorPageRef.current ?? currentPageRef.current;
+    zoomAnchorPageRef.current = null;
+    // 记"页内偏移", 重建后精确恢复
+    const prevPageEl = pageElsRef.current.get(prevPage);
+    const prevOffset = prevPageEl ? viewer.scrollTop - prevPageEl.offsetTop : 0;
+    // 重建期间屏蔽 onScroll 页码更新 (防污染 currentPageRef; 结束后恢复)
+    rebuildingRef.current++;
+    try {
+      viewer.innerHTML = '';
+      pageElsRef.current.clear();
+      renderedRef.current.clear();
 
-    for (let i = 1; i <= numPages; i++) {
-      await rebuildSinglePage(i, myBuildId);
+      // 骨架: 第一页拿真实宽高比 (所有页同比例), 其余页直接复用 → 不用逐页 getPage
+      let aspect: number | null = null;
+      for (let i = 1; i <= numPages; i++) {
+        if (aspect === null) {
+          try {
+            const p0 = await pdf.getPage(1);
+            const pb0 = p0.getViewport({ scale: 1 });
+            aspect = pb0.width / pb0.height;
+          } catch {
+            aspect = 0.75; // A4 兜底
+          }
+        }
+        const pageH = viewH;
+        const pageW = viewH * aspect;
+        const div = document.createElement('div');
+        div.className = 'ab-pdf-page ab-pdf-page--skeleton';
+        div.dataset['page'] = String(i);
+        div.style.cssText = `width:${pageW}px;height:${pageH}px;margin:0 auto ${pageGap}px;`;
+        viewer.appendChild(div);
+        pageElsRef.current.set(i, div);
+      }
+
+      // 懒加载当前可见页 ±5 (重建后立即渲染视口附近, 不空白)
+      await lazyLoadRange(prevPage, myBuildId);
+    } finally {
+      rebuildingRef.current--;
     }
 
-    // 重建后恢复滚动位置 (viewer.innerHTML = '' 会 reset scrollTop, 用户期望停在当前页)
-    if (currentPageRef.current > 1) {
-      console.log('[pdf] restore scroll to page', currentPageRef.current, 'myBuildId=', myBuildId);
+    // 重建后恢复滚动位置
+    if (prevPage > 1) {
+      console.log('[pdf] restore scroll to page', prevPage, 'myBuildId=', myBuildId);
       requestAnimationFrame(() => {
-        const target = pageElsRef.current.get(currentPageRef.current);
+        // 并发守卫: 期间又有新 build (快速连点缩放) → 旧 build 的 restore 放弃
+        if (buildIdRef.current !== myBuildId) {
+          console.log('[pdf] restore skipped (newer build)', prevPage, 'myBuildId=', myBuildId);
+          return;
+        }
+        const target = pageElsRef.current.get(prevPage);
         if (target) {
-          target.scrollIntoView({ block: 'start', behavior: 'auto' });
-          console.log('[pdf] restored to page', currentPageRef.current, 'myBuildId=', myBuildId);
+          viewer.scrollTop = target.offsetTop + prevOffset;
+          console.log('[pdf] restored to page', prevPage, 'offset=', prevOffset, 'myBuildId=', myBuildId);
         }
       });
     }
-  }, [numPages, rebuildTick, syncPageDisplay, rebuildSinglePage]);
+  }, [numPages, rebuildTick, syncPageDisplay, rebuildSinglePage, lazyLoadRange]);
 
   // ---------- 滚动同步当前页码 ----------
   useEffect(() => {
@@ -503,6 +552,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     const viewer = viewerRef.current;
     if (!viewer) return;
     const onScroll = () => {
+      // 重建期间 (innerHTML='' 后 scrollTop 归零) 不更新页码 — 防污染 currentPageRef 成 1
+      if (rebuildingRef.current > 0) return;
       // 用 viewer 可视区中点的 y 找当前页: 中点下方第一页 = 当前页
       const midY = viewer.scrollTop + viewer.clientHeight / 2;
       // 按 DOM 顺序 (offsetTop) 遍历, 不依赖 Map 插入序 —
@@ -519,12 +570,20 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         currentPageRef.current = current;
         _setCurrentPage(current);
         console.log('[pdf] onScroll -> currentPage=', current, 'midY=', midY);
+        // 懒加载: 当前页 ±5 (防抖, 快速滚动只渲染最终页附近)
+        if (lazyTimerRef.current) clearTimeout(lazyTimerRef.current);
+        lazyTimerRef.current = setTimeout(() => {
+          void lazyLoadRange(current);
+        }, 120);
       }
       syncPageDisplay(current);
     };
     viewer.addEventListener('scroll', onScroll);
-    return () => viewer.removeEventListener('scroll', onScroll);
-  }, [numPages, syncPageDisplay]);
+    return () => {
+      viewer.removeEventListener('scroll', onScroll);
+      if (lazyTimerRef.current) clearTimeout(lazyTimerRef.current);
+    };
+  }, [numPages, syncPageDisplay, lazyLoadRange]);
 
   // ---------- 初始加载 (一次性渲染, 不懒加载, 滚动不会空白) ----------
   useEffect(() => {
@@ -576,6 +635,13 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     pendingRebuildPageRef.current = null;
     const page = target && target >= 1 && target <= numPages ? target : currentPageRef.current;
     if (page < 1 || page > numPages) return;
+    // 强制重渲染该页: 清 renderedRef + 移除旧 canvas/标注层, 让懒加载重建
+    renderedRef.current.delete(page);
+    const div = pageElsRef.current.get(page);
+    if (div) {
+      div.querySelectorAll('canvas.ab-pdf-canvas, .ab-pdf-annot-layer').forEach((el) => el.remove());
+      div.classList.add('ab-pdf-page--skeleton');
+    }
     void rebuildSinglePage(page);
   }, [sidecarTick, numPages, rebuildSinglePage]);
 
@@ -883,23 +949,22 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
               title="缩小"
               disabled={userScaleIdx === 0}
               onClick={() => {
+                zoomAnchorPageRef.current = currentPageRef.current;
                 setUserScaleIdx((prev) => Math.max(0, prev - 1));
                 setRebuildTick((t) => t + 1);
               }}
             >−</button>
             <button
               className="ab-pdf__zoom-btn ab-pdf__zoom-btn--current"
-              title="还原 (基准大小)"
-              onClick={() => {
-                setUserScaleIdx(2);
-                setRebuildTick((t) => t + 1);
-              }}
+              title="当前缩放比例"
+              disabled
             >{Math.round(USER_SCALES[userScaleIdx] * 100)}%</button>
             <button
               className="ab-pdf__zoom-btn"
               title="放大"
               disabled={userScaleIdx === USER_SCALES.length - 1}
               onClick={() => {
+                zoomAnchorPageRef.current = currentPageRef.current;
                 setUserScaleIdx((prev) => Math.min(USER_SCALES.length - 1, prev + 1));
                 setRebuildTick((t) => t + 1);
               }}
@@ -934,6 +999,16 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       )}
 
       {error && <div className="ab-pdf__error">无法加载: {error}</div>}
+
+      {/* 缩放重建遮罩: 全量重建期间盖住, 避免看到内容清空/第一页闪烁 */}
+      {zooming && (
+        <div className="ab-pdf__loading" style={{ zIndex: 60 }}>
+          <div className="ab-pdf__loadingText">缩放中…</div>
+          <div className="ab-pdf__progress">
+            <div className="ab-pdf__progressBar" style={{ width: '40%', animation: 'ab-pdf-indet 1.2s ease-in-out infinite' }} />
+          </div>
+        </div>
+      )}
 
       {/* ab-pdf__toolbar (页码跳转 ‹ ›) 已按需求去掉 */}
       {/* {!loading && !error && (
