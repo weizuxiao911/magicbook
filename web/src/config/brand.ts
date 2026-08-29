@@ -11,7 +11,7 @@ export const APP_CHAT_CONFIG = {
   brand: {
     name: 'Numas AI',
     nameZh: 'Numas AI',
-    tagline: '牛马新伙伴,未来我说了算',
+    tagline: '牛马新伙伴，未来我说了算',
     greeting: '你好，我是 {nameZh}',
     logoChar: '🐮',
   },
