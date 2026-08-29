@@ -505,10 +505,13 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     const onScroll = () => {
       // 用 viewer 可视区中点的 y 找当前页: 中点下方第一页 = 当前页
       const midY = viewer.scrollTop + viewer.clientHeight / 2;
-      const pages = pageElsRef.current;
+      // 按 DOM 顺序 (offsetTop) 遍历, 不依赖 Map 插入序 —
+      // rebuildSinglePage 重建页会 delete+set 把该页挪到 Map 末尾, 用插入序会导致页码错乱
+      const pages = Array.from(pageElsRef.current.entries())
+        .filter(([, el]) => !!el)
+        .sort((a, b) => (a[1] as HTMLElement).offsetTop - (b[1] as HTMLElement).offsetTop);
       let current = 1;
       for (const [idx, el] of pages) {
-        if (!el) continue;
         const top = el.offsetTop;
         if (midY >= top) current = idx;
       }
