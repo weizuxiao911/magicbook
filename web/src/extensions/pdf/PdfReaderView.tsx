@@ -19,8 +19,11 @@ import { IFileServiceClient } from '@opensumi/ide-file-service';
 // @ts-ignore — pdfjs-dist v4 ships ESM types, loose import
 import * as pdfjsLib from 'pdfjs-dist';
 
-import { toAnnotMeta, runAnnotAction, type PdfAnnotMeta, type AnnotHandlers } from './annotations';
+import { toAnnotMeta, runAnnotAction, sidecarToAnnotMeta, type PdfAnnotMeta, type AnnotHandlers } from './annotations';
 import { AnnotationActions } from './AnnotationActions';
+import { AnnotPopover, type PopoverState } from './AnnotPopover';
+import { readSidecar, SidecarWriter, contentHash } from './sidecar';
+import type { SidecarAnnot } from './annotations';
 
 const PDF_WORKER_CACHE_KEY = '__ANIMBOOK_PDF_WORKER_URL__';
 function setupPdfWorker() {
@@ -111,6 +114,20 @@ async function openPdfFromBytes(bytes: Uint8Array): Promise<any> {
   }).promise;
 }
 
+/** 从 codeUri 拿 PDF basename, 拼 sidecar IDE 相对路径 `/.{basename}.annotation`. */
+function sidecarPathFromResource(resource: any): string {
+  const u = resource?.uri;
+  let fsPath = '';
+  if (u?.codeUri?.fsPath) fsPath = String(u.codeUri.fsPath);
+  else if (typeof u?.path === 'string') fsPath = u.path;
+  if (!fsPath) return '';
+  // 取 basename (处理 / 与 \ 两种分隔符, 兼容 win)
+  const parts = fsPath.split(/[\\/]/).filter(Boolean);
+  const base = parts[parts.length - 1] || '';
+  if (!base) return '';
+  return `/.${base}.annotation`;
+}
+
 export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   const viewerRef = useRef<HTMLDivElement>(null);
   const pdfDocRef = useRef<any>(null);
@@ -128,6 +145,24 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   /** rebuildViewer 并发守卫: 每次 rebuildViewer 入口 +1, await 后检查; 不一致 → 旧 build bail.
    *  防止连续 click 缩放按钮时, 上一次 build 在 await 链里又 appendChild 老 div, 跟新 build 撞车. */
   const buildIdRef = useRef(0);
+  /** sidecar 标注 (按 page 索引). 加载完 PDF 后异步读, 后续圈选/写盘合并到这份. */
+  const sidecarAnnotsRef = useRef<Map<number, SidecarAnnot[]>>(new Map());
+  /** 触发渲染刷新: sidecar 变化 (读/写/外部同步) 时 +1. */
+  const [sidecarTick, setSidecarTick] = useState(0);
+  /** sidecar IDE 相对路径, 加载完 PDF 后算一次. */
+  const sidecarPathRef = useRef<string>('');
+  /** sidecar 写盘器 (debounce + 自写去重). 初始化在 sidecarPath 算完之后. */
+  const sidecarWriterRef = useRef<SidecarWriter | null>(null);
+  /** 写盘失败提示. */
+  const [writeError, setWriteError] = useState<string>('');
+  /** 写盘未保存标记 (红点). */
+  const [dirty, setDirty] = useState(false);
+  /** popover 状态: null = 隐藏. */
+  const [popoverState, setPopoverState] = useState<PopoverState | null>(null);
+  /** 文本选择监听是否启用 (避免其他 popover 打开时误触发). */
+  const popoverOpenRef = useRef(false);
+  /** 文本选择 mouseup 防抖 timer. */
+  const selectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hostPath = useMemo(() => resolveHostPath(resource), [resource]);
 
@@ -351,6 +386,29 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         } catch {
           if (!cancelled) setOutline([]);
         }
+        // 异步读 sidecar 标注 (失败/不存在静默, 用空 items). 算 sidecar 路径 + 初始化 writer.
+        try {
+          const sp = sidecarPathFromResource(resource);
+          sidecarPathRef.current = sp;
+          if (sp) {
+            const file = await readSidecar(sp);
+            if (cancelled) return;
+            // 按 page 索引填 ref
+            const m = new Map<number, SidecarAnnot[]>();
+            for (const a of file.items) {
+              if (!m.has(a.page)) m.set(a.page, []);
+              m.get(a.page)!.push(a);
+            }
+            sidecarAnnotsRef.current = m;
+            sidecarWriterRef.current = new SidecarWriter(sp, (err) => {
+              setWriteError(err.message);
+              setDirty(true);
+            });
+            setSidecarTick((t) => t + 1);
+          }
+        } catch (e) {
+          console.warn('[pdf] sidecar init failed:', e);
+        }
       } catch (e) {
         if (!cancelled) setError(String((e as any)?.message || e));
       } finally {
@@ -426,15 +484,40 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       // 渲染完显示 (同步 opacity, 不修改 width/height → 无 reflow)
       canvas.style.opacity = '1';
 
-      // 标注热区
+      // text layer: 用户能选中文字触发圈选 popover. 文字**接近透明** (alpha 0.005) 让 PDF
+      // canvas 文字透过来, 但保持可被浏览器 selection 抓取. pointer-events:none 让 mouse
+      // 事件穿透 (不拦截 viewer mouseup), user-select:text 允许选区.
+      // selection 高亮由浏览器 ::selection 样式控制 (chrome 默认蓝色背景).
+      try {
+        const textContent = await p.getTextContent();
+        if (buildIdRef.current !== myBuildId) return;
+        const textLayerDiv = document.createElement('div');
+        textLayerDiv.className = 'textLayer';
+        textLayerDiv.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;overflow:hidden;opacity:0;transition:opacity 0.12s ease;line-height:1;pointer-events:none;user-select:text;-webkit-user-select:text;color:rgba(0,0,0,0.005);z-index:1;';
+        div.appendChild(textLayerDiv);
+        const cssViewport = p.getViewport({ scale: pageW / pb.width });
+        const TL = (pdfjsLib as any).TextLayer;
+        if (TL) {
+          const tl = new TL({ textContentSource: textContent, container: textLayerDiv, viewport: cssViewport });
+          await tl.render();
+          if (buildIdRef.current !== myBuildId) return;
+          textLayerDiv.style.opacity = '1';
+        }
+      } catch (e) {
+        console.warn('[pdf] text layer page', i, 'failed:', e);
+      }
+
+      // 标注热区: 内嵌 (有 action, 挂 hover tip + click) + sidecar (无 action, 只视觉高亮) 分别渲染
       try {
         const annots = await p.getAnnotations();
         if (buildIdRef.current !== myBuildId) return;
-        if (annots && annots.length > 0) {
-          const metas = annots
-            .map((a: any) => toAnnotMeta(a, i))
-            .filter((m: PdfAnnotMeta) => m.action && m.raw?.rect);
-          if (metas.length > 0) {
+        const embeddedMetas: PdfAnnotMeta[] = (annots || [])
+          .map((a: any) => toAnnotMeta(a, i))
+          .filter((m: PdfAnnotMeta) => m.action && m.raw?.rect);
+        const sidecarMetas: PdfAnnotMeta[] = (sidecarAnnotsRef.current.get(i) || [] as SidecarAnnot[])
+          .map(sidecarToAnnotMeta)
+          .filter((m: PdfAnnotMeta) => m.raw?.rect);
+        if (embeddedMetas.length > 0 || sidecarMetas.length > 0) {
             const overlay = document.createElement('div');
             overlay.className = 'ab-pdf-annot-layer';
             overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:hidden;';
@@ -443,9 +526,10 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
             const scaleX = canvas.width / canvas.clientWidth;
             const scaleY = canvas.height / canvas.clientHeight;
             const pageH0 = pb.height;
-            for (const meta of metas) {
+
+            const renderMeta = (meta: PdfAnnotMeta, opts: { withTip: boolean; withClick: boolean; withDelete?: boolean }) => {
               const rect = meta.raw.rect as [number, number, number, number];
-              if (!rect || rect.length < 4) continue;
+              if (!rect || rect.length < 4) return;
               const [x1, y1, x2, y2] = rect;
               const px1 = x1 * renderScale / scaleX;
               const py1 = (pageH0 - y1) * renderScale / scaleY;
@@ -468,40 +552,84 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
               el.className = 'ab-pdf-annot';
               el.dataset['page'] = String(i);
               el.dataset['annotId'] = meta.id;
-              // 存原始 canvas 内部像素坐标 (resize 后按新 scale 重算)
               el.dataset['origLeft'] = String(left * scaleX);
               el.dataset['origTop'] = String(top * scaleY);
               el.dataset['origW'] = String(w * scaleX);
               el.dataset['origH'] = String(h * scaleY);
               el.style.cssText = `position:absolute;left:${left}px;top:${top}px;width:${w}px;height:${h}px;pointer-events:auto;background:rgba(${r},${g},${b},0.08);border:1px dashed rgba(${r},${g},${b},0.25);`;
-              el.title = meta.preview || meta.title;
-              el.addEventListener('mouseenter', () => {
-                el.style.background = `rgba(${r},${g},${b},0.35)`;
-                el.style.boxShadow = `0 0 0 2px rgba(${r},${g},${b},0.6)`;
-                showAnnotTip(el, meta);
-              });
-              el.addEventListener('mouseleave', () => {
-                el.style.background = 'rgba(' + r + ',' + g + ',' + b + ',0.08)';
-                el.style.boxShadow = 'none';
-                hideAnnotTip();
-              });
-              el.addEventListener('click', (ev) => {
-                ev.stopPropagation();
-                hideAnnotTip();
-                if (meta.action) void runAnnotAction(meta.action, annotHandlersRef.current);
-              });
+              if (opts.withTip) el.title = meta.preview || meta.title;
+              if (opts.withTip) {
+                el.addEventListener('mouseenter', () => {
+                  el.style.background = `rgba(${r},${g},${b},0.35)`;
+                  el.style.boxShadow = `0 0 0 2px rgba(${r},${g},${b},0.6)`;
+                  showAnnotTip(el, meta);
+                });
+                el.addEventListener('mouseleave', () => {
+                  el.style.background = `rgba(${r},${g},${b},0.08)`;
+                  el.style.boxShadow = 'none';
+                  hideAnnotTip();
+                });
+              } else if (opts.withDelete) {
+                // sidecar 标注: 视觉高亮 + hover 显示 X 取消按钮
+                el.addEventListener('mouseenter', () => {
+                  el.style.background = `rgba(${r},${g},${b},0.18)`;
+                  el.style.boxShadow = `0 0 0 1.5px rgba(${r},${g},${b},0.5)`;
+                  if (delBtn) delBtn.style.opacity = '1';
+                });
+                el.addEventListener('mouseleave', () => {
+                  el.style.background = `rgba(${r},${g},${b},0.08)`;
+                  el.style.boxShadow = 'none';
+                  if (delBtn) delBtn.style.opacity = '0';
+                });
+                // X 按钮 (右上角, 14x14 圆)
+                const delBtn = document.createElement('span');
+                delBtn.className = 'ab-pdf-annot__del';
+                delBtn.textContent = '×';
+                delBtn.title = '取消标注';
+                delBtn.style.cssText = `position:absolute;right:-7px;top:-7px;width:14px;height:14px;line-height:12px;font-size:12px;font-weight:600;color:#fff;background:rgba(220,60,60,0.95);border-radius:50%;text-align:center;cursor:pointer;opacity:0;pointer-events:auto;transition:opacity 0.12s, transform 0.12s;z-index:3;user-select:none;`;
+                delBtn.addEventListener('mouseenter', () => { delBtn.style.transform = 'scale(1.2)'; });
+                delBtn.addEventListener('mouseleave', () => { delBtn.style.transform = 'scale(1)'; });
+                delBtn.addEventListener('click', (ev) => {
+                  ev.stopPropagation();
+                  ev.preventDefault();
+                  handleDeleteAnnot(meta.id);
+                });
+                el.appendChild(delBtn);
+              } else {
+                el.addEventListener('mouseenter', () => {
+                  el.style.background = `rgba(${r},${g},${b},0.25)`;
+                  el.style.boxShadow = `0 0 0 1.5px rgba(${r},${g},${b},0.5)`;
+                });
+                el.addEventListener('mouseleave', () => {
+                  el.style.background = `rgba(${r},${g},${b},0.08)`;
+                  el.style.boxShadow = 'none';
+                });
+              }
+              if (opts.withClick) {
+                el.addEventListener('click', (ev) => {
+                  ev.stopPropagation();
+                  hideAnnotTip();
+                  if (meta.action) void runAnnotAction(meta.action, annotHandlersRef.current);
+                });
+              }
               overlay.appendChild(el);
+            };
+
+            for (const meta of embeddedMetas) {
+              renderMeta(meta, { withTip: true, withClick: true });
             }
-          }
+            for (const meta of sidecarMetas) {
+              renderMeta(meta, { withTip: false, withClick: false, withDelete: true });
+            }
         }
-      } catch (e) {
-        console.warn('[pdf] annot overlay page', i, 'failed:', e);
-      }
+        } catch (e) {
+          console.warn('[pdf] annot overlay page', i, 'failed:', e);
+        }
     }
 
     // rebuild 时不渲染任何页 (懒加载, IO 进入视口才画)
     // renderedRef 保持空, IO 触发 renderPage 后填入
-  }, [numPages, rebuildTick, syncPageDisplay]);
+  }, [numPages, rebuildTick, syncPageDisplay, sidecarTick]);
 
   // ---------- 滚动同步当前页码 ----------
   useEffect(() => {
@@ -628,6 +756,216 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     };
   }, [hostPath]);
 
+  // ---------- 监听 sidecar 外部修改 (fs:changed) ----------
+  // 已有 PTY node:fs.watch + opencode SSE 双层基础设施, 业务用 window 'fs:changed'.
+  useEffect(() => {
+    const onFsChanged = async (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      const path: string = String(detail.path || '');
+      const sp = sidecarPathRef.current;
+      if (!sp || path !== sp) return;
+      // 自写去重: 跟当前 writer.lastWrittenHash 比, 相同则跳过
+      const writer = sidecarWriterRef.current;
+      if (writer && path === writer.path) {
+        // 重新读最新内容, 算 hash, 跟 lastWrittenHash 比
+        const fs = (window as any).__APP_FS__;
+        try {
+          const bytes: Uint8Array = await fs.read(sp);
+          if (!bytes || bytes.byteLength === 0) return;
+          const text = new TextDecoder().decode(bytes);
+          const hash = await contentHash(text);
+          if (hash === (writer as any).lastWrittenHash) return;
+        } catch { /* 读失败: 当成外部修改 */ }
+      }
+      // 外部修改: 读最新 → 合并到 ref → 触发重建
+      try {
+        const file = await readSidecar(sp);
+        const m = new Map<number, SidecarAnnot[]>();
+        for (const a of file.items) {
+          if (!m.has(a.page)) m.set(a.page, []);
+          m.get(a.page)!.push(a);
+        }
+        sidecarAnnotsRef.current = m;
+        setDirty(false);
+        setSidecarTick((t) => t + 1);
+      } catch (err) {
+        console.warn('[pdf] sidecar reload failed:', err);
+      }
+    };
+    window.addEventListener('fs:changed', onFsChanged);
+    return () => window.removeEventListener('fs:changed', onFsChanged);
+  }, [hostPath]);
+
+  // ---------- Rect 矩形选择: mousedown/move/up 画矩形 → 弹 popover ----------
+  // 跨页全屏 overlay (跟 viewer 同级), 临时矩形 div 跟随鼠标, mouseup 算 PDF 原坐标.
+  // 弹窗时矩形保留显示 (data-active="1") 提示用户"这是要标注的区域", 保存/取消时清理.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    let drawing = false;
+    let startX = 0, startY = 0;
+    let rectEl: HTMLDivElement | null = null;
+    let startPageEl: HTMLElement | null = null;
+
+    const ensureRectEl = () => {
+      if (rectEl && document.body.contains(rectEl)) return rectEl;
+      const el = document.createElement('div');
+      el.className = 'ab-pdf-selection-rect';
+      el.style.cssText = 'position:fixed;pointer-events:none;background:rgba(55,148,255,0.18);border:1.5px solid rgba(55,148,255,0.9);border-radius:2px;z-index:50;display:none;';
+      document.body.appendChild(el);
+      rectEl = el;
+      return el;
+    };
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (popoverOpenRef.current) return;
+      if (e.button !== 0) return;
+      const target = e.target as HTMLElement;
+      if (target.closest('.ab-pdf-annot')) return;
+      if (target.closest('.ab-annot-popover')) return;
+      if (target.closest('.ab-annot-mask')) return;
+      const pageEl = target.closest('.ab-pdf-page') as HTMLElement | null;
+      if (!pageEl) return;
+      // 清理之前的旧矩形 (如果残留, 比如上次取消失败)
+      if (rectEl) { rectEl.remove(); rectEl = null; }
+      drawing = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      startPageEl = pageEl;
+      const el = ensureRectEl();
+      el.dataset['active'] = '0';
+      el.style.left = `${e.clientX}px`;
+      el.style.top = `${e.clientY}px`;
+      el.style.width = '0px';
+      el.style.height = '0px';
+      el.style.display = 'block';
+      el.style.pointerEvents = 'none';  // 画的过程不接收 click, 避免误触
+      e.preventDefault();
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!drawing) return;
+      const el = ensureRectEl();
+      const x = Math.min(e.clientX, startX);
+      const y = Math.min(e.clientY, startY);
+      const w = Math.abs(e.clientX - startX);
+      const h = Math.abs(e.clientY - startY);
+      el.style.left = `${x}px`;
+      el.style.top = `${y}px`;
+      el.style.width = `${w}px`;
+      el.style.height = `${h}px`;
+    };
+
+    const onMouseUp = async (e: MouseEvent) => {
+      if (!drawing) return;
+      drawing = false;
+      const el = rectEl;
+      if (el) el.dataset['active'] = '1'; // 标记弹窗中, 不消失
+      const endPageEl = (e.target as HTMLElement).closest('.ab-pdf-page') as HTMLElement | null;
+      const pageEl = startPageEl;
+      if (!pageEl) { if (el) el.remove(); rectEl = null; return; }
+      const w = Math.abs(e.clientX - startX);
+      const h = Math.abs(e.clientY - startY);
+      if (w < 5 || h < 5) {
+        if (el) el.remove();
+        rectEl = null;
+        return;
+      }
+      if (endPageEl && endPageEl !== pageEl) {
+        console.warn('[pdf] 跨页选区暂不支持');
+        if (el) el.remove();
+        rectEl = null;
+        return;
+      }
+      const pageIdx = Number(pageEl.dataset.page);
+      if (!Number.isInteger(pageIdx) || pageIdx < 1) { if (el) el.remove(); rectEl = null; return; }
+      const pageRect = pageEl.getBoundingClientRect();
+      const cssX1 = Math.min(startX, e.clientX) - pageRect.left;
+      const cssX2 = Math.max(startX, e.clientX) - pageRect.left;
+      const cssY1 = Math.min(startY, e.clientY) - pageRect.top;
+      const cssY2 = Math.max(startY, e.clientY) - pageRect.top;
+      const cssW = pageEl.clientWidth;
+      const cssH = pageEl.clientHeight;
+      const pdf = pdfDocRef.current;
+      if (!pdf) { if (el) el.remove(); rectEl = null; return; }
+      const p = await pdf.getPage(pageIdx);
+      const pb = p.getViewport({ scale: 1 });
+      const pdfX1 = (cssX1 / cssW) * pb.width;
+      const pdfX2 = (cssX2 / cssW) * pb.width;
+      const pdfY1 = pb.height - (cssY2 / cssH) * pb.height;
+      const pdfY2 = pb.height - (cssY1 / cssH) * pb.height;
+      setPopoverState({
+        x: Math.max(e.clientX, startX),
+        y: Math.min(startY, e.clientY),
+        page: pageIdx,
+        rect: [pdfX1, pdfY1, pdfX2, pdfY2],
+        selectedText: '',
+      });
+      popoverOpenRef.current = true;
+    };
+
+    viewer.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      viewer.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      if (rectEl) {
+        rectEl.remove();
+        rectEl = null;
+      }
+    };
+  }, [hostPath, numPages]);
+
+  // ---------- popover 保存: 写 sidecar + 触发 rebuild + 清空选择矩形蒙层 ----------
+  const handlePopoverSave = useCallback((annot: SidecarAnnot) => {
+    // 1. 写盘 (debounce 500ms)
+    if (sidecarWriterRef.current) {
+      sidecarWriterRef.current.push([annot]);
+    }
+    // 2. 更新 in-memory ref
+    const m = sidecarAnnotsRef.current;
+    if (!m.has(annot.page)) m.set(annot.page, []);
+    m.get(annot.page)!.push(annot);
+    // 3. 触发 rebuild (新标注立刻显示)
+    setSidecarTick((t) => t + 1);
+    setDirty(false);
+    // 4. 关闭 popover + 移除选择矩形蒙层
+    setPopoverState(null);
+    popoverOpenRef.current = false;
+    const old = document.querySelector('.ab-pdf-selection-rect[data-active="1"]');
+    if (old) old.remove();
+  }, []);
+
+  const handlePopoverCancel = useCallback(() => {
+    setPopoverState(null);
+    popoverOpenRef.current = false;
+    const old = document.querySelector('.ab-pdf-selection-rect[data-active="1"]');
+    if (old) old.remove();
+  }, []);
+
+  // ---------- 删除已存在标注 (sidecar) ----------
+  // 从 in-memory ref 移除 + 标记 pushDelete (写盘过滤) + 触发 rebuild.
+  const handleDeleteAnnot = useCallback((id: string) => {
+    // 1. 从 ref 移除
+    const m = sidecarAnnotsRef.current;
+    for (const [page, arr] of m) {
+      const idx = arr.findIndex((a) => a.id === id);
+      if (idx >= 0) {
+        arr.splice(idx, 1);
+        if (arr.length === 0) m.delete(page);
+      }
+    }
+    // 2. 写盘 (read-merge-write 过滤被删 id)
+    if (sidecarWriterRef.current) {
+      sidecarWriterRef.current.pushDelete(id);
+    }
+    // 3. 触发 rebuild
+    setSidecarTick((t) => t + 1);
+  }, []);
+
   // ---------- 跳转到指定页 ----------
   const jumpToPage = useCallback((n: number) => {
     const clamped = Math.min(numPages, Math.max(1, n));
@@ -742,6 +1080,12 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         )}
       </div>
       <AnnotationActions />
+      <AnnotPopover state={popoverState} onSave={handlePopoverSave} onCancel={handlePopoverCancel} />
+      {writeError && (
+        <div className="ab-pdf__write-error" title={writeError}>
+          标注保存失败 {dirty ? '· 未保存' : ''}
+        </div>
+      )}
       {loading && (
         <div className="ab-pdf__loading">
           <div className="ab-pdf__loadingText">
