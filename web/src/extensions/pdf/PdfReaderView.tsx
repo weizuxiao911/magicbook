@@ -1094,5 +1094,91 @@ const STYLES = `
 .ab-pdf__progress { width: min(360px, 60%); height: 4px; background: var(--progressBar-inactiveBackground, rgba(128,128,128,0.2)); border-radius: 2px; overflow: hidden; }
 .ab-pdf__progressBar { height: 100%; background: var(--progressBar-background, var(--vscode-progressBar-background, #2563eb)); transition: width .12s linear; }
 @keyframes ab-pdf-indet { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+/* ===== 缩放控件 (浮在 viewer 右下角) =====
+   - 水平一排: 缩小 | 比例 (主色突出, 独立) | 放大
+   - 按钮组去 border, 用泛化柔和阴影 (多层, 远近叠加) 替代硬边框
+   - hover/active 反馈: 背景色 + scale 变化
+   - 主题色: 用 vscode theme CSS 变量 + 兜底色, 暗/亮主题自适应 */
+.ab-pdf__zoom {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;  /* 高于 toc, 不被遮挡 */
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--editorWidget-background, var(--vscode-editorWidget-background, #2d2d30));
+  /* 泛化阴影: 近距 ambient + 中距扩散 + 远距 glow, 替代硬边 border */
+  border-radius: 10px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.06),
+    0 4px 12px rgba(0, 0, 0, 0.12),
+    0 16px 40px rgba(0, 0, 0, 0.20),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.ab-pdf__zoom-btn {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  color: var(--editor-foreground, var(--vscode-editor-foreground, #e5e7eb));
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, transform 0.12s ease, color 0.12s ease;
+}
+.ab-pdf__zoom-btn:hover:not(:disabled) {
+  background: var(--button-hoverBackground, var(--vscode-button-hoverBackground, rgba(255, 255, 255, 0.1)));
+  transform: scale(1.05);
+}
+.ab-pdf__zoom-btn:active:not(:disabled) {
+  background: var(--button-activeBackground, var(--vscode-button-activeBackground, rgba(255, 255, 255, 0.18)));
+  transform: scale(0.94);
+}
+.ab-pdf__zoom-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+/* 比例按钮: 独立显示, 主题色 (蓝) 突出, 稍宽, 左右分割线 */
+.ab-pdf__zoom-btn--current {
+  width: 42px;
+  height: 24px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--textLink-foreground, var(--vscode-textLink-foreground, #3794ff));
+  position: relative;
+  margin: 0 2px;
+}
+.ab-pdf__zoom-btn--current::before,
+.ab-pdf__zoom-btn--current::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+  height: 60%;
+  background: var(--panel-border, var(--vscode-panel-border, rgba(128,128,128,0.2)));
+}
+.ab-pdf__zoom-btn--current::before { left: -2px; }
+.ab-pdf__zoom-btn--current::after { right: -2px; }
+.ab-pdf__zoom-btn--current:hover:not(:disabled) {
+  background: var(--textLink-foreground, var(--vscode-textLink-foreground, #3794ff));
+  color: var(--editor-background, var(--vscode-editor-background, #1e1e1e));
+  transform: scale(1.05);
+}
+.ab-pdf__zoom-btn--current:hover:not(:disabled)::before,
+.ab-pdf__zoom-btn--current:hover:not(:disabled)::after {
+  background: transparent;
+}
 /* ab-pdf__toolbar / __btn / __pageno / __pagenoInput 已按需求去掉 */
 `;
