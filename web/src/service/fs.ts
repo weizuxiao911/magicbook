@@ -306,6 +306,7 @@ const TYPE_MAP: Record<string, FileChangeType> = {
 
 let watcherPtyId: string | null = null;
 let watcherWs: WebSocket | null = null;
+let watcherSdk: ReturnType<typeof createOpencodeClient> | null = null;
 let watcherRetryCount = 0;
 let watcherStopped = false;
 let watcherCwd = '';
@@ -515,6 +516,7 @@ export async function startFsWatcher(cwd: string): Promise<void> {
       return;
     }
     console.log('[watcher] pty created, id=', watcherPtyId);
+    watcherSdk = sdk;
 
     const wsBase = secureUrl(base).replace(/^http/, 'ws');
     const socket = new WebSocket(`${wsBase}/pty/${watcherPtyId}/connect?directory=${encodeURIComponent(cwd)}`);
@@ -552,7 +554,8 @@ export async function startFsWatcher(cwd: string): Promise<void> {
     };
     socket.onclose = (ev) => {
       console.log('[watcher] ws close', ev?.code);
-      if (!watcherStopped) scheduleWatcherRetry();
+      // 正常关闭 (1000/1005) = 主动停或被杀 → 不重连; 异常断开 (1006) → 重试
+      if (!watcherStopped && ev?.code !== 1000 && ev?.code !== 1005) scheduleWatcherRetry();
     };
     socket.onerror = (e) => {
       console.warn('[watcher] ws error', e);
@@ -573,7 +576,14 @@ export function stopFsWatcher(): void {
     try { watcherWs.close(); } catch { /* */ }
     watcherWs = null;
   }
+  // 杀 server 端 watcher pty (只关 ws 不杀 → 僵尸 pty 堆积, 页面 reload 累积十几个)
+  const ptyId = watcherPtyId;
+  const sdk = watcherSdk;
   watcherPtyId = null;
+  watcherSdk = null;
+  if (ptyId && sdk) {
+    void sdk.pty.remove({ ptyID: ptyId }).catch(() => {});
+  }
   console.log('[watcher] stopped, cwd was=', watcherCwd);
   watcherCwd = '';
 }
@@ -621,19 +631,24 @@ export class FileSystemServiceImpl implements IFileSystem {
   onStart(): void {
     (window as any).__APP_FS__ = this;
     console.log('[filesystem] service ready, baseUrl:', appBaseUrl() || '(unset)');
+    // 页面卸载: 停 watcher + 杀 server 端 pty (防 reload 后僵尸 watcher 堆积)
+    window.addEventListener('pagehide', () => stopFsWatcher());
+    window.addEventListener('beforeunload', () => stopFsWatcher());
     // 把 fireFilesChange 注入到 watcher 模块 (避免循环 import)
     bindWatcherFireFilesChange((changes) => this.fileService.fireFilesChange({ changes }));
-    window.addEventListener('runtime-ready', () => {
+    const onReady = () => {
       this.connectEvents();
       void this.startWatcher();
       void this.verifyOpensumiLink();
       void this.refreshExplorer();
       this.watchEditorState();
       this.restoreOpenedEditors();
-    });
+    };
+    // 单次启动: runtime-ready 事件或 baseUrl 就绪, 二选一 (都调会 stop→start 双启 watcher)
     if (appBaseUrl()) {
-      this.connectEvents();
-      void this.startWatcher();
+      onReady();
+    } else {
+      window.addEventListener('runtime-ready', onReady);
     }
   }
 
