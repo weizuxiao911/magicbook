@@ -563,11 +563,15 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     };
   }, [hostPath]);
 
-  // ---------- sidecar 变化 (保存/删除/外部同步) → 重建当前页 ----------
-  // rebuildViewer 只在 size 变化触发, 不全 rebuild. sidecar 变化只重建当前页 (用户拍板).
+  // ---------- sidecar 变化 (保存/删除/外部同步) → 重建对应页 ----------
+  // rebuildViewer 只在 size 变化触发, 不全 rebuild. 保存/删除时记目标页, 这里重建它.
+  // 外部修改 (fs:changed) 不记页 → 重建当前页兜底.
+  const pendingRebuildPageRef = useRef<number | null>(null);
   useEffect(() => {
     if (!sidecarTick || !numPages) return;
-    const page = currentPageRef.current;
+    const target = pendingRebuildPageRef.current;
+    pendingRebuildPageRef.current = null;
+    const page = target && target >= 1 && target <= numPages ? target : currentPageRef.current;
     if (page < 1 || page > numPages) return;
     void rebuildSinglePage(page);
   }, [sidecarTick, numPages, rebuildSinglePage]);
@@ -745,7 +749,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     const m = sidecarAnnotsRef.current;
     if (!m.has(annot.page)) m.set(annot.page, []);
     m.get(annot.page)!.push(annot);
-    // 3. 触发 rebuild (新标注立刻显示)
+    // 3. 触发 rebuild (重建标注所在页, 而非当前页 — 修复跨页新增不显示)
+    pendingRebuildPageRef.current = annot.page;
     setSidecarTick((t) => t + 1);
     setDirty(false);
     // 4. 关闭 popover + 移除选择矩形蒙层
@@ -767,18 +772,21 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   const handleDeleteAnnot = useCallback((id: string) => {
     // 1. 从 ref 移除
     const m = sidecarAnnotsRef.current;
+    let removedPage: number | null = null;
     for (const [page, arr] of m) {
       const idx = arr.findIndex((a) => a.id === id);
       if (idx >= 0) {
         arr.splice(idx, 1);
         if (arr.length === 0) m.delete(page);
+        removedPage = page;
       }
     }
     // 2. 写盘 (read-merge-write 过滤被删 id)
     if (sidecarWriterRef.current) {
       sidecarWriterRef.current.pushDelete(id);
     }
-    // 3. 触发 rebuild
+    // 3. 触发 rebuild (重建被删标注所在页)
+    if (removedPage !== null) pendingRebuildPageRef.current = removedPage;
     setSidecarTick((t) => t + 1);
   }, []);
 
