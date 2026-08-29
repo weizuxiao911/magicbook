@@ -262,7 +262,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
           const sp = sidecarPathFromResource(resource);
           sidecarPathRef.current = sp;
           if (sp) {
-            const file = await readSidecar(sp);
+            const file = await readSidecar(sp, fileService);
             if (cancelled) return;
             // 按 page 索引填 ref
             const m = new Map<number, SidecarAnnot[]>();
@@ -271,7 +271,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
               m.get(a.page)!.push(a);
             }
             sidecarAnnotsRef.current = m;
-            sidecarWriterRef.current = new SidecarWriter(sp, (err) => {
+            sidecarWriterRef.current = new SidecarWriter(sp, fileService, (err) => {
               setDirty(true);
               notification.error({ message: `标注保存失败: ${err.message}`, type: 'error', duration: 5 });
             });
@@ -596,7 +596,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       }
       // 外部修改: 读最新 → 合并到 ref → 触发重建
       try {
-        const file = await readSidecar(sp);
+        const file = await readSidecar(sp, fileService);
         const m = new Map<number, SidecarAnnot[]>();
         for (const a of file.items) {
           if (!m.has(a.page)) m.set(a.page, []);
