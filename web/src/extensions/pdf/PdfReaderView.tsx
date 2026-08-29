@@ -426,24 +426,30 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         });
       } else if (opts.withDelete) {
         const delBtn = document.createElement('span');
+        // prompt 行为: 标注框内右下角按钮, hover 时显示, 离开隐藏
+        let promptBtn: HTMLButtonElement | null = null;
+        const behavior0 = meta.raw?.behavior;
+        if (behavior0?.type === 'prompt' && behavior0.text) {
+          promptBtn = createPromptSendBtn(behavior0.text);
+          el.appendChild(promptBtn);
+        }
         el.addEventListener('mouseenter', () => {
           el.style.background = `rgba(${r},${g},${b},0.18)`;
           el.style.boxShadow = `0 0 0 1.5px rgba(${r},${g},${b},0.5)`;
           if (delBtn) delBtn.style.opacity = '1';
-          // 行为悬停: comment → 只显示批注内容 (无标题); prompt → 显示"发送给AI"按钮
+          // 行为悬停: comment → 只显示批注内容 (无标题); prompt → 显示发送按钮
           const behavior = meta.raw?.behavior;
           if (behavior?.type === 'comment' && behavior.text) {
             showAnnotTip(el, { ...meta, preview: behavior.text, title: '' }, true);
-          } else if (behavior?.type === 'prompt' && behavior.text) {
-            showPromptSendBtn(el, behavior.text);
           }
+          if (promptBtn) promptBtn.style.display = 'block';
         });
         el.addEventListener('mouseleave', () => {
           el.style.background = `rgba(${r},${g},${b},0.08)`;
           el.style.boxShadow = 'none';
           if (delBtn) delBtn.style.opacity = '0';
+          if (promptBtn) promptBtn.style.display = 'none';
           hideAnnotTip();
-          hidePromptSendBtn();
         });
         // 双击 → 编辑标注 (从 ref 反查完整 annot)
         el.addEventListener('dblclick', (ev) => {
@@ -1209,29 +1215,23 @@ function hideAnnotTip() {
 }
 
 /* ========== 提示词"发送给AI"按钮 (悬停显示在标注右下角) ========== */
-/** 在标注元素右下角显示"发送给AI"按钮 (按钮是标注的子元素, 随标注定位) */
-function showPromptSendBtn(anchor: HTMLElement, promptText: string) {
-  // 复用或新建按钮 (挂在标注元素上, 右下角)
-  let btn = anchor.querySelector<HTMLButtonElement>('.ab-pdf-prompt-send');
-  if (!btn) {
-    btn = document.createElement('button');
-    btn.className = 'ab-pdf-prompt-send';
-    btn.textContent = '发送给 AI';
-    btn.style.cssText = `
-      position: absolute; right: -30px; bottom: -26px; z-index: 5;
-      font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
-      color: #fff; background: #3794ff; border: none; border-radius: 6px;
-      padding: 6px 10px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-      pointer-events: auto; white-space: nowrap;
-    `;
-    const b = btn;
-    b.addEventListener('mouseenter', () => { b.style.filter = 'brightness(1.1)'; });
-    b.addEventListener('mouseleave', () => { b.style.filter = 'none'; });
-    anchor.appendChild(b);
-  }
-  const sendBtn = btn;
-  // 每次悬停更新点击行为 (发当前标注的提示词)
-  sendBtn.onclick = (ev) => {
+/* ========== 提示词"发送给AI"按钮 (标注框内右下角, hover 显示) ========== */
+/** 创建内嵌"发送给AI"按钮 (标注元素子元素, absolute 右下角).
+ *  显示由 hover 控制: renderAnnotsForPage 里初始 display:none, hover 显示, 离开隐藏. */
+function createPromptSendBtn(promptText: string): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.className = 'ab-pdf-prompt-send';
+  btn.textContent = '发送给 AI';
+  btn.style.cssText = `
+    position: absolute; right: 4px; bottom: 4px; z-index: 5; display: none;
+    font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
+    color: #fff; background: #3794ff; border: none; border-radius: 6px;
+    padding: 6px 10px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    pointer-events: auto; white-space: nowrap;
+  `;
+  btn.addEventListener('mouseenter', () => { btn.style.filter = 'brightness(1.1)'; });
+  btn.addEventListener('mouseleave', () => { btn.style.filter = 'none'; });
+  btn.onclick = (ev) => {
     ev.stopPropagation();
     ev.preventDefault();
     const api = getChatPanelApi();
@@ -1242,13 +1242,7 @@ function showPromptSendBtn(anchor: HTMLElement, promptText: string) {
       console.warn('[pdf] chat api not ready');
     }
   };
-  sendBtn.style.display = 'block';
-}
-
-function hidePromptSendBtn() {
-  document.querySelectorAll('.ab-pdf-prompt-send').forEach((b) => {
-    (b as HTMLElement).style.display = 'none';
-  });
+  return btn;
 }
 
 const STYLES = `
