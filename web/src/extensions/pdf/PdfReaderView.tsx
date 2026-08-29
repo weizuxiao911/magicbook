@@ -395,9 +395,12 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       const div = document.createElement('div');
       div.className = 'ab-pdf-page';
       div.dataset['page'] = String(i);
-      // 固定 div 宽高, 水平居中. 后续 canvas 100% 填充. div 高度稳定 → 不触发 reflow
-      // → scrollTop 稳定, 滚动时加载数据不会"打乱"滚动位置.
-      div.style.cssText = `width:${pageW}px;height:${pageH}px;margin:0 auto ${pageGap}px;`;
+      // 高度 = #opensumi-editor 视觉窗口高度 (user 期望), 宽度按 aspect-ratio 自动算.
+      // canvas 100%×100% 填充 div, 保持 PDF 比例. 初始 opacity:0 防 reflow,
+      // p.render 完设 opacity:1, 滚动不被打乱.
+      const edEl = document.getElementById('opensumi-editor');
+      const viewH = Math.max((edEl?.clientHeight ?? viewer.clientHeight) || 1, 1);
+      div.style.cssText = `width:auto;height:${viewH}px;aspect-ratio:${pb.width}/${pb.height};margin:0 auto ${pageGap}px;`;
       viewer.appendChild(div);
       pageElsRef.current.set(i, div);
 
@@ -490,12 +493,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       }
     }
 
-    renderedRef.current = new Set(Array.from({ length: numPages }, (_, k) => k + 1));
-    syncPageDisplay(currentPage);
-    if (viewer.scrollHeight > prevScrollTop) viewer.scrollTop = prevScrollTop;
-    // 注意: 依赖不含 currentPage / rebuildViewer — 滚动同步 currentPage 只影响显示,
-    // 不应触发重建 (重建会 reset scrollTop → 反向影响 PDF 滚动位置).
-    // 不含 rebuildViewer 是因为它在下面的 useCallback 定义, effect 求值依赖时 TDZ 报错.
+    // rebuild 时不渲染任何页 (懒加载, IO 进入视口才画)
+    // renderedRef 保持空, IO 触发 renderPage 后填入
   }, [numPages, rebuildTick, syncPageDisplay]);
 
   // ---------- 滚动同步当前页码 ----------
@@ -519,6 +518,31 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     viewer.addEventListener('scroll', onScroll);
     return () => viewer.removeEventListener('scroll', onScroll);
   }, [numPages, syncPageDisplay]);
+
+  // ---------- 懒渲染: IntersectionObserver 监听 page div 进入视口 → renderPage(i) ----------
+  // rebuild 时只创建 div + canvas 占位 (opacity:0), 不调 p.render. IO 进入视口才画.
+  // rootMargin 0px 50% 50% 0px: 上下半屏内即触发(提前半屏预渲染, 滚动不空白).
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || numPages === 0) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const i = Number((entry.target as HTMLElement).dataset['page']);
+          if (i >= 1 && i <= numPages) void renderPage(i);
+        }
+      },
+      { root: viewer, rootMargin: '0px 0px 50% 0px' }
+    );
+    for (const [, el] of pageElsRef.current) {
+      io.observe(el);
+    }
+    return () => {
+      io.disconnect();
+    };
+    // 依赖 numPages 即可 (rebuild 时 div 已建, IO 需 observe 它们)
+  }, [numPages, renderPage]);
 
   // ---------- 初始加载 (一次性渲染, 不懒加载, 滚动不会空白) ----------
   useEffect(() => {
