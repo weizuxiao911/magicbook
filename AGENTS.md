@@ -66,6 +66,38 @@
 > **典型反模式** (已发生):
 > - 改完代码**直接** `git push` 没问 (用户纠偏: 流程铁律)
 
+### **分层架构铁律** (2026-08-29 加, 记到骨子里)
+
+> **所有拓展文件系统操作必须通过 codeblitz 的文件系统和 opencode 访问服务器端, 不得直连 service.**
+>
+> 分层 (单向, 外层调内层, 内层不调外层):
+>
+> ```
+> 外部  →  service  →  commands  →  codeblitz  →  extensions
+> ```
+>
+> 适用范围:
+> - extensions (`web/src/extensions/*`) 读写文件: 必须走 codeblitz (`@opensumi/ide-file-service` 的 `IFileServiceClient`) → opencode server fs API
+> - **严禁** extensions 直接调用 service 层的 `__APP_FS__` (FsPty 单例) / `service/fs.ts` 的任何方法
+> - service 层 (`web/src/service/*`) 是被 commands / codeblitz / 其他 service 调用的基础设施, 不暴露给 extensions 直调
+> - commands 层 (`web/src/commands/*`) 定义对外 API / token / interface, 是 service 与 codeblitz 之间的契约
+>
+> 原因 (用户已发生反模式, 记入档案):
+> - extensions 直连 service 的 FsPty 走 ws 长连接 + PTY 协议, 易崩 (标 2 个 PDF 标注就把 FsPty 搞崩)
+> - explorer / 其他 editor 走 codeblitz IFileServiceClient (HTTP, 无长连接) 不会崩, 路径不一致导致 fs 行为分裂
+> - 直连破坏分层, 业务代码绕过 commands 接口, 后续重构/测试/扩展都难
+>
+> **典型反模式** (已发生):
+> - PDF 标注 sidecar 读写走 `service/fs.ts` 的 `__APP_FS__.read/write` (FsPty), 标 2 个就触发 FsPty 异常, 业务请求卡死
+> - PDF 读 PDF binary 走对了 `fileService.readFile()` (IFileServiceClient), 写 sidecar 走错路, 同一文件两种文件 I/O 路径
+>
+> **正确做法**:
+> - extensions 写文件: `useInjectable(IFileServiceClient)` → `getFileStat` → `setContent` / `createFile`
+> - extensions 读文件: `fileService.readFile(uri)`
+> - extensions 需要 service 层能力 (e.g. 跨服务调用): 通过 commands 层暴露的 token / interface 拿
+> - service 层不依赖任何 extension 内部组件, 反之亦然
+> - 后续重构 sidecar: 切到 IFileServiceClient, 跟 explorer / editor 走同一条路
+
 ## 当前状态
 
 | 端 | 目录 | 职责 |
