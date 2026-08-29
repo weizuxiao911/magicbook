@@ -138,11 +138,10 @@ export const runtimeConfig: IAppRendererProps['runtimeConfig'] = {
             },
             // 读文件: 返回 Uint8Array (service.read 对齐 vscode API)
             readFile: async (p) => getFileSystemService().read(workspaceRel(p)),
-            // stat: service.meta → FileStat (size; 无 stat 时 DynamicRequest 读文件回填)
-            stat: async (p) => {
-              const meta = await getFileSystemService().meta(workspaceRel(p));
-              return { size: meta.size };
-            },
+            // 不提供 stat: DynamicRequest 官方设计 (stat 可选, 缺省 size=-1, open 读文件时自动回填真实 buffer 长度).
+            // 提供 stat 会与 readFile 产生 size 不一致: stat 走 FsPty (磁盘真实字节, 含末尾换行),
+            // readFile 走 SDK (文本内容 strip 末尾换行) → 差 1 字节 → PreloadFile 校验 EINVAL
+            //   (实测 index.html 磁盘 23465 = "</html>\n", SDK 读回 23464)
           },
         },
         // 写侧: WriteSyncFS (InMemory + 写同步服务器) — 所有写操作 fs 层自动同步, 无需事件钩子
