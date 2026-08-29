@@ -119,8 +119,11 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   const renderedRef = useRef<Set<number>>(new Set());
   /** 正在渲染中的 page idx 集合 (防并发) */
   const inFlightRef = useRef<Set<number>>(new Set());
-  /** fitScale (所有页共用) */
+  /** fitScale = 基准 fit (viewer 宽 / page 宽) * userScale. 所有页共用. */
   const fitScaleRef = useRef<number>(1);
+  /** 用户缩放档位: 0=缩(0.7), 1=基准(1.0), 2=放(1.4) */
+  const [userScaleIdx, setUserScaleIdx] = useState(1);
+  const USER_SCALES = [0.7, 1.0, 1.4];
   /** page 原始尺寸 */
   const pageBaseRef = useRef<{ width: number; height: number } | null>(null);
   /** 每页占位 div 引用 */
@@ -166,12 +169,11 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     inFlightRef.current.add(pageIdx);
     try {
       const page = await pdf.getPage(pageIdx);
-      // 每页自己的 fitScale: 宽度适配 div 实际宽度 (div width:100% = viewer 内容宽)
+      // 用 rebuildViewer 算好的 fitScaleRef (已含 userScale), 跟其他页保持一致.
+      // 不再自己根据 pageEl.clientWidth 算 (那个是占位 div 的 fit, 不含 userScale).
       const pb = page.getViewport({ scale: 1 });
-      const containerW = Math.max(pageEl.clientWidth, 60);
-      const fitScale = containerW / pb.width;
       const dpr = window.devicePixelRatio || 1;
-      const renderScale = fitScale * dpr;
+      const renderScale = fitScaleRef.current * dpr;
       const viewport = page.getViewport({ scale: renderScale });
 
       const canvas = document.createElement('canvas');
@@ -368,12 +370,14 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     const pdf = pdfDocRef.current;
     if (!pdf) return;
 
-    // 算 fitScale (用第 1 页原生尺寸)
+    // 算 fitScale (基准 fit × userScale). 基准 = viewer 宽 / 第 1 页原宽.
+    // userScale 是用户缩放档位 [0.7, 1.0, 1.4], rebuild 时用最新值.
     const firstPage = await pdf.getPage(1);
     const base = firstPage.getViewport({ scale: 1 });
     pageBaseRef.current = { width: base.width, height: base.height };
     const containerW = Math.max(viewer.clientWidth, 60);
-    fitScaleRef.current = containerW / base.width;
+    const baseFit = containerW / base.width;
+    fitScaleRef.current = baseFit * USER_SCALES[userScaleIdx];
 
     // 清空, 建所有页 (占位 div + canvas + 标注热区)
     const prevScrollTop = viewer.scrollTop;
@@ -702,6 +706,28 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         {/* 折叠后的展开入口: viewer 左上角浮动按钮 */}
         {!tocOpen && !loading && !error && (
           <button className="ab-pdf__toc-open-btn" title="展开目录" onClick={() => setTocOpen(true)}>☰ 目录</button>
+        )}
+        {/* 缩放档位: 底部垂直排列 3 个浮动按钮 (-/100%/+), 切 fitScale */}
+        {!loading && !error && (
+          <div className="ab-pdf__zoom">
+            <button
+              className="ab-pdf__zoom-btn"
+              title="缩小"
+              disabled={userScaleIdx === 0}
+              onClick={() => { const next = Math.max(0, userScaleIdx - 1); setUserScaleIdx(next); setRebuildTick((t) => t + 1); }}
+            >−</button>
+            <button
+              className="ab-pdf__zoom-btn ab-pdf__zoom-btn--current"
+              title="还原 (基准大小)"
+              onClick={() => { setUserScaleIdx(1); setRebuildTick((t) => t + 1); }}
+            >{Math.round(USER_SCALES[userScaleIdx] * 100)}%</button>
+            <button
+              className="ab-pdf__zoom-btn"
+              title="放大"
+              disabled={userScaleIdx === USER_SCALES.length - 1}
+              onClick={() => { const next = Math.min(USER_SCALES.length - 1, userScaleIdx + 1); setUserScaleIdx(next); setRebuildTick((t) => t + 1); }}
+            >+</button>
+          </div>
         )}
       </div>
       <AnnotationActions />
