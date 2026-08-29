@@ -13,6 +13,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInjectable } from '@opensumi/ide-core-browser';
 import { IFileServiceClient } from '@opensumi/ide-file-service';
+import { notification } from '@opensumi/ide-components/lib/notification';
 
 // @ts-ignore — pdfjs-dist v4 ships ESM types, loose import
 import * as pdfjsLib from 'pdfjs-dist';
@@ -151,8 +152,6 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   const sidecarPathRef = useRef<string>('');
   /** sidecar 写盘器 (debounce + 自写去重). 初始化在 sidecarPath 算完之后. */
   const sidecarWriterRef = useRef<SidecarWriter | null>(null);
-  /** 写盘失败提示. */
-  const [writeError, setWriteError] = useState<string>('');
   /** 写盘未保存标记 (红点). */
   const [dirty, setDirty] = useState(false);
   /** popover 状态: null = 隐藏. */
@@ -273,8 +272,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
             }
             sidecarAnnotsRef.current = m;
             sidecarWriterRef.current = new SidecarWriter(sp, (err) => {
-              setWriteError(err.message);
               setDirty(true);
+              notification.error({ message: `标注保存失败: ${err.message}`, type: 'error', duration: 5 });
             });
             setSidecarTick((t) => t + 1);
           }
@@ -749,7 +748,6 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     // 3. 触发 rebuild (新标注立刻显示)
     setSidecarTick((t) => t + 1);
     setDirty(false);
-    setWriteError('');  // 清除旧失败提示 (新操作覆盖)
     // 4. 关闭 popover + 移除选择矩形蒙层
     setPopoverState(null);
     popoverOpenRef.current = false;
@@ -900,11 +898,6 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       </div>
       <AnnotationActions />
       <AnnotPopover state={popoverState} onSave={handlePopoverSave} onCancel={handlePopoverCancel} />
-      {writeError && (
-        <div className="ab-pdf__write-error" title={writeError}>
-          标注保存失败 {dirty ? '· 未保存' : ''}
-        </div>
-      )}
       {loading && (
         <div className="ab-pdf__loading">
           <div className="ab-pdf__loadingText">
