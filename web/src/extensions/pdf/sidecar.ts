@@ -66,7 +66,7 @@ export class SidecarWriter {
   private pending: SidecarAnnot[] = [];
   private deleteIds: string[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private lastWrittenHash: string = '';
+  private _lastWrittenHash: string = '';
   private retryCount: number = 0;
   private onError: (err: Error) => void;
 
@@ -87,15 +87,6 @@ export class SidecarWriter {
     if (!this.deleteIds.includes(id)) this.deleteIds.push(id);
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => this.flush(), WRITE_DEBOUNCE_MS);
-  }
-
-  /** 立即 flush (用于关闭 tab / 立即保存). */
-  async flushNow(): Promise<void> {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
-    await this.flush();
   }
 
   /** 读最新文件 + 合并 pending + 过滤删除 + 写回. */
@@ -120,9 +111,9 @@ export class SidecarWriter {
       const file: SidecarAnnotFile = { version: 1, items: filtered };
       const json = JSON.stringify(file, null, 2);
       const hash = await contentHash(json);
-      if (hash === this.lastWrittenHash) return;
+      if (hash === this._lastWrittenHash) return;
       await fs.write(this.relPath, json);
-      this.lastWrittenHash = hash;
+      this._lastWrittenHash = hash;
       this.retryCount = 0;
     } catch (e: any) {
       console.error('[sidecar] write failed (attempt ' + (this.retryCount + 1) + '):', e?.message || e);
@@ -144,9 +135,9 @@ export class SidecarWriter {
     }
   }
 
-  /** 更新 lastWrittenHash (监听 fs:changed 收到自写事件时调, 标记该 hash 是自己写的). */
-  markWrittenHash(hash: string) {
-    this.lastWrittenHash = hash;
+  /** 暴露 lastWrittenHash, 供外部 (PdfReaderView onFsChanged) 做自写去重. */
+  get lastWrittenHash(): string {
+    return this._lastWrittenHash;
   }
 
   get path() {

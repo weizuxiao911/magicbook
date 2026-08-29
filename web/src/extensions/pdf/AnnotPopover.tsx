@@ -153,7 +153,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
           取消
         </button>
         <button type="button" className="ab-annot-popover__btn ab-annot-popover__btn--save" onClick={handleSave}>
-           保存
+          保存
         </button>
       </div>
     </div>,

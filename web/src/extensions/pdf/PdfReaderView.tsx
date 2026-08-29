@@ -1,13 +1,11 @@
 /**
  * PdfReaderView — animbook PDF 阅读器
  *
- * 模式 (滚动位置与页面一致 + 懒加载):
- *   1. 加载 PDF 后: 算出 fitScale, 为所有页创建占位 div (高度 = 页高×fitScale + margin)
- *      → 滚动条完整, 滚动位置天然对应页面位置, 不需要手动翻页
- *   2. IntersectionObserver 监听占位 div: 进入视口 → 渲染该页 canvas (+ 标注层)
- *   3. 已渲染的页不重复渲染 (缓存标记)
- *   4. 滚动到哪页, 哪页自动加载显示, 位置一致
- *   5. 键盘/页码输入仍可跳转 (scrollIntoView)
+ * 模式 (全量重建 + 单页按需):
+ *   1. 加载 PDF 后: rebuildViewer 全量创建所有页 div + canvas (canvas 透明度 0→1 渐显).
+ *   2. 滚动条由 div 高度撑开, 滚动位置天然对应页面位置, 不需要手动翻页.
+ *   3. sidecar 标注变化 → rebuildSinglePage(当前页), 不全量 rebuild (100 页 PDF 无感知).
+ *   4. 键盘/页码输入跳转 (scrollIntoView).
  *
  * 读取走 FS API (__ANIMBOOK_FS_API__.readBinaryAbsolute).
  */
@@ -161,8 +159,6 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   const [popoverState, setPopoverState] = useState<PopoverState | null>(null);
   /** 文本选择监听是否启用 (避免其他 popover 打开时误触发). */
   const popoverOpenRef = useRef(false);
-  /** 文本选择 mouseup 防抖 timer. */
-  const selectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hostPath = useMemo(() => resolveHostPath(resource), [resource]);
 
@@ -192,132 +188,6 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     const el = pageInputRef.current;
     if (el) el.value = String(n);
   }, []);
-
-  /** 渲染单页: 在占位 div 里插入 canvas + 标注层 */
-  const renderPage = useCallback(async (pageIdx: number) => {
-    if (pageIdx < 1 || pageIdx > numPages) return;
-    if (renderedRef.current.has(pageIdx)) return;
-    if (inFlightRef.current.has(pageIdx)) return;
-    const pdf = pdfDocRef.current;
-    const pageEl = pageElsRef.current.get(pageIdx);
-    if (!pdf || !pageEl) return;
-
-    inFlightRef.current.add(pageIdx);
-    try {
-      const page = await pdf.getPage(pageIdx);
-      // 高度主导缩放: div 已是 rebuildViewer 设好的 viewH × aspectRatio 像素,
-      // 直接从 pageEl 拿 css 显示尺寸, renderScale = cssW/pb.width × dpr 让 canvas
-      // 内部像素 = (cssW*dpr, cssH*dpr), CSS 100% 缩放 1:1, PDF 文字不变形.
-      const pb = page.getViewport({ scale: 1 });
-      const dpr = window.devicePixelRatio || 1;
-      const cssW = pageEl.clientWidth;
-      const cssH = pageEl.clientHeight;
-      const renderScale = (cssW / pb.width) * dpr;
-      const viewport = page.getViewport({ scale: renderScale });
-
-      const canvas = document.createElement('canvas');
-      canvas.className = 'ab-pdf-canvas';
-      canvas.width = Math.floor(viewport.width);
-      canvas.height = Math.floor(viewport.height);
-      canvas.style.width = '100%';
-      canvas.style.height = '100%';
-      canvas.style.display = 'block';
-      pageEl.appendChild(canvas);
-
-      const ctx = canvas.getContext('2d');
-      if (ctx) await page.render({ canvasContext: ctx, viewport }).promise;
-
-      // 标注: 自定义渲染 (hover tip + 点击行为), 不用 pdf.js AnnotationLayer
-      try {
-        const annots = await page.getAnnotations();
-        if (annots && annots.length > 0) {
-          const metas = annots
-            .map((a: any) => toAnnotMeta(a, pageIdx))
-            // 只渲染有行为的热区 (纯信息标注无 action 不渲染, 避免旧标注干扰)
-            .filter((m: PdfAnnotMeta) => m.action && m.raw?.rect);
-
-          if (metas.length > 0) {
-            const overlay = document.createElement('div');
-            overlay.className = 'ab-pdf-annot-layer';
-            overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:hidden;';
-            pageEl.appendChild(overlay);
-
-            // 用 canvas 实际渲染比例换算: PDF 坐标 × renderScale = canvas 内部像素,
-            // ÷ (canvas.width / clientWidth) = CSS 像素 (精确对齐 canvas 内容)
-            const scaleX = canvas.width / canvas.clientWidth;
-            const scaleY = canvas.height / canvas.clientHeight;
-            const pageH = pb.height; // 当前页自己的高度 (y 翻转用)
-            for (const meta of metas) {
-              const rect = meta.raw.rect as [number, number, number, number];
-              if (!rect || rect.length < 4) continue;
-              const [x1, y1, x2, y2] = rect;
-              // PDF 坐标 (左下原点) → canvas 内部像素 (y 翻转) → CSS 像素
-              const px1 = x1 * renderScale / scaleX;
-              const py1 = (pageH - y1) * renderScale / scaleY;
-              const px2 = x2 * renderScale / scaleX;
-              const py2 = (pageH - y2) * renderScale / scaleY;
-              const left = Math.min(px1, px2);
-              const top = Math.min(py1, py2);
-              const w = Math.abs(px2 - px1);
-              const h = Math.abs(py2 - py1);
-
-              // 高亮 = 标注颜色 (annotation C 字段: pdf.js 返回 Uint8ClampedArray [r,g,b] 0-255)
-              const c: any = meta.raw?.color;
-              let r = 153, g = 153, b = 255;
-              if (c && c.length >= 3) {
-                r = Number(c[0]) || r;
-                g = Number(c[1]) || g;
-                b = Number(c[2]) || b;
-              }
-
-              const el = document.createElement('button');
-              el.className = 'ab-pdf-annot';
-              el.dataset['page'] = String(pageIdx);
-              el.dataset['annotId'] = meta.id;
-              el.dataset['r'] = String(r);
-              el.dataset['g'] = String(g);
-              el.dataset['b'] = String(b);
-              // 默认极淡 (几乎透明, 只提示位置), hover 时显示标注色高亮
-              // 像素定位: viewport 渲染坐标直接对应页面 div 显示尺寸
-              el.style.cssText = `position:absolute;left:${left}px;top:${top}px;width:${w}px;height:${h}px;pointer-events:auto;background:rgba(${r},${g},${b},0.08);border:1px dashed rgba(${r},${g},${b},0.25);`;
-              el.title = meta.preview || meta.title; // 原生 title 兜底
-
-              // hover: 显示标注色高亮 (JS 直接设色, 兼容性好)
-              el.addEventListener('mouseenter', () => {
-                el.style.background = `rgba(${r},${g},${b},0.35)`;
-                el.style.boxShadow = `0 0 0 2px rgba(${r},${g},${b},0.6)`;
-                showAnnotTip(el, meta);
-              });
-              el.addEventListener('mouseleave', () => {
-                el.style.background = 'transparent';
-                el.style.boxShadow = 'none';
-                hideAnnotTip();
-              });
-              el.addEventListener('click', (ev) => {
-                ev.stopPropagation();
-                hideAnnotTip();
-                if (meta.action) {
-                  void runAnnotAction(meta.action, annotHandlersRef.current);
-                }
-              });
-
-              overlay.appendChild(el);
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('[pdf] annotation overlay page', pageIdx, 'failed:', e);
-      }
-
-      renderedRef.current.add(pageIdx);
-    } catch (e) {
-      if ((e as any)?.name !== 'RenderingCancelledException') {
-        console.warn('[pdf] render page', pageIdx, 'failed:', e);
-      }
-    } finally {
-      inFlightRef.current.delete(pageIdx);
-    }
-  }, [numPages]);
 
   // ---------- 加载 PDF ----------
   useEffect(() => {
@@ -485,26 +355,6 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     if (myBuildId !== undefined && buildIdRef.current !== myBuildId) return;
     canvas.style.opacity = '1';
 
-    // text layer (备用, 当前用 Rect 选择)
-    try {
-      const textContent = await p.getTextContent();
-      if (myBuildId !== undefined && buildIdRef.current !== myBuildId) return;
-      const textLayerDiv = document.createElement('div');
-      textLayerDiv.className = 'textLayer';
-      textLayerDiv.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;overflow:hidden;opacity:0;transition:opacity 0.12s ease;line-height:1;pointer-events:none;user-select:text;-webkit-user-select:text;color:rgba(0,0,0,0.005);z-index:1;';
-      div.appendChild(textLayerDiv);
-      const cssViewport = p.getViewport({ scale: pageW / pb.width });
-      const TL = (pdfjsLib as any).TextLayer;
-      if (TL) {
-        const tl = new TL({ textContentSource: textContent, container: textLayerDiv, viewport: cssViewport });
-        await tl.render();
-        if (myBuildId !== undefined && buildIdRef.current !== myBuildId) return;
-        textLayerDiv.style.opacity = '1';
-      }
-    } catch (e) {
-      console.warn('[pdf] text layer page', pageIdx, 'failed:', e);
-    }
-
     // 标注 (内嵌 + sidecar)
     const embeddedMetas: PdfAnnotMeta[] = (await p.getAnnotations() || [])
       .map((a: any) => toAnnotMeta(a, pageIdx))
@@ -550,13 +400,6 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
 
       const el = document.createElement('button');
       el.className = 'ab-pdf-annot';
-      el.dataset['page'] = String(pageIdx);
-      el.dataset['annotId'] = meta.id;
-      el.dataset['sidecar'] = opts.withDelete ? '1' : '0';
-      el.dataset['origLeft'] = String(left * scaleX);
-      el.dataset['origTop'] = String(top * scaleY);
-      el.dataset['origW'] = String(w * scaleX);
-      el.dataset['origH'] = String(h * scaleY);
       el.style.cssText = `position:absolute;left:${left}px;top:${top}px;width:${w}px;height:${h}px;pointer-events:auto;background:rgba(${r},${g},${b},0.08);border:1px dashed rgba(${r},${g},${b},0.25);`;
       if (opts.withTip) el.title = meta.preview || meta.title;
       if (opts.withTip) {
@@ -681,31 +524,6 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     return () => viewer.removeEventListener('scroll', onScroll);
   }, [numPages, syncPageDisplay]);
 
-  // ---------- 懒渲染: IntersectionObserver 监听 page div 进入视口 → renderPage(i) ----------
-  // rebuild 时只创建 div + canvas 占位 (opacity:0), 不调 p.render. IO 进入视口才画.
-  // rootMargin 0px 50% 50% 0px: 上下半屏内即触发(提前半屏预渲染, 滚动不空白).
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer || numPages === 0) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          const i = Number((entry.target as HTMLElement).dataset['page']);
-          if (i >= 1 && i <= numPages) void renderPage(i);
-        }
-      },
-      { root: viewer, rootMargin: '0px 0px 50% 0px' }
-    );
-    for (const [, el] of pageElsRef.current) {
-      io.observe(el);
-    }
-    return () => {
-      io.disconnect();
-    };
-    // 依赖 numPages 即可 (rebuild 时 div 已建, IO 需 observe 它们)
-  }, [numPages, renderPage]);
-
   // ---------- 初始加载 (一次性渲染, 不懒加载, 滚动不会空白) ----------
   useEffect(() => {
     if (!numPages) return;
@@ -774,7 +592,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
           if (!bytes || bytes.byteLength === 0) return;
           const text = new TextDecoder().decode(bytes);
           const hash = await contentHash(text);
-          if (hash === (writer as any).lastWrittenHash) return;
+          if (hash === writer.lastWrittenHash) return;
         } catch { /* 读失败: 当成外部修改 */ }
       }
       // 外部修改: 读最新 → 合并到 ref → 触发重建
@@ -824,7 +642,6 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       const target = e.target as HTMLElement;
       if (target.closest('.ab-pdf-annot')) return;
       if (target.closest('.ab-annot-popover')) return;
-      if (target.closest('.ab-annot-mask')) return;
       const pageEl = target.closest('.ab-pdf-page') as HTMLElement | null;
       if (!pageEl) return;
       // 清理之前的旧矩形 (如果残留, 比如上次取消失败)
