@@ -6,18 +6,12 @@ export const WelcomeScreen: React.FC<{
 }> = ({ onPick }) => {
   const brand = getBrand();
   const suggestions: ChatSuggestion[] = getSuggestions().length
-    ? getSuggestions()
-    : [
-        { icon: '🚀', title: '帮我完成一个任务', desc: '告诉我目标，拆解并执行', prompt: '帮我完成一个任务' },
-        { icon: '🔍', title: '调研一个话题', desc: '检索资料并总结结论', prompt: '帮我调研一个话题，检索相关资料并给出结论' },
-        { icon: '✍️', title: '撰写一份文档', desc: '方案 / 报告 / 邮件 / 文案', prompt: '帮我撰写一份文档' },
-        { icon: '💡', title: '出个主意', desc: '头脑风暴与创意发散', prompt: '帮我出个主意，做一些头脑风暴与创意发散' },
-      ];
+    ? getSuggestions(): [];
   return (
     <div className="chat__welcome">
-      {brand && <div className="chat__welcome-logo">{brand.logoChar}</div>}
+      {brand && <div className="chat__welcome-logo">{brand.logo}</div>}
       {brand && <h1 className="chat__welcome-title">{formatBrand(brand.greeting, brand)}</h1>}
-      {brand && <p className="chat__welcome-sub">{brand.tagline}</p>}
+      {brand && <p className="chat__welcome-sub">{brand.subtitle}</p>}
 
       <div className="chat__welcome-suggest">
         {suggestions.map((s, i) => (

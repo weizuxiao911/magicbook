@@ -1391,7 +1391,7 @@ export const Chat: React.FC = () => {
 
       <header className="chat__topbar">
         <div className="chat__brand">
-          {getBrand() && <span className="chat__logo">{getBrand()!.logoChar}</span>}
+          {getBrand() && <span className="chat__logo">{getBrand()!.logo}</span>}
           <span className="chat__brand-name">{
             (() => {
               if (!ready) return 'AI 助手';

@@ -34,7 +34,7 @@ export const ActionsView: React.FC = () => {
   // 品牌/logo 从全局配置 (__APP_CONFIG__.chatConfig.brand) 读取, 不硬编码
   const brand = useMemo(() => {
     const cfg = (window as any).__APP_CONFIG__;
-    return cfg?.chatConfig?.brand || { name: 'AI 工作台', logoChar: '' };
+    return cfg?.chatConfig?.brand || { name: 'AI 工作台', logo: '' };
   }, []);
 
   // 当前工作目录 (read-only 显示, 切换入口在 chat 输入框底部)
@@ -239,8 +239,8 @@ export const ActionsView: React.FC = () => {
         }}
         title={cwd || '尚未选择工作目录'}
       >
-        {brand.logoChar ? (
-          <span style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }}>{brand.logoChar}</span>
+        {brand.logo ? (
+          <span style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }}>{brand.logo}</span>
         ) : (
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M5 6 L12 18 L19 6" />
