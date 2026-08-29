@@ -1,10 +1,11 @@
 /**
  * 运行时配置 — core/config/runtime.ts
  *
- * 文件系统 (读侧): DynamicRequest 对接 service/fs 单实例 → opencode.
- *   - explorer/编辑器读文件: BrowserFS DynamicRequest → readDirectory/readFile/stat 回调 → service/fs
- *   - 写侧: 不挂可写 BrowserFS backend, 由 onDidSaveTextDocument (写) / onDidDeleteFiles (删) 单推 opencode
- *   - 删除的 readdir 手动实现: DynamicRequest 内部会用 readDirectory 构建索引, 无需手写 readdir
+ * 文件系统: OverlayFS = DynamicRequest(读: 对接 service/fs → opencode) + InMemory(写: 本地暂存).
+ *   - explorer/编辑器读: DynamicRequest → readDirectory/readFile/stat 回调 → service/fs → opencode
+ *   - 编辑器保存: OverlayFS 写 InMemory (本地立即成功) → SavedEvent → onDidSaveTextDocument → service/fs 推服务器
+ *   - explorer 删除: onDidDeleteFiles → service/fs 删服务器
+ *   - baseContent 读自 overlay 本地层 → 保存前后内容一致 → 无 md5 对比误报
  */
 
 import { FileType } from '@codeblitzjs/ide-browserfs/lib/core/node_fs_stats';
@@ -21,22 +22,32 @@ function workspaceRel(path: string): string {
 export const runtimeConfig: IAppRendererProps['runtimeConfig'] = {
   workspace: {
     filesystem: {
-      fs: 'DynamicRequest',
+      fs: 'OverlayFS',
       options: {
-        // 列目录: BrowserFS 路径 → IDE 相对路径 → service.list → FileEntry [name, FileType]
-        readDirectory: async (p) => {
-          const entries = await getFileSystemService().list(workspaceRel(p));
-          return entries.map((e): [string, FileType] => [
-            e.name,
-            e.type === 'directory' ? FileType.DIRECTORY : FileType.FILE,
-          ]);
+        readable: {
+          fs: 'DynamicRequest',
+          options: {
+            // 列目录: BrowserFS 路径 → IDE 相对路径 → service.list → FileEntry [name, FileType]
+            readDirectory: async (p) => {
+              const entries = await getFileSystemService().list(workspaceRel(p));
+              return entries.map((e): [string, FileType] => [
+                e.name,
+                e.type === 'directory' ? FileType.DIRECTORY : FileType.FILE,
+              ]);
+            },
+            // 读文件: 返回 Uint8Array (service.read 对齐 vscode API)
+            readFile: async (p) => getFileSystemService().read(workspaceRel(p)),
+            // stat: service.meta → FileStat (size; 无 stat 时 DynamicRequest 读文件回填)
+            stat: async (p) => {
+              const meta = await getFileSystemService().meta(workspaceRel(p));
+              return { size: meta.size };
+            },
+          },
         },
-        // 读文件: 返回 Uint8Array (service.read 对齐 vscode API)
-        readFile: async (p) => getFileSystemService().read(workspaceRel(p)),
-        // stat: service.meta → FileStat (size; 无 stat 时 DynamicRequest 读文件回填)
-        stat: async (p) => {
-          const meta = await getFileSystemService().meta(workspaceRel(p));
-          return { size: meta.size };
+        // 写侧: InMemory 本地暂存, 保存立即成功; 由 onDidSaveTextDocument 单推服务器
+        writable: {
+          fs: 'InMemory',
+          options: {},
         },
       },
     },
