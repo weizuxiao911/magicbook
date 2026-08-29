@@ -386,18 +386,18 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     for (let i = 1; i <= numPages; i++) {
       const p = await pdf.getPage(i);
       const pb = p.getViewport({ scale: 1 });
-      // 每页独立 fitScale: 宽度适配容器, 高度按该页比例
+      // fit-to-content: div 用固定像素 (pb.width*fit × pb.height*fit), 不依赖 viewer 视口高,
+      // 滚动总高 = sum(pb.height*fit) 稳定, 不会因 viewer 高度变化 reflow 跳滚动位置.
       const fit = containerW / pb.width;
+      const pageW = pb.width * fit;
       const pageH = pb.height * fit;
 
       const div = document.createElement('div');
       div.className = 'ab-pdf-page';
       div.dataset['page'] = String(i);
-      // fit-to-height: canvas 高度 = viewer 可视高度 (已扣底部面板/顶部 bar 占用),
-      // 宽度按 PDF 原始宽高比 aspect-ratio 自动算. 不硬编码 100vh (会跟可视区不匹配
-      // 产生多余滚动/空白). canvas 100%×100% 自然保持比例.
-      const viewH = Math.max(viewer.clientHeight, 1);
-      div.style.cssText = `width:auto;height:${viewH}px;aspect-ratio:${pb.width}/${pb.height};margin:0 auto ${pageGap}px;`;
+      // 固定 div 宽高, 水平居中. 后续 canvas 100% 填充. div 高度稳定 → 不触发 reflow
+      // → scrollTop 稳定, 滚动时加载数据不会"打乱"滚动位置.
+      div.style.cssText = `width:${pageW}px;height:${pageH}px;margin:0 auto ${pageGap}px;`;
       viewer.appendChild(div);
       pageElsRef.current.set(i, div);
 
@@ -408,11 +408,15 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       canvas.className = 'ab-pdf-canvas';
       canvas.width = Math.floor(viewport.width);
       canvas.height = Math.floor(viewport.height);
-      canvas.style.cssText = 'width:100%;height:100%;display:block;';
+      // 初始 opacity:0 (占位但隐藏), 渲染完再 opacity:1. 配合 div 固定像素高度, 不触发
+      // reflow → scrollTop 不会因 canvas 异步渲染变化. transition 让出现平滑.
+      canvas.style.cssText = 'width:100%;height:100%;display:block;opacity:0;transition:opacity 0.12s ease;';
       div.appendChild(canvas);
 
       const ctx = canvas.getContext('2d');
       if (ctx) await p.render({ canvasContext: ctx, viewport }).promise;
+      // 渲染完显示 (同步 opacity, 不修改 width/height → 无 reflow)
+      canvas.style.opacity = '1';
 
       // 标注热区
       try {
