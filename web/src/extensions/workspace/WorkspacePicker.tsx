@@ -98,17 +98,15 @@ export const WorkspacePicker: React.FC = () => {
       setDirs(r.directories);
       setSelected(null); setActive(0);
     } catch (e: any) {
-      // stale APP_CWD 降级: 失败路径 === localStorage APP_CWD, 说明用户之前选的目录已失效
-      //   清掉 localStorage, 重试用 __APP_CONFIG__.cwd (hostCwd) 兜底. 不再 retry 一次
+      // APP_CWD stale 检测: 失败路径 === localStorage APP_CWD 时, 仅弹 toast 提示, 不静默清
+      // (避免 opencode 短暂不可用 / PTY 未就绪 / 网络 race 误判 stale 把用户已选工作目录重置)
+      // 用户拍板: 不要老是清掉我已选择的工作目录
       if (!isRetry) {
         const stored = (() => { try { return localStorage.getItem('APP_CWD') || ''; } catch { return ''; } })();
         if (stored && stored === dir) {
-          console.warn('[picker] APP_CWD stale, 降级到 hostCwd:', stored, '→', (window as any).__APP_CONFIG__?.cwd);
-          localStorage.removeItem('APP_CWD');
-          const fallback = (window as any).__APP_CONFIG__?.cwd || '/';
-          if (fallback && fallback !== dir) {
-            return doBrowse(fallback, true);
-          }
+          console.warn('[picker] APP_CWD browse 失败, 保留 localStorage:', dir, e?.message);
+          notifyError(`上次选择的工作目录 ${dir} 当前不可访问,稍后重试或手动重选`);
+          return;
         }
       }
       notifyError(e?.message || '读取失败');
@@ -136,18 +134,20 @@ export const WorkspacePicker: React.FC = () => {
       setTimeout(async () => {
         inputRef.current?.focus();
         // 初始路径: APP_CWD (用户选) 优先; 没设才走 __APP_CONFIG__.cwd (hostCwd)
-        // 打开前先校验 APP_CWD 是否存在, 失效 (e.g. 用户在 macOS 端删了目录) 就清掉 + 走 fallback
+        // 预校验: browseDir(stored) 失败时仅 console.warn, 不静默清 localStorage
+        //   (用户拍板: 不要老是清掉我已选择的工作目录)
+        //   失败 → doBrowse(stored) 再次触发, 在 doBrowse catch 内 toast 提示
         const stored = (() => { try { return localStorage.getItem('APP_CWD') || ''; } catch { return ''; } })();
         const fallback = (window as any).__APP_CONFIG__?.cwd || '';
-        let start = stored || fallback || '/';
+        const start = stored || fallback || '/';
         if (stored) {
           try {
             await browseDir(stored);
-            // stored 有效, 但 browseDir 仍消费掉了结果. 重置回 start=stored
-          } catch {
-            console.warn('[picker] APP_CWD stale, 降级到 hostCwd:', stored, '→', fallback);
-            try { localStorage.removeItem('APP_CWD'); } catch { /* */ }
-            start = fallback || '/';
+            // stored 有效, 保持 start=stored
+          } catch (e: any) {
+            console.warn('[picker] APP_CWD stored 暂不可访问, 保留 localStorage:', stored, e?.message);
+            // 让路径栏显示 stored, 即便后续 browse 失败, 用户能知道上次选的是啥
+            setCurrentPath(stored);
           }
         }
         doBrowse(start);
