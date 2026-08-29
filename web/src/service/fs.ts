@@ -106,51 +106,72 @@ const FS_PTY_WORKER = [
 ].join('');
 
 class FsPty {
+  /** 串行化: 上一个请求的 promise (一次只跑一个原子 pty 会话, 避免并发写同文件竞争) */
+  private queue: Promise<unknown> = Promise.resolve();
+
+  /** 原子 pty 会话: 创建 pty + 连 ws + 发 op(s) + 收响应, finally 关 ws + kill server 端 pty.
+   *  每次操作独立生命周期 → 无长连接失联/无心跳/无自愈, 天然干净. */
+  private async runSession<T>(
+    ops: Array<{ op: string; payload: Record<string, unknown>; timeoutMs?: number }>,
+  ): Promise<{ results: Array<{ ok: boolean; data: any }>; session: PtySession }> {
+    const session = new PtySession();
+    try {
+      await session.init();
+      const results: Array<{ ok: boolean; data: any }> = [];
+      for (const { op, payload, timeoutMs } of ops) {
+        results.push(await session.request(op, payload, timeoutMs));
+      }
+      return { results, session };
+    } finally {
+      void session.dispose();
+    }
+  }
+
+  /** 单 op 原子会话 */
+  async request<T = any>(op: string, payload: Record<string, unknown>, timeoutMs = 10000): Promise<{ ok: boolean; data: T }> {
+    const next = this.queue.then(async () => {
+      const { results } = await this.runSession([{ op, payload, timeoutMs }]);
+      return results[0] as { ok: boolean; data: T };
+    });
+    this.queue = next.catch(() => {});
+    return next;
+  }
+
+  /** 多 op 同会话 (write 分块: 首块 write + 后续 append 共用一个 pty, 保证原子) */
+  async batch<T = any>(
+    ops: Array<{ op: string; payload: Record<string, unknown>; timeoutMs?: number }>,
+    onEach?: (i: number, r: { ok: boolean; data: any }) => void,
+  ): Promise<Array<{ ok: boolean; data: T }>> {
+    const next = this.queue.then(async () => {
+      const { results, session } = await this.runSession(ops);
+      results.forEach((r, i) => onEach?.(i, r));
+      return results as Array<{ ok: boolean; data: T }>;
+    });
+    this.queue = next.catch(() => {});
+    return next;
+  }
+}
+
+/** 单个 pty 会话: create → ws → op(s) → close. 生命周期随一次操作, 用完即弃. */
+class PtySession {
   private ptyId: string | null = null;
   private ws: WebSocket | null = null;
-  /** SDK client (init 时设, dispose 时用 pty.remove 主动 kill server 端 pty) */
   private sdk: ReturnType<typeof createOpencodeClient> | null = null;
-  /** page unload 监听是否已注册 (防止重复) */
-  private unloadRegistered = false;
-  /** 串行化: 上一个请求的 promise */
-  private queue: Promise<unknown> = Promise.resolve();
   /** 等待中的请求 (id → resolve/reject/timer) */
   private pending = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   /** worker 响应行缓冲 (跨 ws 帧拼接 JSON 行) */
   private respBuf = '';
   private nextId = 1;
 
-  private initPromise: Promise<void> | null = null;
-
-  /** 懒初始化: create node worker pty + connect ws. 幂等. */
-  private async init(): Promise<void> {
-    if (this.initPromise) return this.initPromise;
-    this.initPromise = this.doInit();
-    return this.initPromise;
-  }
-
-  private async doInit(): Promise<void> {
+  /** 创建 node worker pty + connect ws */
+  async init(): Promise<void> {
     const base = appBaseUrl();
     if (!base) throw new Error('fs pty: app base url not ready');
     const cwd = effectiveCwd();
     if (!cwd) throw new Error('fs pty: no cwd (APP_CWD unset and hostCwd not yet probed)');
 
-    // 清理老 pty 资源 (page reload 后, server 端可能还有老 pty 跟新 client 失联,
-    //   老 pty 上的 op 没人收, 导致新 op 排队 32s timeout 触发)
-    //   主动 kill 老 pty + 清本地 ws / pending, 保证新 init 干净
-    if (this.ptyId && this.sdk) {
-      try { await this.sdk.pty.remove({ ptyID: this.ptyId }); }
-      catch { /* 忽略, server 可能已回收 */ }
-    }
-    if (this.ws) { try { this.ws.close(); } catch { /* */ } this.ws = null; }
-    this.ptyId = null;
-    this.pending.forEach((p) => { if (p.timer) clearTimeout(p.timer); p.reject(new Error('fs pty: reinit')); });
-    this.pending.clear();
-    this.respBuf = '';
-
     const sdk = createOpencodeClient({ baseUrl: base, headers: cwdHeader(), responseStyle: 'fields', throwOnError: true });
     this.sdk = sdk;
-    console.log('[fs-pty] init node worker, cwd=', cwd);
     const { data: createData, error: createErr } = await sdk.pty.create({ directory: cwd, command: 'node', args: ['-e', FS_PTY_WORKER], cwd });
     if (createErr || !createData) throw new Error(`fs pty: create worker failed: ${(createErr as any)?.message || 'no data'}`);
     this.ptyId = (createData as any).id;
@@ -174,34 +195,19 @@ class FsPty {
       this.pending.forEach((p) => { if (p.timer) clearTimeout(p.timer); p.reject(err); });
       this.pending.clear();
       this.ws = null;
-      this.ptyId = null;
-      this.initPromise = null;
     };
-
-    // page unload 监听: 关闭 ws + kill server 端 pty, 防老 pty 跟新 client 失联
-    if (!this.unloadRegistered && typeof window !== 'undefined') {
-      this.unloadRegistered = true;
-      const unloadHandler = () => { void this.dispose(); };
-      window.addEventListener('pagehide', unloadHandler);
-      window.addEventListener('beforeunload', unloadHandler);
-    }
   }
 
-  /** 主动清理: 关 ws + reject pending + 杀 server 端 pty. 幂等.
-   *  触发场景:
-   *    1. pagehide/beforeunload 监听 (防止老 pty 跟新 client 失联)
-   *    2. doInit 之前 (老 pty 资源清理)
-   *    3. cwd 切换 / 模块卸载 显式调用 */
-  private async dispose(): Promise<void> {
+  /** 主动清理: 关 ws + reject pending + kill server 端 pty. 幂等. */
+  async dispose(): Promise<void> {
     if (this.ptyId && this.sdk) {
       try { await this.sdk.pty.remove({ ptyID: this.ptyId }); }
       catch { /* server 可能已断, 忽略 */ }
     }
     this.ptyId = null;
     if (this.ws) { try { this.ws.close(); } catch { /* */ } this.ws = null; }
-    this.pending.forEach((p) => { if (p.timer) clearTimeout(p.timer); p.reject(new Error('fs pty: dispose')); });
+    this.pending.forEach((p) => { if (p.timer) clearTimeout(p.timer); p.reject(new Error('fs pty: session disposed')); });
     this.pending.clear();
-    this.initPromise = null;
   }
 
   /** 处理一段 ws 数据: 剥离控制帧 → 按 \n 切 JSON 响应行 → dispatch */
@@ -252,69 +258,20 @@ class FsPty {
     }
   }
 
-  /** 执行一个 node fs 操作 (串行化 promise chain).
-   *  自愈: 超时 (PTY 卡住) 时清 self 状态, 下次 init 重建 PTY, 业务 retry 透明恢复. */
-  async request<T = any>(op: string, payload: Record<string, unknown>, timeoutMs = 10000): Promise<{ ok: boolean; data: T }> {
-    const next = this.queue.then(async () => {
-      await this.init();
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('fs pty: not initialized');
-      const id = String(this.nextId++);
-      const line = JSON.stringify({ id, op, ...payload });
-      const p = new Promise<{ ok: boolean; data: T }>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.pending.delete(id);
-          // 自愈: 超时 = PTY 卡住, 清 self 状态让下次 request 重建 PTY.
-          this.initPromise = null;
-          if (this.ws) {
-            try { this.ws.close(); } catch { /* */ }
-            this.ws = null;
-          }
-          this.ptyId = null;
-          reject(new Error(`fs pty op timeout (${timeoutMs}ms): ${op}`));
-        }, timeoutMs);
-        this.pending.set(id, { resolve: resolve as any, reject, timer });
-      });
-      this.ws.send(`${line}\n`);
-      return await p;
-    }) as Promise<{ ok: boolean; data: T }>;
-    this.queue = next;
-    return next;
-  }
-
-  /** 强制销毁: 关 ws + 清 pending + 杀 server 端 pty. 下次 init() 重建.
-   *  用于 cwd 切换 / PTY 异常卡住 (写盘 timeout) 后让下次请求重新走新 PTY.
-   *  dispose 是 async (要 await sdk.pty.remove), reset 是 sync void 包一层 fire-and-forget. */
-  reset(): void {
-    void this.dispose();
-  }
-
-  /** 心跳: 每 5s ping 一次, 连续失败 2 次 (10s 内无响应) → 强制 reset.
-   *  PTY 卡住时即使 request 自愈也未必能重建 (queue 里有挂死 promise), 心跳主动 reset 兜底.
-   *  worker 必须支持 'ping' op (立即返 {pong:true}). */
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private heartbeatFailCount = 0;
-  startHeartbeat(): void {
-    if (this.heartbeatTimer) return;
-    this.heartbeatTimer = setInterval(async () => {
-      try {
-        await this.request('ping', {}, 3000);
-        this.heartbeatFailCount = 0;
-      } catch (e) {
-        this.heartbeatFailCount++;
-        if (this.heartbeatFailCount >= 2) {
-          // 连续 2 次失败 (~10s 无响应) → 强制 reset, 下次 ping 走新 PTY
-          console.warn('[fs-pty] heartbeat failed x2, forcing reset');
-          this.reset();
-          this.heartbeatFailCount = 0;
-        }
-      }
-    }, 5000);
-  }
-  stopHeartbeat(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
+  /** 发一个 op 并等响应 (同会话内 id 递增, 串行) */
+  request<T = any>(op: string, payload: Record<string, unknown>, timeoutMs = 10000): Promise<{ ok: boolean; data: T }> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('fs pty: not initialized');
+    const id = String(this.nextId++);
+    const line = JSON.stringify({ id, op, ...payload });
+    const p = new Promise<{ ok: boolean; data: T }>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`fs pty op timeout (${timeoutMs}ms): ${op}`));
+      }, timeoutMs);
+      this.pending.set(id, { resolve: resolve as any, reject, timer });
+    });
+    this.ws.send(`${line}\n`);
+    return p;
   }
 }
 
@@ -322,18 +279,12 @@ let _fsPty: FsPty | null = null;
 function getFsPty(): FsPty {
   if (!_fsPty) {
     _fsPty = new FsPty();
-    _fsPty.startHeartbeat();
   }
   return _fsPty;
 }
-/** 强制销毁当前 FsPty 单例. 下次 getFsPty() 重建.
- *  用于 cwd 切换 / PTY 卡住后自动恢复. */
+/** 强制销毁当前 FsPty 单例. 下次 getFsPty() 重建. */
 export function resetFsPty(): void {
-  if (_fsPty) {
-    _fsPty.stopHeartbeat();
-    _fsPty.reset();
-    _fsPty = null;
-  }
+  _fsPty = null;
 }
 
 // ---- FsWatcher (合并自 service/watcher.ts) ----
@@ -986,6 +937,7 @@ export class FileSystemServiceImpl implements IFileSystem {
   /**
    * 写文件: base64 内容通过 FsPty node worker 'write'/'append' 写到绝对路径 (node fs API, 无 shell).
    *   大文件分块: 每块 ≤ CHUNK_BYTES base64, 首块 'write' (truncate) 后续 'append'.
+   *   原子性: 所有块在同一个 pty 会话内完成 (batch), 创建1次 pty → 发完所有块 → 关闭.
    *   父目录: worker 内自动 mkdir -p.
    *   onProgress?: (bytesWritten, totalBytes) 实时回调, 让 UI 显示进度
    */
@@ -996,19 +948,22 @@ export class FileSystemServiceImpl implements IFileSystem {
   ): Promise<boolean> {
     const abs = absPath(idePath);
     const b64 = typeof content === 'string' ? bytesToBase64(content) : content.base64;
-    const CHUNK = 4 * 1024; // base64 chars / 块 (远低于 ws 单帧安全大小)
+    // opencode pty 单次输入上限实测: b64 934 OK / 1068 TIMEOUT (~800 字节原文).
+    // CHUNK (b64 chars) 必须远小于该限制: 取 600 → 对应 450 字节原文, 留 40% 余量.
+    const CHUNK = 600; // base64 chars / 块 (实测 opencode pty 单行输入 < 1KB 安全)
+    const ops: Array<{ op: string; payload: Record<string, unknown>; timeoutMs?: number }> = [];
     // 首块 write (truncate, 空内容也建空文件)
-    const first = b64.slice(0, CHUNK);
-    let ok = (await getFsPty().request('write', { path: abs, b64: first }, this.writeTimeoutMs(first.length))).ok;
-    if (!ok) return false;
-    onProgress?.(first.length, b64.length);
+    ops.push({ op: 'write', payload: { path: abs, b64: b64.slice(0, CHUNK) }, timeoutMs: this.writeTimeoutMs(Math.min(CHUNK, b64.length)) });
     // 剩余块 append
     for (let i = CHUNK; i < b64.length; i += CHUNK) {
       const chunk = b64.slice(i, i + CHUNK);
-      const r = await getFsPty().request('append', { path: abs, b64: chunk }, this.writeTimeoutMs(chunk.length));
-      if (!r.ok) return false;
-      onProgress?.(Math.min(i + chunk.length, b64.length), b64.length);
+      ops.push({ op: 'append', payload: { path: abs, b64: chunk }, timeoutMs: this.writeTimeoutMs(chunk.length) });
     }
+    // 一次 pty 会话完成所有块 (原子写)
+    const results = await getFsPty().batch(ops, (i, r) => {
+      if (r.ok) onProgress?.(Math.min((i + 1) * CHUNK, b64.length), b64.length);
+    });
+    if (results.some((r) => !r.ok)) return false;
     this.invalidateParent(idePath);
     return true;
   }
