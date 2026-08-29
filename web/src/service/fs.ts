@@ -7,7 +7,7 @@
  *   - list / read / find: opencode 全局 API (/api/fs/list, /api/fs/read/*, /find/file), 走 x-opencode-directory 切工作目录
  *   - write / rm / mkdirp / move / readBinary: opencode 全局 PTY (单例 FsPty), 跨平台命令构造器
  *   - 事件: 独立 fs watcher (PTY 跑 node:fs.watch recursive:true) + 兜底 SDK /global/event SSE
- *   - 单实例: BrowserFS backend (config/bfs.ts, RemoteFS) 内部调用本实例,
+ *   - 单实例: 业务代码与容器共用同一文件系统实例,
  *     opensumi 容器与业务代码共用同一文件系统实例
  *
  * 路径: 一律 IDE 相对路径 (/foo), server 在 cwd 下操作.
@@ -810,7 +810,7 @@ export class FileSystemServiceImpl implements IFileSystem {
    *   - 跟 host PTY fs.watch (通道 1) 双源重复 → OpenSumi BrowserFS 内部去重, 不冲突
    *   - 必须订阅, 否则 editor stat cache 跟 host disk 失同步 → "操作过于频繁" 冲突
    *     (实测: 2e8f06f 屏蔽后, editor 跟 host disk 12 个文件 stat cache 不一致, 弹同步提示)
-   *   - 注: onDidDeleteFiles 误触侧已实测不存在 (BrowserFS RemoteFS.writeFile 内部不 unlink,
+   *   - 注: onDidDeleteFiles 误触侧已实测不存在 (写文件内部不 unlink,
    *     走 open+write), 所以订阅 fs.* 事件不会引发误删
    */
   private async connectEvents(): Promise<void> {

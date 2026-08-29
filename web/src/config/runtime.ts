@@ -1,12 +1,8 @@
 /**
  * 运行时配置 — core/config/runtime.ts
  *
- * 文件系统: RemoteFS（core/config/bfs.ts, BrowserFS backend, 读写全透传 opencode）
- *   - opensumi 容器（explorer/编辑器）经 BrowserFS 访问, 内部调 service/fs 单实例
- *     （业务代码经 useInjectable(FsToken) 访问同一实例 → 单实例统一）
- *   - 读写全直连 opencode /api/fs/*（无缓存: 外部修改立即可见, 保存/创建/删除立即落盘, 无循环写回）
- *
- * 保存同步: onDidSaveTextDocument → write（backend 已直落 opencode, 此处幂等兜底）
+ * 文件系统: 暂不挂 BrowserFS workspace fs (2026-08-29 移除 RemoteFS, 待新方案接入)
+ *   - 保存同步: onDidSaveTextDocument → write（backend 已直落 opencode, 此处幂等兜底）
  */
 
 import { WORKSPACE_ROOT, type IAppRendererProps } from '@codeblitzjs/ide-core';
@@ -41,10 +37,6 @@ function syncToFs(op: 'write' | 'delete', filepath: string, content?: string): P
 
 export const runtimeConfig: IAppRendererProps['runtimeConfig'] = {
   workspace: {
-    filesystem: {
-      fs: 'RemoteFS',
-      options: {},
-    },
     onDidSaveTextDocument: async ({ filepath, content }) => {
       // 先写盘, 再记录 editor 保存内容 hash (保证 watch 事件时 hash 已记录)
       //   → fs.watch 事件对比 (一致 = 自己保存, 不推; 不一致 = 外部改, 推)
