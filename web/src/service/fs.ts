@@ -402,15 +402,6 @@ async function readPathHash(relPath: string): Promise<string | null> {
   }
 }
 
-/** editor 保存内容 hash (runtime.ts onDidSaveTextDocument 调用) */
-export function recordEditorSaveHash(relPath: string, content: string): void {
-  void (async () => {
-    const bytes = new TextEncoder().encode(content);
-    const h = await contentHash(bytes);
-    watcherSyncedHashes.set(relPath, h);
-  })();
-}
-
 export function bindWatcherFireFilesChange(fn: typeof watcherFireFn): void {
   watcherFireFn = fn;
 }

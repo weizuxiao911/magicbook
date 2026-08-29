@@ -1,14 +1,16 @@
 /**
  * 运行时配置 — core/config/runtime.ts
  *
- * 文件系统: 暂不挂 BrowserFS workspace fs (2026-08-29 移除 RemoteFS, 待新方案接入)
- *   - 保存同步: onDidSaveTextDocument → write（backend 已直落 opencode, 此处幂等兜底）
+ * 文件系统 (读侧): DynamicRequest 对接 service/fs 单实例 → opencode.
+ *   - explorer/编辑器读文件: BrowserFS DynamicRequest → readDirectory/readFile/stat 回调 → service/fs
+ *   - 写侧: 不挂可写 BrowserFS backend, 由 onDidSaveTextDocument (写) / onDidDeleteFiles (删) 单推 opencode
+ *   - 删除的 readdir 手动实现: DynamicRequest 内部会用 readDirectory 构建索引, 无需手写 readdir
  */
 
+import { FileType } from '@codeblitzjs/ide-browserfs/lib/core/node_fs_stats';
 import { WORKSPACE_ROOT, type IAppRendererProps } from '@codeblitzjs/ide-core';
 
 import { getFileSystemService } from '../service/fs';
-import { recordEditorSaveHash } from '../service/fs';
 
 /** BrowserFS 路径 → IDE 相对路径（去 /workspace 前缀） */
 function workspaceRel(path: string): string {
@@ -16,41 +18,57 @@ function workspaceRel(path: string): string {
   return p || '/';
 }
 
-/** 保存 → 同步 opencode fs（backend 已直落, 此处幂等兜底） */
-function syncToFs(op: 'write' | 'delete', filepath: string, content?: string): Promise<void> {
-  return (async () => {
-    try {
-      const fsApi = getFileSystemService();
-      const rel = workspaceRel(filepath);
-      if (op === 'write' && typeof content === 'string') {
-        await fsApi.write(rel, content);
-        console.log(`[runtime] sync write → opencode: ${rel}`, JSON.stringify(content.slice(0, 40)));
-      } else if (op === 'delete') {
-        await fsApi.rm(rel);
-        console.log(`[runtime] sync delete → opencode: ${rel}`);
-      }
-    } catch (err) {
-      console.warn('[runtime] sync to opencode failed:', op, filepath, err);
-    }
-  })();
-}
-
 export const runtimeConfig: IAppRendererProps['runtimeConfig'] = {
   workspace: {
+    filesystem: {
+      fs: 'DynamicRequest',
+      options: {
+        // 列目录: BrowserFS 路径 → IDE 相对路径 → service.list → FileEntry [name, FileType]
+        readDirectory: async (p) => {
+          const entries = await getFileSystemService().list(workspaceRel(p));
+          return entries.map((e): [string, FileType] => [
+            e.name,
+            e.type === 'directory' ? FileType.DIRECTORY : FileType.FILE,
+          ]);
+        },
+        // 读文件: 返回 Uint8Array (service.read 对齐 vscode API)
+        readFile: async (p) => getFileSystemService().read(workspaceRel(p)),
+        // stat: service.meta → FileStat (size; 无 stat 时 DynamicRequest 读文件回填)
+        stat: async (p) => {
+          const meta = await getFileSystemService().meta(workspaceRel(p));
+          return { size: meta.size };
+        },
+      },
+    },
+    // 写: 编辑器保存 → 直接落盘 opencode (BrowserFS 只读, 写侧单推)
     onDidSaveTextDocument: async ({ filepath, content }) => {
-      // 先写盘, 再记录 editor 保存内容 hash (保证 watch 事件时 hash 已记录)
-      //   → fs.watch 事件对比 (一致 = 自己保存, 不推; 不一致 = 外部改, 推)
-      await syncToFs('write', filepath, content);
-      recordEditorSaveHash(workspaceRel(filepath), content);
+      const fsApi = getFileSystemService();
+      const rel = workspaceRel(filepath);
+      try {
+        await fsApi.write(rel, content);
+        console.log(`[runtime] sync write → opencode: ${rel}`, JSON.stringify(content.slice(0, 40)));
+      } catch (err) {
+        console.warn('[runtime] sync write failed:', filepath, err);
+      }
     },
     // 注意: onDidChangeFiles / onDidCreateFiles 由 IFileServiceClient.onFilesChanged 驱动,
     // 而 onFilesChanged 会收到我们 fireFilesChange 的"外部变化"事件 → 写回旧内容/覆盖新建, 形成循环。
-    // backend 已把浏览器侧读写直落 opencode, 无需这些钩子; 保存由 onDidSaveTextDocument 兜底。
+    // 读侧走 DynamicRequest, 写侧走本钩子单推, 无需这些钩子。
     onDidChangeTextDocument: (_args) => {
       // 实时变更不即时同步 (防抖由保存触发)
     },
+    // 删: explorer 删除 → 落盘 opencode
     onDidDeleteFiles: (files) => {
-      (files || []).forEach((f) => syncToFs('delete', f));
+      (files || []).forEach(async (f) => {
+        const fsApi = getFileSystemService();
+        const rel = workspaceRel(f);
+        try {
+          await fsApi.rm(rel);
+          console.log(`[runtime] sync delete → opencode: ${rel}`);
+        } catch (err) {
+          console.warn('[runtime] sync delete failed:', f, err);
+        }
+      });
     },
   },
 } as any;
