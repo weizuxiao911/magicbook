@@ -119,15 +119,15 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   const renderedRef = useRef<Set<number>>(new Set());
   /** 正在渲染中的 page idx 集合 (防并发) */
   const inFlightRef = useRef<Set<number>>(new Set());
-  /** fitScale = 基准 fit (viewer 宽 / page 宽) * userScale. 所有页共用. */
-  const fitScaleRef = useRef<number>(1);
-  /** 用户缩放档位: 0=缩(0.7), 1=基准(1.0), 2=放(1.4) */
-  const [userScaleIdx, setUserScaleIdx] = useState(1);
-  const USER_SCALES = [0.7, 1.0, 1.4];
-  /** page 原始尺寸 */
-  const pageBaseRef = useRef<{ width: number; height: number } | null>(null);
+  /** 用户缩放档位: 0..4 对应 [50%, 75%, 100%, 125%, 150%]
+   *  高度主导缩放: div 高度 = viewer 视口高 × 档位, 宽度按 PDF aspect-ratio 算. */
+  const [userScaleIdx, setUserScaleIdx] = useState(2);
+  const USER_SCALES = [0.5, 0.75, 1.0, 1.25, 1.5];
   /** 每页占位 div 引用 */
   const pageElsRef = useRef<Map<number, HTMLDivElement>>(new Map());
+  /** rebuildViewer 并发守卫: 每次 rebuildViewer 入口 +1, await 后检查; 不一致 → 旧 build bail.
+   *  防止连续 click 缩放按钮时, 上一次 build 在 await 链里又 appendChild 老 div, 跟新 build 撞车. */
+  const buildIdRef = useRef(0);
 
   const hostPath = useMemo(() => resolveHostPath(resource), [resource]);
 
@@ -164,16 +164,18 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     const pdf = pdfDocRef.current;
     const pageEl = pageElsRef.current.get(pageIdx);
     if (!pdf || !pageEl) return;
-    if (!pageBaseRef.current) return; // 等 fitScale 算好
 
     inFlightRef.current.add(pageIdx);
     try {
       const page = await pdf.getPage(pageIdx);
-      // 用 rebuildViewer 算好的 fitScaleRef (已含 userScale), 跟其他页保持一致.
-      // 不再自己根据 pageEl.clientWidth 算 (那个是占位 div 的 fit, 不含 userScale).
+      // 高度主导缩放: div 已是 rebuildViewer 设好的 viewH × aspectRatio 像素,
+      // 直接从 pageEl 拿 css 显示尺寸, renderScale = cssW/pb.width × dpr 让 canvas
+      // 内部像素 = (cssW*dpr, cssH*dpr), CSS 100% 缩放 1:1, PDF 文字不变形.
       const pb = page.getViewport({ scale: 1 });
       const dpr = window.devicePixelRatio || 1;
-      const renderScale = fitScaleRef.current * dpr;
+      const cssW = pageEl.clientWidth;
+      const cssH = pageEl.clientHeight;
+      const renderScale = (cssW / pb.width) * dpr;
       const viewport = page.getViewport({ scale: renderScale });
 
       const canvas = document.createElement('canvas');
@@ -369,15 +371,16 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     if (!viewer) return;
     const pdf = pdfDocRef.current;
     if (!pdf) return;
+    // 并发守卫: 入口拿 myBuildId, 后续 await 后检查; 不一致 → 旧 build bail, 不再 appendChild.
+    // 否则连续 click 缩放时, 上一次 build 在 await 链里又 appendChild 老 div, 跟新 build 撞车.
+    const myBuildId = ++buildIdRef.current;
 
-    // 算 fitScale (基准 fit × userScale). 基准 = viewer 宽 / 第 1 页原宽.
-    // userScale 是用户缩放档位 [0.7, 1.0, 1.4], rebuild 时用最新值.
-    const firstPage = await pdf.getPage(1);
-    const base = firstPage.getViewport({ scale: 1 });
-    pageBaseRef.current = { width: base.width, height: base.height };
-    const containerW = Math.max(viewer.clientWidth, 60);
-    const baseFit = containerW / base.width;
-    fitScaleRef.current = baseFit * USER_SCALES[userScaleIdx];
+    // 高度主导缩放: div 高度 = viewer 视口高 × userScale, 宽度按 PDF aspect-ratio 算.
+    // viewer 视口高取 #opensumi-editor 视觉窗口 (fallback viewer.clientHeight), 不依赖 viewer 视口宽,
+    // div 用固定像素宽高 → 滚动总高 = sum(viewH × (1+gap)) 稳定, viewer 宽度变化不触发 reflow.
+    const edEl = document.getElementById('opensumi-editor');
+    const viewBaseH = Math.max((edEl?.clientHeight ?? viewer.clientHeight) || 1, 1);
+    const viewH = viewBaseH * USER_SCALES[userScaleIdx];
 
     // 清空, 建所有页 (占位 div + canvas + 标注热区)
     const prevScrollTop = viewer.scrollTop;
@@ -389,27 +392,24 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
 
     for (let i = 1; i <= numPages; i++) {
       const p = await pdf.getPage(i);
+      if (buildIdRef.current !== myBuildId) return; // 已被新 build 覆盖, 旧 build 立即退出
       const pb = p.getViewport({ scale: 1 });
-      // fit-to-content: div 用固定像素 (pb.width*fit × pb.height*fit), 不依赖 viewer 视口高,
-      // 滚动总高 = sum(pb.height*fit) 稳定, 不会因 viewer 高度变化 reflow 跳滚动位置.
-      const fit = containerW / pb.width;
-      const pageW = pb.width * fit;
-      const pageH = pb.height * fit;
+      // pageH = viewH; pageW = viewH × aspectRatio (PDF 宽高比)
+      const pageH = viewH;
+      const pageW = viewH * (pb.width / pb.height);
 
       const div = document.createElement('div');
       div.className = 'ab-pdf-page';
       div.dataset['page'] = String(i);
-      // 高度 = #opensumi-editor 视觉窗口高度 (user 期望), 宽度按 aspect-ratio 自动算.
-      // canvas 100%×100% 填充 div, 保持 PDF 比例. 初始 opacity:0 防 reflow,
+      // 固定像素宽高, canvas 100%×100% 填充, 1:1 保持 PDF 比例. 初始 opacity:0 防 reflow,
       // p.render 完设 opacity:1, 滚动不被打乱.
-      const edEl = document.getElementById('opensumi-editor');
-      const viewH = Math.max((edEl?.clientHeight ?? viewer.clientHeight) || 1, 1);
-      div.style.cssText = `width:auto;height:${viewH}px;aspect-ratio:${pb.width}/${pb.height};margin:0 auto ${pageGap}px;`;
+      div.style.cssText = `width:${pageW}px;height:${pageH}px;margin:0 auto ${pageGap}px;`;
       viewer.appendChild(div);
       pageElsRef.current.set(i, div);
 
-      // 渲染 canvas (串行, 一次性全部渲染)
-      const renderScale = fit * dpr;
+      // canvas 内部像素 = (pageW × dpr, pageH × dpr) = (css 显示尺寸 × dpr),
+      // CSS 100% 缩放 1:1, PDF 文字 / 标注 都不变形. 渲染 scale = pageW/pb.width × dpr.
+      const renderScale = (pageW / pb.width) * dpr;
       const viewport = p.getViewport({ scale: renderScale });
       const canvas = document.createElement('canvas');
       canvas.className = 'ab-pdf-canvas';
@@ -422,12 +422,14 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
 
       const ctx = canvas.getContext('2d');
       if (ctx) await p.render({ canvasContext: ctx, viewport }).promise;
+      if (buildIdRef.current !== myBuildId) return; // 渲染完也检查, 避免后续 op 操作老 div
       // 渲染完显示 (同步 opacity, 不修改 width/height → 无 reflow)
       canvas.style.opacity = '1';
 
       // 标注热区
       try {
         const annots = await p.getAnnotations();
+        if (buildIdRef.current !== myBuildId) return;
         if (annots && annots.length > 0) {
           const metas = annots
             .map((a: any) => toAnnotMeta(a, i))
@@ -714,18 +716,27 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
               className="ab-pdf__zoom-btn"
               title="缩小"
               disabled={userScaleIdx === 0}
-              onClick={() => { const next = Math.max(0, userScaleIdx - 1); setUserScaleIdx(next); setRebuildTick((t) => t + 1); }}
+              onClick={() => {
+                setUserScaleIdx((prev) => Math.max(0, prev - 1));
+                setRebuildTick((t) => t + 1);
+              }}
             >−</button>
             <button
               className="ab-pdf__zoom-btn ab-pdf__zoom-btn--current"
               title="还原 (基准大小)"
-              onClick={() => { setUserScaleIdx(1); setRebuildTick((t) => t + 1); }}
+              onClick={() => {
+                setUserScaleIdx(2);
+                setRebuildTick((t) => t + 1);
+              }}
             >{Math.round(USER_SCALES[userScaleIdx] * 100)}%</button>
             <button
               className="ab-pdf__zoom-btn"
               title="放大"
               disabled={userScaleIdx === USER_SCALES.length - 1}
-              onClick={() => { const next = Math.min(USER_SCALES.length - 1, userScaleIdx + 1); setUserScaleIdx(next); setRebuildTick((t) => t + 1); }}
+              onClick={() => {
+                setUserScaleIdx((prev) => Math.min(USER_SCALES.length - 1, prev + 1));
+                setRebuildTick((t) => t + 1);
+              }}
             >+</button>
           </div>
         )}
