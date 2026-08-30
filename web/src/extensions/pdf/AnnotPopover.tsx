@@ -71,10 +71,10 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
   const [fileRef, setFileRef] = useState<{ name: string; path: string } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   /** 每个交互类型的生成句柄 (独立并发, 互不干扰) */
-  const activeGenRefs = useRef<Map<'comment' | 'prompt' | 'file', AIRequestHandle>>(new Map());
+  const activeGenRefs = useRef<Map<'comment' | 'prompt', AIRequestHandle>>(new Map());
   /** 每个交互类型的生成中状态 (独立 loading) */
-  const [generating, setGenerating] = useState<Record<'comment' | 'prompt' | 'file', boolean>>({ comment: false, prompt: false, file: false });
-  const setGenLoading = (kind: 'comment' | 'prompt' | 'file', loading: boolean) =>
+  const [generating, setGenerating] = useState<Record<'comment' | 'prompt', boolean>>({ comment: false, prompt: false });
+  const setGenLoading = (kind: 'comment' | 'prompt', loading: boolean) =>
     setGenerating((prev) => ({ ...prev, [kind]: loading }));
 
   // 每次 state 变化时重置 (新建) 或预填 (编辑 existing)
@@ -204,7 +204,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
     } catch { return null; }
   };
 
-  const handleGenerate = (kind: 'comment' | 'prompt' | 'file') => {
+  const handleGenerate = (kind: 'comment' | 'prompt') => {
     if (!state) return;
     if (activeGenRefs.current.has(kind)) {
       notification.warn({ message: '该交互类型正在生成中, 请稍候', type: 'warning', duration: 2 });
@@ -214,10 +214,9 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
     const file = pdfName || '当前 PDF';
     const rectDesc = `第 ${state.page} 页, 坐标 [${state.rect.map((n) => Number(n.toFixed(2))).join(', ')}]`;
     // 图片已给 AI (标注所在页 canvas), 让 AI 直接看图, 不再通读整个 PDF
-    const TEMPLATES: Record<typeof kind, string> = {
+    const TEMPLATES: Record<'comment' | 'prompt', string> = {
       comment: `图片是 ${file} 第 ${state.page} 页, 对图中标注区域 (${rectDesc}) 进行批注说明`,
       prompt: `图片是 ${file} 第 ${state.page} 页, 对图中标注区域 (${rectDesc}) 生成发送请求知识讲解的提示词`,
-      file: `图片是 ${file} 第 ${state.page} 页, 对图中标注区域 (${rectDesc}) 进行理解,生成动画示例演示HTML,并保存文件到工作目录下`,
     };
     const promptText = TEMPLATES[kind];
     const finish = () => {
@@ -232,26 +231,6 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
       } else if (kind === 'prompt') {
         setPromptText(message);
         notification.success({ message: 'AI 回答已回填到表单', type: 'success', duration: 3 });
-      } else if (kind === 'file') {
-        // 示例演示: AI 返回 HTML, 自动写盘到 workspace + 填 fileRef
-        const stem = (pdfName || 'demo').replace(/\.pdf$/i, '').replace(/[\\/:*?"<>|]/g, '_');
-        const fileName = `${stem}-demo-${Date.now()}.html`;
-        const relPath = `/${fileName}`;
-        const uri = `file://${WORKSPACE_ROOT}${relPath}`;
-        void (async () => {
-          try {
-            const stat = await fileService.getFileStat(uri).catch(() => null);
-            if (!stat) {
-              await fileService.createFile(uri, { content: message } as any);
-            } else {
-              await fileService.setContent(stat, message);
-            }
-            setFileRef({ name: fileName, path: uri });
-            notification.success({ message: `示例演示 HTML 已保存到 ${relPath}`, type: 'success', duration: 4 });
-          } catch (e) {
-            notification.error({ message: `文件保存失败: ${(e as any)?.message || e}`, type: 'error', duration: 5 });
-          }
-        })();
       }
       finish();
     }, {
@@ -270,7 +249,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
   };
 
   /** 取消生成: 终止该交互类型的 ask (后端 abort) + 重置按钮. */
-  const handleCancelGenerate = (kind: 'comment' | 'prompt' | 'file') => {
+  const handleCancelGenerate = (kind: 'comment' | 'prompt') => {
     const handle = activeGenRefs.current.get(kind);
     if (!handle) { setGenLoading(kind, false); return; }
     void handle.cancel().then(() => {
@@ -414,12 +393,6 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
             <button type="button" className="ab-annot-popover__btn ab-annot-popover__btn--pick" onClick={openPicker}>
               {fileRef ? `更换: ${fileRef.name}` : '选择文件'}
             </button>
-            <button
-              type="button"
-              className={`ab-annot-popover__btn ${generating.file ? 'ab-annot-popover__btn--gen-cancel' : 'ab-annot-popover__btn--gen'}`}
-              onClick={() => (generating.file ? handleCancelGenerate('file') : handleGenerate('file'))}
-              disabled={false}
-            >{generating.file ? '取消' : '生成'}</button>
           </div>
         </div>
       )}
