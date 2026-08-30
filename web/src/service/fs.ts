@@ -692,9 +692,9 @@ export class FileSystemServiceImpl implements IFileSystem {
     window.addEventListener('beforeunload', () => stopFsWatcher());
     // 把 fireFilesChange 注入到 watcher 模块 (避免循环 import) + 同步打开的编辑器 (外部修改 → reload)
     bindWatcherFireFilesChange(async (changes) => {
-      // 清 BrowserFS 缓存: writable InMemory 目录树 + readable DynamicRequest FileIndex (entriesLoaded 旧列表)
-      // → explorer 重新 stat/readdir 拿真实数据
-      try { (window as any).__APP_WRITE_SYNC_FS__?.clearCache?.(); } catch { /* ignore */ }
+      // 清 BrowserFS readable (DynamicRequest) entriesLoaded → explorer 重新拉真实目录.
+      // 注意: 不能清 writable InMemory (WriteSyncFS) — 目录树被清空后 OverlayFS 写文件
+      // createParentDirectoriesAsync stat 父目录失败 → EBUSY: root does not exist.
       try { (window as any).__RESET_BFS_CACHE__?.(); } catch { /* ignore */ }
       changes.forEach((c) => this.invalidateParent(uriToRel(c.uri)));
       this.fileService.fireFilesChange({ changes });
@@ -1082,6 +1082,20 @@ export class FileSystemServiceImpl implements IFileSystem {
     onProgress?: (done: number, total: number) => void,
   ): Promise<boolean> {
     const abs = absPath(idePath);
+    // 写入前对比远程内容: 一样 → 跳过写入 (防重复写 + 防 OverlayFS EBUSY 写路径)
+    if (typeof content === 'string') {
+      try {
+        const remote = await this.read(idePath);
+        if (remote) {
+          const remoteText = new TextDecoder().decode(remote);
+          if (remoteText === content) {
+            // 内容一致: 不写, 但记录 hash (断循环), 返回成功
+            await recordSyncedHash(idePath, content);
+            return true;
+          }
+        }
+      } catch { /* 读不到 (文件不存在/异常) → 正常写 */ }
+    }
     const b64 = typeof content === 'string' ? bytesToBase64(content) : content.base64;
     // opencode pty 单次输入上限实测: b64 934 OK / 1068 TIMEOUT (~800 字节原文).
     // CHUNK (b64 chars) 必须远小于该限制: 取 600 → 对应 450 字节原文, 留 40% 余量.

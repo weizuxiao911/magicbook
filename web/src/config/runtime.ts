@@ -167,9 +167,8 @@ export function resetBrowserFSCache(): void {
       // 递归清 (嵌套 OverlayFS: Mountable → OverlayFS(_fs) → UnlockedOverlayFS(_readable/_writable))
       const clearOne = (f: any): void => {
         if (!f) return;
-        // UnlockedOverlayFS: 清 writable InMemory + readable DynamicRequest FileIndex
-        try { (f as any)._writable?.clearCache?.(); } catch { /* ignore */ }
-        try { (f as any)._mu?.clearCache?.(); } catch { /* ignore */ }
+        // 注意: 不清 writable InMemory (WriteSyncFS) — 目录树被清后 OverlayFS 写文件 EBUSY.
+        // 只重置 readable (DynamicRequest) 的 entriesLoaded.
         const readable = (f as any)._readable || (f as any)._fs;
         if (readable?._index) {
           // 只清根目录 inode 的 entriesLoaded (保留树结构): 下次 loadEntry 重新 readDirectory 拉最新.
