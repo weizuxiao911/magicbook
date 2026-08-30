@@ -128,6 +128,17 @@ function sidecarPathFromResource(resource: any): string {
   return `/.${base}.annotation`;
 }
 
+/** 从 resource 拿 PDF basename (用于"生成"按钮 prompt 模板的 {file} 填充). */
+function pdfBasenameFromResource(resource: any): string {
+  const u = resource?.uri;
+  let fsPath = '';
+  if (u?.codeUri?.fsPath) fsPath = String(u.codeUri.fsPath);
+  else if (typeof u?.path === 'string') fsPath = u.path;
+  if (!fsPath) return '';
+  const parts = fsPath.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || '';
+}
+
 export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   const viewerRef = useRef<HTMLDivElement>(null);
   const pdfDocRef = useRef<any>(null);
@@ -1029,7 +1040,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         )}
       </div>
       <AnnotationActions />
-      <AnnotPopover state={popoverState} onSave={handlePopoverSave} onCancel={handlePopoverCancel} />
+      <AnnotPopover state={popoverState} pdfName={pdfBasenameFromResource(resource)} onSave={handlePopoverSave} onCancel={handlePopoverCancel} />
       {loading && (
         <div className="ab-pdf__loading">
           <div className="ab-pdf__loadingText">
