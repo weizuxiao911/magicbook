@@ -423,6 +423,54 @@ function extractJsonObjects(buf: string): { objects: any[]; rest: string } {
   return { objects, rest: buf.slice(i) };
 }
 
+/** fs.watch 事件防抖表 (路径 → 定时器): PTY watcher + SDK event.subscribe 共用,
+ *  同一 path 300ms 窗口内多次事件合并为一次 fire (双路径不重复). */
+const debounceMap = new Map<string, { timer: ReturnType<typeof setTimeout>; event: FileChangeType; uri: string }>();
+
+/**
+ * 公共防抖调度: 同一 path 的事件 (PTY watcher / SDK event.subscribe 双路径都会来)
+ * 在 300ms 窗口内合并, 到点只 fire 一次 fireFilesChange + fs:changed.
+ * 内部再做 hash 对比 (自己保存/无变化跳过, 断循环).
+ */
+function scheduleFsFire(key: string, changeType: FileChangeType): void {
+  const rawUri = `file://${WORKSPACE_ROOT}${key}`;
+  const tmp = rawUri.replace('://', '\u0000\u0000\u0000').replace(/\/+/g, '/').replace('\u0000\u0000\u0000', '://');
+  const uri = tmp;
+  const prev = debounceMap.get(key);
+  if (prev) clearTimeout(prev.timer);
+  const timer = setTimeout(() => {
+    debounceMap.delete(key);
+    void (async () => {
+      const h = await readPathHash(key);
+      const synced = watcherSyncedHashes.get(key);
+      if (h === synced) {
+        // 一致: editor 保存过 / 内容没变 → 跳过 (断循环)
+        console.log('[watcher] skip (hash same)', key, h);
+        return;
+      }
+      // 按最终状态修正: 文件不存在 → DELETED; 存在 → ADDED/UPDATED
+      let finalEvent = changeType;
+      if (h === null) {
+        finalEvent = FileChangeType.DELETED;
+      }
+      console.log('[watcher] → fireFilesChange', uri, finalEvent, { old: synced, now: h });
+      // 外部修改: 清 stat 缓存, 下次 stat 拿新 mtime/size (编辑器重载后 checkInSync 同值)
+      invalidateStat(key);
+      if (watcherFireFn) {
+        watcherFireFn([{ uri, type: finalEvent }]);
+      }
+      // 派发 fs:changed CustomEvent (sidecar/其他拓展监听)
+      const typeLabel = finalEvent === FileChangeType.ADDED ? 'add'
+        : finalEvent === FileChangeType.DELETED ? 'unlink'
+        : 'change';
+      window.dispatchEvent(new CustomEvent('fs:changed', { detail: { type: typeLabel, path: key } }));
+      // 更新已同步 hash (文件存在 → hash; 不存在 → null)
+      watcherSyncedHashes.set(key, h);
+    })();
+  }, 300);
+  debounceMap.set(key, { timer, event: changeType, uri });
+}
+
 /** 处理单个 JSON object: opencode pty 控制帧 (cursor/resize/method) 忽略, 其余作 fs event */
 function handleJsonObject(obj: any): void {
   if (!obj || typeof obj !== 'object') return;
@@ -442,56 +490,11 @@ function handleJsonObject(obj: any): void {
     if (t === undefined) { console.log('[watcher] unknown event type:', obj.e); return; }
     opencodeEvent = t;
   }
-  // URI: file:///{WORKSPACE_ROOT}/{rel}.  保留 :// 三 slash 段不被合并
-  //  (负 lookbehind (?<!:) 看前 1 字符, 拦不住 file:// 的第二/三个 /)
-  //  改成: 先把 :// 段占位为 3 个 \u0000, 合并连续 / 为 1, 再恢复 ://
-  const rawUri = `file://${WORKSPACE_ROOT}/${obj.p}`;
-  const tmp = rawUri.replace('://', '\u0000\u0000\u0000').replace(/\/+/g, '/').replace('\u0000\u0000\u0000', '://');
-  const uri = tmp;
-  // 内容 hash 对比 + 防抖 (300ms):
-  //   自己保存 (editor 记录 hash) / 无变化 → 跳过不 fire (断循环)
-  //   外部修改 → hash 不同 → fire
-  //   防抖: fs.watch 高频触发时合并, 且等 editor 保存 hash 记录完成
   // key 统一 IDE 相对路径格式 (带前导 /), 跟 recordSyncedHash 的 workspaceRel 一致 —
   // 否则 WriteSyncFS 写后记录的是 /1.txt, watcher 对比的是 1.txt → 永远匹配不上, 断循环失效
   const key = obj.p.startsWith('/') ? obj.p : `/${obj.p}`;
-  const prev = debounceMap.get(key);
-  if (prev) clearTimeout(prev.timer);
-  const timer = setTimeout(() => {
-    debounceMap.delete(key);
-    void (async () => {
-      const h = await readPathHash(key);
-      const synced = watcherSyncedHashes.get(key);
-      if (h === synced) {
-        // 一致: editor 保存过 / 内容没变 → 跳过
-        console.log('[watcher] skip (hash same)', key, h);
-        return;
-      }
-      // rename 事件按最终状态修正: 文件不存在 → DELETED; 存在 → UPDATED (已默认)
-      let finalEvent = opencodeEvent;
-      if (h === null) {
-        finalEvent = FileChangeType.DELETED;
-      }
-      console.log('[watcher] → fireFilesChange', uri, finalEvent, { old: synced, now: h });
-      // 外部修改: 清 stat 缓存, 下次 stat 拿新 mtime/size (编辑器重载后 checkInSync 同值)
-      invalidateStat(key);
-      if (watcherFireFn) {
-        watcherFireFn([{ uri, type: finalEvent }]);
-      }
-      // 派发 fs:changed CustomEvent (跟 SDK event.subscribe 兜底路径一致, sidecar/其他拓展监听)
-      const typeLabel = finalEvent === FileChangeType.ADDED ? 'add'
-        : finalEvent === FileChangeType.DELETED ? 'unlink'
-        : 'change';
-      window.dispatchEvent(new CustomEvent('fs:changed', { detail: { type: typeLabel, path: key } }));
-      // 更新已同步 hash (文件存在 → hash; 不存在 → null)
-      watcherSyncedHashes.set(key, h);
-    })();
-  }, 300);
-  debounceMap.set(key, { timer, event: opencodeEvent, uri });
+  scheduleFsFire(key, opencodeEvent);
 }
-
-/** fs.watch 事件防抖表 (路径 → 定时器) */
-const debounceMap = new Map<string, { timer: ReturnType<typeof setTimeout>; event: FileChangeType; uri: string }>();
 
 /**
  * 启 fs watcher PTY (跑 node -e 'inline fs.watch script')
@@ -876,13 +879,10 @@ export class FileSystemServiceImpl implements IFileSystem {
         }
         if (!changeType || !relPath) continue;
         const rel = relPath.startsWith('/') ? relPath : `/${relPath}`;
-        const uri = `file://${WORKSPACE_ROOT}${rel}`;
-        console.log('[filesystem] fs event:', t, rel, '→ fireFilesChange', uri);
-        invalidateStat(rel);
-        this.fileService.fireFilesChange({
-          changes: [{ uri, type: typeMap[changeType] ?? FileChangeType.UPDATED }],
-        });
-        window.dispatchEvent(new CustomEvent('fs:changed', { detail: { type: changeType, path: rel } }));
+        // 走公共防抖调度 (跟 PTY watcher 共用 debounceMap): 同一 path 300ms 窗口合并,
+        // 双路径 (PTY + SDK) 收到同一变更只 fire 一次. hash 对比 + fire 在 scheduleFsFire 内.
+        console.log('[filesystem] fs event:', t, rel, '→ scheduleFsFire');
+        scheduleFsFire(rel, typeMap[changeType] ?? FileChangeType.UPDATED);
       }
     } catch (e) {
       if ((e as Error)?.name !== 'AbortError') {
