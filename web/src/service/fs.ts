@@ -1118,6 +1118,8 @@ export class FileSystemServiceImpl implements IFileSystem {
     if (typeof content === 'string') {
       await recordSyncedHash(idePath, content);
     }
+    // 刚写的文件必然存在 → 从 OverlayFS deletionLog 恢复 (历史残留误删标记会挡 explorer + 触发反向删远程)
+    try { (window as any).__RESTORE_DELETION_LOG__?.(idePath); } catch { /* ignore */ }
     return true;
   }
 
