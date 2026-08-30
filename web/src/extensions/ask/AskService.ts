@@ -1,0 +1,168 @@
+/**
+ * Ask 拓展 — 通用 AI 通道
+ *
+ * 跟 filepicker 一样: 注册全局 API (`requestAI`), 任何拓展可直接调, 无需经 chat panel.
+ * 适用场景: PDF 标注的"生成"按钮 / 任何程序侧需要独立会话跟 AI 交互的功能.
+ *
+ * 架构:
+ *   - 内部维护单 EventSource 订阅 /global/event (opencode 全局 SSE)
+ *   - 每个 request 创建一个独立 session (POST /session) + 异步发 prompt (POST /session/:id/prompt_async)
+ *   - 流式响应按 sessionId 派发给对应 callback (onDelta / onComplete)
+ *   - session.idle / session.status: idle → 触发 onComplete(累积的 text)
+ *
+ * 用法:
+ *   import { requestAI } from '../ask/AskService';
+ *   const req = requestAI('通读 xxx 进行批注', {
+ *     onDelta: (chunk) => console.log('增量:', chunk),
+ *     onComplete: (text) => console.log('完整回答:', text),
+ *     onError: (err) => console.error(err),
+ *   });
+ *   // 取消: req.cancel()
+ */
+
+export interface AIRequestCallbacks {
+  /** 流式增量 (打字机效果), 每次推送新 chunk */
+  onDelta?: (chunk: string) => void;
+  /** 流结束 (idle) 时推送完整累积 text */
+  onComplete?: (text: string) => void;
+  /** 错误 (session 创建失败 / 流异常) */
+  onError?: (err: Error) => void;
+}
+
+export interface AIRequestHandle {
+  /** 内部 sessionId (opencode) */
+  sessionId: string;
+  /** 取消订阅 (不影响 chat / opencode 后端, 仅不接收后续事件) */
+  cancel: () => void;
+}
+
+interface ActiveRequest {
+  sessionId: string;
+  callbacks: AIRequestCallbacks;
+  text: string;
+}
+
+const RUNTIME_KEY = '__APP_OPENCODE_RUNTIME__';
+
+function getBaseUrl(): string {
+  const base = (window as any)[RUNTIME_KEY]?.baseUrl;
+  if (!base) throw new Error('opencode baseUrl missing (window.__APP_OPENCODE_RUNTIME__.baseUrl)');
+  return base;
+}
+
+/** 拿全局 opencode SDK 客户端 (跟 service/agent.ts 共享同一实例). */
+function getClient(): any {
+  return (window as any).__APP_OPENCODE__;
+}
+
+/** AskService 单例: 维护单 EventSource + 多 active request 派发. */
+class AskService {
+  private es: EventSource | null = null;
+  private active = new Map<string, ActiveRequest>();
+
+  /** 启动单 EventSource 订阅 (惰性, 首次 request 时启动) */
+  private ensureStream() {
+    if (this.es) return;
+    const base = getBaseUrl();
+    const es = new EventSource(`${base}/global/event`);
+    this.es = es;
+    es.onmessage = (msg) => {
+      try {
+        const raw = JSON.parse(msg.data);
+        const ev = (raw && raw.payload) || raw;
+        const type = ev?.type as string | undefined;
+        const props = ev?.properties || ev?.data;
+        if (!type || !props) return;
+        const ssid = props.sessionID as string | undefined;
+        if (!ssid) return;
+        const req = this.active.get(ssid);
+        if (!req) return;
+        if (type === 'message.part.delta' && props.field === 'text' && typeof props.delta === 'string') {
+          req.text += props.delta;
+          req.callbacks.onDelta?.(props.delta);
+        } else if (type === 'message.part.updated' && props.part?.text != null) {
+          // 全量 upsert: 用最新 text 覆盖 (避免 delta + updated 双计数)
+          const part = props.part;
+          if (part.type === 'text' || typeof part.text === 'string') {
+            req.text = part.text;
+            req.callbacks.onDelta?.('');
+          }
+        } else if (type === 'session.idle' || (type === 'session.status' && props.status?.type === 'idle')) {
+          // 流结束: 派发 onComplete, 清理 active
+          const finalText = req.text;
+          this.active.delete(ssid);
+          req.callbacks.onComplete?.(finalText);
+        }
+      } catch { /* ignore bad frame */ }
+    };
+    es.onerror = () => { /* EventSource 自动重连, 不需手动处理 */ };
+  }
+
+  /** 主动发请求: 创建 session + 异步发 prompt + 注册 callback. */
+  async request(prompt: string, callbacks: AIRequestCallbacks = {}): Promise<AIRequestHandle> {
+    this.ensureStream();
+    const client = getClient();
+    if (!client) {
+      const err = new Error('opencode client not ready (window.__APP_OPENCODE__)');
+      callbacks.onError?.(err);
+      throw err;
+    }
+
+    // 1) 创建 session (走 SDK, 跟 chat 共享 baseUrl + cwd header)
+    let sessionId: string;
+    try {
+      const { data, error } = await client.session.create({});
+      if (error) throw error;
+      sessionId = data?.id;
+      if (!sessionId) throw new Error('session.create: no id in response');
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      callbacks.onError?.(err);
+      throw err;
+    }
+
+    // 2) 注册 active
+    this.active.set(sessionId, { sessionId, callbacks, text: '' });
+
+    // 3) 异步发 prompt (fire-and-forget, 回复走 SSE 事件流)
+    try {
+      await client.session.promptAsync({
+        sessionID: sessionId,
+        parts: [{ type: 'text', text: prompt }],
+      });
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      this.active.delete(sessionId);
+      callbacks.onError?.(err);
+      throw err;
+    }
+
+    return {
+      sessionId,
+      cancel: () => { this.active.delete(sessionId); },
+    };
+  }
+
+  /** 关闭全局 EventSource (卸载 / 重置时) */
+  dispose() {
+    this.es?.close();
+    this.es = null;
+    this.active.clear();
+  }
+}
+
+let _instance: AskService | null = null;
+function getInstance(): AskService {
+  if (!_instance) _instance = new AskService();
+  return _instance;
+}
+
+/** 对外 API: 跟 chat 隔离的 AI 通道. 每次调用创建独立 session, 不污染 chat 历史. */
+export function requestAI(prompt: string, callbacks: AIRequestCallbacks = {}): Promise<AIRequestHandle> {
+  return getInstance().request(prompt, callbacks);
+}
+
+export function disposeAskService() {
+  _instance?.dispose();
+  _instance = null;
+}

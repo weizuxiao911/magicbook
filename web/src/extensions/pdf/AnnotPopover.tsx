@@ -21,6 +21,7 @@ import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 import { notification } from '@opensumi/ide-components/lib/notification';
 import type { SidecarAnnot, SidecarInteraction } from './annotations';
 import { requestFilePicker } from '../filepicker/FilePicker';
+import { requestAI, type AIRequestHandle } from '../ask/AskService';
 
 const COLORS: Array<{ name: string; rgb: [number, number, number] }> = [
   { name: '蓝', rgb: [55, 148, 255] },
@@ -49,11 +50,13 @@ export interface PopoverState {
 
 export interface AnnotPopoverProps {
   state: PopoverState | null;
+  /** 当前 PDF 文件名 (用于"生成"按钮的 prompt 模板填充 `{file}`) */
+  pdfName?: string;
   onSave: (annot: SidecarAnnot) => void;
   onCancel: () => void;
 }
 
-export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCancel }) => {
+export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSave, onCancel }) => {
   const [colorIdx, setColorIdx] = useState(0);
   /** 交互 toggle: 多选 (comment/prompt/file), 点击选中再点取消. 选中后下面分组显示输入 (可 × 删除). */
   const [commentOn, setCommentOn] = useState(false);
@@ -153,6 +156,48 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
     });
   };
 
+  /** AI 生成: 按交互类型拼 prompt 模板, 通过 ask 拓展发请求 (独立 session, 不污染 chat 历史).
+   *  流结束自动回填到 popover 对应 textarea (onComplete). 失败 toast 提示. */
+  const activeGenRef = useRef<AIRequestHandle | null>(null);
+  const handleGenerate = (kind: 'comment' | 'prompt' | 'file') => {
+    if (!state) return;
+    if (activeGenRef.current) {
+      notification.warn({ message: '上一次 AI 生成未结束, 请稍候', type: 'warning', duration: 2 });
+      return;
+    }
+    const file = pdfName || '当前 PDF';
+    const rectDesc = `第 ${state.page} 页, 坐标 [${state.rect.map((n) => Number(n.toFixed(2))).join(', ')}]`;
+    const TEMPLATES: Record<typeof kind, string> = {
+      comment: `通读 ${file} 对选择的区域 (${rectDesc}) 进行批注说明`,
+      prompt: `通读 ${file} 对选择的区域 (${rectDesc}) 生成发送请求知识讲解的提示词`,
+      file: `通读 ${file} 对选择的区域 (${rectDesc}) 进行理解,生成动画示例演示HTML,并保存文件到工作目录下`,
+    };
+    const promptText = TEMPLATES[kind];
+    requestAI(promptText, {
+      onComplete: (text) => {
+        if (kind === 'comment') setCommentText(text);
+        else if (kind === 'prompt') setPromptText(text);
+        else if (kind === 'file') {
+          // 示例演示: AI 应返回 HTML 文本; 暂简单提示用户, 后续如需落盘再说
+          notification.info({ message: `示例演示 HTML 已生成 (${text.length} 字符), 复制后保存到文件`, type: 'info', duration: 4 });
+        }
+        if (kind !== 'file') {
+          notification.success({ message: 'AI 回答已回填到表单', type: 'success', duration: 3 });
+        }
+        activeGenRef.current = null;
+      },
+      onError: (err) => {
+        notification.error({ message: `AI 生成失败: ${err.message}`, type: 'error', duration: 5 });
+        activeGenRef.current = null;
+      },
+    }).then((handle) => {
+      activeGenRef.current = handle;
+      console.log('[pdf] AI 生成已发, sessionId=', handle.sessionId);
+    }).catch((err) => {
+      notification.error({ message: `AI 生成启动失败: ${err.message}`, type: 'error', duration: 5 });
+    });
+  };
+
   const handleSave = () => {
     // 至少选择一种交互类型, 否则不让保存 (停留 popover + codeblitz 提示)
     const hasInteraction =
@@ -247,6 +292,11 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
             rows={2}
             autoFocus={!state.existing}
           />
+          <button
+            type="button"
+            className="ab-annot-popover__btn ab-annot-popover__btn--gen"
+            onClick={() => handleGenerate('comment')}
+          >生成</button>
         </div>
       )}
       {promptOn && (
@@ -267,6 +317,11 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
             onChange={(e) => setPromptText(e.target.value)}
             rows={2}
           />
+          <button
+            type="button"
+            className="ab-annot-popover__btn ab-annot-popover__btn--gen"
+            onClick={() => handleGenerate('prompt')}
+          >生成</button>
         </div>
       )}
       {fileOn && (
@@ -284,6 +339,11 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
             <button type="button" className="ab-annot-popover__btn ab-annot-popover__btn--pick" onClick={openPicker}>
               {fileRef ? `更换: ${fileRef.name}` : '选择文件'}
             </button>
+            <button
+              type="button"
+              className="ab-annot-popover__btn ab-annot-popover__btn--gen"
+              onClick={() => handleGenerate('file')}
+            >生成</button>
           </div>
         </div>
       )}
@@ -487,6 +547,18 @@ const POPOVER_STYLES = `
 }
 .ab-annot-popover__btn--pick:hover {
   background: rgba(128,128,128,0.2);
+}
+.ab-annot-popover__btn--gen {
+  background: linear-gradient(135deg, #8b5cf6 0%, #3794ff 100%);
+  color: #fff;
+  font-weight: 600;
+  padding: 4px 10px;
+  text-align: center;
+  align-self: stretch;
+  font-size: 11px;
+}
+.ab-annot-popover__btn--gen:hover {
+  filter: brightness(1.1);
 }
 .ab-annot-popover__file-clear {
   font: 600 12px/1 sans-serif;
