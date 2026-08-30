@@ -1226,12 +1226,12 @@ function hideAnnotTip() {
   document.querySelectorAll('.ab-pdf-annot.is-hover').forEach((el) => el.classList.remove('is-hover'));
 }
 
-/* ========== 问 AI 按钮 (右下角按钮行, hover 显示) ========== */
-/** 创建"问 AI"按钮 (放按钮行容器内, flex 一行排列). 显示由 hover 控制. */
+/* ========== AI讲解 按钮 (右下角按钮行, hover 显示) ========== */
+/** 创建"AI讲解"按钮 (放按钮行容器内, flex 一行排列). 显示由 hover 控制. */
 function createPromptSendBtn(promptText: string): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.className = 'ab-pdf-prompt-send';
-  btn.textContent = '问 AI';
+  btn.textContent = 'AI讲解';
   btn.style.cssText = `
     display: none;
     font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
@@ -1247,7 +1247,7 @@ function createPromptSendBtn(promptText: string): HTMLButtonElement {
     const api = getChatPanelApi();
     if (api) {
       void api.send(promptText);
-      console.log('[pdf] 问 AI → chat:', promptText.slice(0, 60));
+      console.log('[pdf] AI讲解 → chat:', promptText.slice(0, 60));
     } else {
       console.warn('[pdf] chat api not ready');
     }

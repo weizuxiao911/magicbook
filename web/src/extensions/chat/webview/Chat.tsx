@@ -896,7 +896,7 @@ export const Chat: React.FC = () => {
     requestAnimationFrame(() => requestAnimationFrame(() => taRef.current?.focus()));
   }, [cleanupDraft, refreshSessionStatuses]);
 
-  // 注册 ChatPanelApi (供 PDF 提示词等外部调 send 发消息; 卸载注销)
+  // 注册 ChatPanelApi (供 PDF AI讲解等外部调 send 发消息; 卸载注销)
   useEffect(() => {
     registerChatPanelApi({
       newSession: () => { void onNewSession?.(); },

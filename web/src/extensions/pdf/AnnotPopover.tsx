@@ -6,7 +6,7 @@
  * 颜色: 8 色快速选择, 主题色自适应.
  * 交互能力 (可选, 至少选 1 个才允许保存):
  *   - 批注  (comment) : 悬停显示批注文本
- *   - 提示词 (prompt) : 悬停显示"发送给AI"按钮
+ *   - AI讲解 (prompt) : 悬停显示"AI讲解"按钮
  *   - 文件  (file)    : 悬停显示"打开{文件名}"按钮
  *
  * 编辑模式: 双击已有标注时传入 existing, 预填并保存覆盖.
@@ -211,7 +211,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
           {previewText}
         </div>
       )}
-      {/* 交互类型 toggle (多选): 批注说明 / 提问AI / 示例演示; 表单单显示 (切到哪个显示哪个) */}
+      {/* 交互类型 toggle (多选): 批注说明 / AI讲解 / 示例演示; 表单单显示 (切到哪个显示哪个) */}
       <div className="ab-annot-popover__behavior">
         <span className="ab-annot-popover__behavior-label">交互</span>
         <span className="ab-annot-popover__behavior-toggle">
@@ -224,7 +224,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
             type="button"
             className={`ab-annot-popover__type-btn ${promptOn ? 'is-active' : ''}`}
             onClick={() => toggleInteract('prompt')}
-          >提问AI</button>
+          >AI讲解</button>
           <button
             type="button"
             className={`ab-annot-popover__type-btn ${fileOn ? 'is-active' : ''}`}
@@ -245,7 +245,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
       {activeForm === 'prompt' && promptOn && (
         <textarea
           className="ab-annot-popover__note"
-          placeholder="提问 AI 内容 (点击「提问 AI」按钮发送给 AI)"
+          placeholder="AI讲解内容 (点击「AI讲解」按钮发送给 AI)"
           value={promptText}
           onChange={(e) => setPromptText(e.target.value)}
           rows={2}

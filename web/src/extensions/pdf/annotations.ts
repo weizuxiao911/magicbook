@@ -132,7 +132,7 @@ export async function runAnnotAction(action: AnnotAction, handlers: AnnotHandler
  *         "createdAt": "2026-08-29T..." // ISO
  *         "interactions": [             // 交互能力 (可多选, 至少有 1 个才允许保存)
  *           { "type": "comment", "text": "..." },  // 批注 (hover 显示文本)
- *           { "type": "prompt",  "text": "..." }   // 提示词 (hover 显示"发送给AI"按钮)
+ *           { "type": "prompt",  "text": "..." }   // AI讲解 (hover 显示"AI讲解"按钮)
  *         ],
  *         "file": { "name": "...", "path": "..." } // 关联文件 (hover 显示"打开"按钮)
  *       }
@@ -140,8 +140,8 @@ export async function runAnnotAction(action: AnnotAction, handlers: AnnotHandler
  *   }
  *
  * ===== 概念辨析 (重要) =====
- * "交互能力" (interactions/file 字段) = 标注**能做什么**: 批注 / 提示词 / 打开文件.
- *   - 一期已实现: 批注(comment) / 提示词(prompt) / 打开文件(file).
+ * "交互能力" (interactions/file 字段) = 标注**能做什么**: 批注 / AI讲解 / 打开文件.
+ *   - 一期已实现: 批注(comment) / AI讲解(prompt) / 打开文件(file).
  *   - 这是用户**后续会拓展**的维度 (按需加新交互能力).
  *
  * "交互执行方式" (PdfAnnotMeta.action) = 点击标注时**怎么执行**行为: modal / tab / terminal.
@@ -156,7 +156,7 @@ export async function runAnnotAction(action: AnnotAction, handlers: AnnotHandler
  *   现有 sidecar.json 里的 type 字段会在下次重写时自动消失 (无需迁移脚本).
  */
 
-/** 单个交互能力: comment = 悬停显示批注文本; prompt = 悬停显示"发送给AI"按钮 */
+/** 单个交互能力: comment = 悬停显示批注文本; prompt = 悬停显示"AI讲解"按钮 */
 export interface SidecarInteraction {
   type: 'comment' | 'prompt';
   text: string;
@@ -178,7 +178,7 @@ export interface SidecarAnnot {
   note: string;
   color: [number, number, number];
   createdAt: string;
-  /** 交互能力 (可多选: 批注/提示词), 无则纯高亮 */
+  /** 交互能力 (可多选: 批注/AI讲解), 无则纯高亮 */
   interactions?: SidecarInteraction[];
   /** 文件交互 (可选) */
   file?: SidecarFileRef;
