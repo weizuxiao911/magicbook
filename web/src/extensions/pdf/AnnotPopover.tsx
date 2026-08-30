@@ -235,7 +235,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
       {activeForm === 'comment' && commentOn && (
         <textarea
           className="ab-annot-popover__note"
-          placeholder="批注说明内容 (点击「打开批注」查看)"
+          placeholder="在这里输入说明内容"
           value={commentText}
           onChange={(e) => setCommentText(e.target.value)}
           rows={2}
@@ -245,7 +245,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
       {activeForm === 'prompt' && promptOn && (
         <textarea
           className="ab-annot-popover__note"
-          placeholder="AI讲解内容 (点击「AI讲解」按钮发送给 AI)"
+          placeholder="在这里输入发送给AI的提示词"
           value={promptText}
           onChange={(e) => setPromptText(e.target.value)}
           rows={2}
