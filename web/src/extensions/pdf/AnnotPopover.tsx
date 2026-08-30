@@ -18,12 +18,9 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
-import { useInjectable } from '@opensumi/ide-core-browser';
-import { IFileServiceClient } from '@opensumi/ide-file-service';
 import { notification } from '@opensumi/ide-components/lib/notification';
 import type { SidecarAnnot, SidecarInteraction } from './annotations';
 import { requestFilePicker } from '../filepicker/FilePicker';
-import { ask, type AIRequestHandle } from '../ask/AskService';
 
 const COLORS: Array<{ name: string; rgb: [number, number, number] }> = [
   { name: '蓝', rgb: [55, 148, 255] },
@@ -52,14 +49,11 @@ export interface PopoverState {
 
 export interface AnnotPopoverProps {
   state: PopoverState | null;
-  /** 当前 PDF 文件名 (用于"生成"按钮的 prompt 模板填充 `{file}`) */
-  pdfName?: string;
   onSave: (annot: SidecarAnnot) => void;
   onCancel: () => void;
 }
 
-export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSave, onCancel }) => {
-  const fileService = useInjectable<IFileServiceClient>(IFileServiceClient);
+export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCancel }) => {
   const [colorIdx, setColorIdx] = useState(0);
   /** 交互 toggle: 多选 (comment/prompt/file), 点击选中再点取消. 选中后下面分组显示输入 (可 × 删除). */
   const [commentOn, setCommentOn] = useState(false);
@@ -70,12 +64,6 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
   const [fileOn, setFileOn] = useState(false);
   const [fileRef, setFileRef] = useState<{ name: string; path: string } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  /** 每个交互类型的生成句柄 (独立并发, 互不干扰) */
-  const activeGenRefs = useRef<Map<'comment' | 'prompt', AIRequestHandle>>(new Map());
-  /** 每个交互类型的生成中状态 (独立 loading) */
-  const [generating, setGenerating] = useState<Record<'comment' | 'prompt', boolean>>({ comment: false, prompt: false });
-  const setGenLoading = (kind: 'comment' | 'prompt', loading: boolean) =>
-    setGenerating((prev) => ({ ...prev, [kind]: loading }));
 
   // 每次 state 变化时重置 (新建) 或预填 (编辑 existing)
   useEffect(() => {
@@ -164,7 +152,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
     if (!h) return;
     const next = pickPos(state.x, state.y, h);
     setPos((prev) => (prev.left === next.left && prev.top === next.top ? prev : next));
-  }, [state, commentOn, promptOn, fileOn, generating, commentText, promptText]);
+  }, [state, commentOn, promptOn, fileOn, commentText, promptText]);
   const left = state ? pos.left : 0;
   const top = state ? pos.top : 0;
 
@@ -188,74 +176,6 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
         const idePath = rel.startsWith('/') ? rel : `/${rel}`;
         setFileRef({ name: f.name, path: `file://${WORKSPACE_ROOT}${idePath}` });
       },
-    });
-  };
-
-  /** AI 生成: 每个交互类型独立并发 (各用自己的 session, 独立 loading, 独立回填, 独立重置). */
-  /** 拿标注所在页的 canvas 转成 dataURL 图片 (给 AI 看图, 不读整个 PDF). 拿不到返回 null. */
-  const getPageCanvasImage = (): { name: string; dataUrl: string } | null => {
-    if (!state) return null;
-    const pageDiv = document.querySelector(`.ab-pdf-page[data-page="${state.page}"]`);
-    const canvas = pageDiv?.querySelector('canvas.ab-pdf-canvas') as HTMLCanvasElement | null;
-    if (!canvas) return null;
-    try {
-      const dataUrl = canvas.toDataURL('image/png');
-      return { name: `page${state.page}.png`, dataUrl };
-    } catch { return null; }
-  };
-
-  const handleGenerate = (kind: 'comment' | 'prompt') => {
-    if (!state) return;
-    if (activeGenRefs.current.has(kind)) {
-      notification.warn({ message: '该交互类型正在生成中, 请稍候', type: 'warning', duration: 2 });
-      return;
-    }
-    const pageImage = getPageCanvasImage();
-    const file = pdfName || '当前 PDF';
-    const rectDesc = `第 ${state.page} 页, 坐标 [${state.rect.map((n) => Number(n.toFixed(2))).join(', ')}]`;
-    // 图片已给 AI (标注所在页 canvas), 让 AI 直接看图, 不再通读整个 PDF
-    const TEMPLATES: Record<'comment' | 'prompt', string> = {
-      comment: `图片是 ${file} 第 ${state.page} 页, 对图中标注区域 (${rectDesc}) 进行批注说明`,
-      prompt: `图片是 ${file} 第 ${state.page} 页, 对图中标注区域 (${rectDesc}) 生成发送请求知识讲解的提示词`,
-    };
-    const promptText = TEMPLATES[kind];
-    const finish = () => {
-      activeGenRefs.current.delete(kind);
-      setGenLoading(kind, false);
-    };
-    setGenLoading(kind, true);
-    ask(promptText, (message) => {
-      if (kind === 'comment') {
-        setCommentText(message);
-        notification.success({ message: 'AI 回答已回填到表单', type: 'success', duration: 3 });
-      } else if (kind === 'prompt') {
-        setPromptText(message);
-        notification.success({ message: 'AI 回答已回填到表单', type: 'success', duration: 3 });
-      }
-      finish();
-    }, {
-      onError: (err) => {
-        notification.error({ message: `AI 生成失败: ${err.message}`, type: 'error', duration: 5 });
-        finish();
-      },
-      images: pageImage ? [pageImage] : undefined,
-    }).then((handle) => {
-      activeGenRefs.current.set(kind, handle);
-      console.log('[pdf] AI 生成已发, sessionId=', handle.sessionId, 'kind=', kind, 'withImage=', !!pageImage);
-    }).catch((err) => {
-      notification.error({ message: `AI 生成启动失败: ${err.message}`, type: 'error', duration: 5 });
-      finish();
-    });
-  };
-
-  /** 取消生成: 终止该交互类型的 ask (后端 abort) + 重置按钮. */
-  const handleCancelGenerate = (kind: 'comment' | 'prompt') => {
-    const handle = activeGenRefs.current.get(kind);
-    if (!handle) { setGenLoading(kind, false); return; }
-    void handle.cancel().then(() => {
-      activeGenRefs.current.delete(kind);
-      setGenLoading(kind, false);
-      notification.info({ message: '已取消生成', type: 'info', duration: 2 });
     });
   };
 
@@ -344,12 +264,6 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
             rows={2}
             autoFocus={!state.existing}
           />
-          <button
-            type="button"
-            className={`ab-annot-popover__btn ${generating.comment ? 'ab-annot-popover__btn--gen-cancel' : 'ab-annot-popover__btn--gen'}`}
-            onClick={() => (generating.comment ? handleCancelGenerate('comment') : handleGenerate('comment'))}
-            disabled={false}
-          >{generating.comment ? '取消' : '生成'}</button>
         </div>
       )}
       {promptOn && (
@@ -370,12 +284,6 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
             onChange={(e) => setPromptText(e.target.value)}
             rows={2}
           />
-          <button
-            type="button"
-            className={`ab-annot-popover__btn ${generating.prompt ? 'ab-annot-popover__btn--gen-cancel' : 'ab-annot-popover__btn--gen'}`}
-            onClick={() => (generating.prompt ? handleCancelGenerate('prompt') : handleGenerate('prompt'))}
-            disabled={false}
-          >{generating.prompt ? '取消' : '生成'}</button>
         </div>
       )}
       {fileOn && (
