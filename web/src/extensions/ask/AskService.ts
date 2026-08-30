@@ -105,7 +105,7 @@ class AskService {
   }
 
   /** 主动发请求: 创建 session + 异步发 prompt + 注册 callback. */
-  async request(prompt: string, callbacks: AIRequestCallbacks = {}): Promise<AIRequestHandle> {
+  async request(prompt: string, callbacks: AIRequestCallbacks = {}, opts: AskOptions = {}): Promise<AIRequestHandle> {
     this.ensureStream();
     const client = getClient();
     if (!client) {
@@ -143,10 +143,23 @@ class AskService {
     this.active.set(sessionId, { sessionId, callbacks, text: '', timer });
 
     // 3) 异步发 prompt (fire-and-forget, 回复走 SSE 事件流)
+    //    images: 走 type:'file' part (dataUrl 图片), 跟 chat 附件一致
     try {
+      const parts: any[] = [{ type: 'text', text: prompt }];
+      if (opts?.images?.length) {
+        for (const img of opts.images) {
+          const mime = (img.dataUrl?.split(',')[0].match(/data:([^;]+)/)?.[1]) || 'image/png';
+          parts.push({
+            type: 'file',
+            mime,
+            filename: img.name || 'page.png',
+            url: img.dataUrl,
+          });
+        }
+      }
       await client.session.promptAsync({
         sessionID: sessionId,
-        parts: [{ type: 'text', text: prompt }],
+        parts,
       });
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
@@ -184,13 +197,26 @@ function getInstance(): AskService {
   return _instance;
 }
 
+export interface AskImage {
+  /** 文件名 (显示用) */
+  name: string;
+  /** dataURL 图片 (e.g. canvas.toDataURL('image/png')) */
+  dataUrl: string;
+}
+
+export interface AskOptions {
+  /** 图片附件 (跟 chat 附件一致, type:'file' part) */
+  images?: AskImage[];
+  onError?: (err: Error) => void;
+}
+
 /** 对外 API: 跟 chat 隔离的 AI 通道. 每次调用创建独立 session, 不污染 chat 历史.
- *  `ask(prompt, callback(message))` — callback 收完整组装结果. */
-export function ask(prompt: string, callback: (message: string) => void, opts: { onError?: (err: Error) => void } = {}): Promise<AIRequestHandle> {
+ *  `ask(prompt, callback(message), opts?)` — callback 收完整组装结果; opts.images 带图片附件. */
+export function ask(prompt: string, callback: (message: string) => void, opts: AskOptions = {}): Promise<AIRequestHandle> {
   return getInstance().request(prompt, {
     onComplete: callback,
     onError: opts.onError,
-  });
+  }, opts);
 }
 
 /** 兼容旧名 (若其他调用处还引用 requestAI) */

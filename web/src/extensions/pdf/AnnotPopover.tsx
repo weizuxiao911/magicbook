@@ -192,18 +192,32 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
   };
 
   /** AI 生成: 每个交互类型独立并发 (各用自己的 session, 独立 loading, 独立回填, 独立重置). */
+  /** 拿标注所在页的 canvas 转成 dataURL 图片 (给 AI 看图, 不读整个 PDF). 拿不到返回 null. */
+  const getPageCanvasImage = (): { name: string; dataUrl: string } | null => {
+    if (!state) return null;
+    const pageDiv = document.querySelector(`.ab-pdf-page[data-page="${state.page}"]`);
+    const canvas = pageDiv?.querySelector('canvas.ab-pdf-canvas') as HTMLCanvasElement | null;
+    if (!canvas) return null;
+    try {
+      const dataUrl = canvas.toDataURL('image/png');
+      return { name: `page${state.page}.png`, dataUrl };
+    } catch { return null; }
+  };
+
   const handleGenerate = (kind: 'comment' | 'prompt' | 'file') => {
     if (!state) return;
     if (activeGenRefs.current.has(kind)) {
       notification.warn({ message: '该交互类型正在生成中, 请稍候', type: 'warning', duration: 2 });
       return;
     }
+    const pageImage = getPageCanvasImage();
     const file = pdfName || '当前 PDF';
     const rectDesc = `第 ${state.page} 页, 坐标 [${state.rect.map((n) => Number(n.toFixed(2))).join(', ')}]`;
+    // 图片已给 AI (标注所在页 canvas), 让 AI 直接看图, 不再通读整个 PDF
     const TEMPLATES: Record<typeof kind, string> = {
-      comment: `通读 ${file} 对选择的区域 (${rectDesc}) 进行批注说明`,
-      prompt: `通读 ${file} 对选择的区域 (${rectDesc}) 生成发送请求知识讲解的提示词`,
-      file: `通读 ${file} 对选择的区域 (${rectDesc}) 进行理解,生成动画示例演示HTML,并保存文件到工作目录下`,
+      comment: `图片是 ${file} 第 ${state.page} 页, 对图中标注区域 (${rectDesc}) 进行批注说明`,
+      prompt: `图片是 ${file} 第 ${state.page} 页, 对图中标注区域 (${rectDesc}) 生成发送请求知识讲解的提示词`,
+      file: `图片是 ${file} 第 ${state.page} 页, 对图中标注区域 (${rectDesc}) 进行理解,生成动画示例演示HTML,并保存文件到工作目录下`,
     };
     const promptText = TEMPLATES[kind];
     const finish = () => {
@@ -245,9 +259,10 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
         notification.error({ message: `AI 生成失败: ${err.message}`, type: 'error', duration: 5 });
         finish();
       },
+      images: pageImage ? [pageImage] : undefined,
     }).then((handle) => {
       activeGenRefs.current.set(kind, handle);
-      console.log('[pdf] AI 生成已发, sessionId=', handle.sessionId, 'kind=', kind);
+      console.log('[pdf] AI 生成已发, sessionId=', handle.sessionId, 'kind=', kind, 'withImage=', !!pageImage);
     }).catch((err) => {
       notification.error({ message: `AI 生成启动失败: ${err.message}`, type: 'error', duration: 5 });
       finish();
