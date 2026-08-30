@@ -40,7 +40,12 @@ interface ActiveRequest {
   sessionId: string;
   callbacks: AIRequestCallbacks;
   text: string;
+  /** 超时看门狗 timer */
+  timer: ReturnType<typeof setTimeout> | null;
 }
+
+/** 请求超时看门狗: 超过该时长未收到 idle → 判定失败 (后端可能卡死/模型无响应), 走 onError + 清理. */
+const REQUEST_TIMEOUT_MS = 90_000;
 
 const RUNTIME_KEY = '__APP_OPENCODE_RUNTIME__';
 
@@ -88,7 +93,8 @@ class AskService {
             req.callbacks.onDelta?.('');
           }
         } else if (type === 'session.idle' || (type === 'session.status' && props.status?.type === 'idle')) {
-          // 流结束: 派发 onComplete, 清理 active
+          // 流结束: 清理 timer, 派发 onComplete, 移除 active
+          if (req.timer) clearTimeout(req.timer);
           const finalText = req.text;
           this.active.delete(ssid);
           req.callbacks.onComplete?.(finalText);
@@ -108,10 +114,16 @@ class AskService {
       throw err;
     }
 
-    // 1) 创建 session (走 SDK, 跟 chat 共享 baseUrl + cwd header)
+    // 1) 创建 session (走 SDK; 带 location.directory = 工作目录, 跟 chat 一致,
+    //    否则 session 无目录上下文, 模型工具调用 (找 PDF 等) 会卡死)
     let sessionId: string;
     try {
-      const { data, error } = await client.session.create({});
+      let directory: string | undefined;
+      try {
+        const { data } = await client.path.get();
+        directory = typeof data?.directory === 'string' ? data.directory : undefined;
+      } catch { /* 拿不到就用默认 */ }
+      const { data, error } = await client.session.create(directory ? { location: { directory } } : {});
       if (error) throw error;
       sessionId = data?.id;
       if (!sessionId) throw new Error('session.create: no id in response');
@@ -121,8 +133,14 @@ class AskService {
       throw err;
     }
 
-    // 2) 注册 active
-    this.active.set(sessionId, { sessionId, callbacks, text: '' });
+    // 2) 注册 active + 超时看门狗 (90s 无 idle → 判定失败, 防止按钮永久"生成中")
+    const timer = setTimeout(() => {
+      const req = this.active.get(sessionId);
+      if (!req) return;
+      this.active.delete(sessionId);
+      req.callbacks.onError?.(new Error('AI 生成超时 (90s), 请重试'));
+    }, REQUEST_TIMEOUT_MS);
+    this.active.set(sessionId, { sessionId, callbacks, text: '', timer });
 
     // 3) 异步发 prompt (fire-and-forget, 回复走 SSE 事件流)
     try {
