@@ -426,7 +426,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         });
       } else if (opts.withDelete) {
         const delBtn = document.createElement('span');
-        // 交互: comment → hover 显示批注 tip; prompt/file → 标注框内右下角按钮行 (hover 显示)
+        // 交互: comment / prompt / file 全部走右下角按钮行 (hover 显示), 跟其他交互类型显示效果一致
         const interactions: Array<{ type: 'comment' | 'prompt'; text: string }> = meta.raw?.interactions || [];
         const fileRef = meta.raw?.file as { name: string; path: string } | undefined;
         // 按钮行容器: absolute 右下角, flex 一行右对齐
@@ -437,6 +437,11 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
           flex-direction: row; gap: 4px; align-items: center;
         `;
         const actionBtns: HTMLButtonElement[] = [];
+        // 顺序: comment → prompt → file (按 schema 顺序)
+        const comments = interactions.filter((i) => i.type === 'comment' && i.text);
+        if (comments.length > 0) {
+          actionBtns.push(createCommentOpenBtn(comments.map((c) => c.text).join('\n')));
+        }
         for (const it of interactions) {
           if (it.type === 'prompt' && it.text) {
             const b = createPromptSendBtn(it.text);
@@ -450,11 +455,6 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
           el.style.background = `rgba(${r},${g},${b},0.18)`;
           el.style.boxShadow = `0 0 0 1.5px rgba(${r},${g},${b},0.5)`;
           if (delBtn) delBtn.style.opacity = '1';
-          // comment → 只显示批注内容 (无标题); 多个 comment 合并显示
-          const comments = interactions.filter((i) => i.type === 'comment' && i.text);
-          if (comments.length > 0) {
-            showAnnotTip(el, { ...meta, preview: comments.map((c) => c.text).join('\n'), title: '' }, true);
-          }
           actionBtns.forEach((b) => { b.style.display = 'inline-block'; });
         });
         el.addEventListener('mouseleave', () => {
@@ -462,7 +462,6 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
           el.style.boxShadow = 'none';
           if (delBtn) delBtn.style.opacity = '0';
           actionBtns.forEach((b) => { b.style.display = 'none'; });
-          hideAnnotTip();
         });
         // 双击 → 编辑标注 (从 ref 反查完整 annot)
         el.addEventListener('dblclick', (ev) => {
@@ -1227,12 +1226,12 @@ function hideAnnotTip() {
   document.querySelectorAll('.ab-pdf-annot.is-hover').forEach((el) => el.classList.remove('is-hover'));
 }
 
-/* ========== 提示词"发送给AI"按钮 (右下角按钮行, hover 显示) ========== */
-/** 创建"发送给AI"按钮 (放按钮行容器内, flex 一行排列). 显示由 hover 控制. */
+/* ========== 问 AI 按钮 (右下角按钮行, hover 显示) ========== */
+/** 创建"问 AI"按钮 (放按钮行容器内, flex 一行排列). 显示由 hover 控制. */
 function createPromptSendBtn(promptText: string): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.className = 'ab-pdf-prompt-send';
-  btn.textContent = '发送给 AI';
+  btn.textContent = '问 AI';
   btn.style.cssText = `
     display: none;
     font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
@@ -1248,7 +1247,7 @@ function createPromptSendBtn(promptText: string): HTMLButtonElement {
     const api = getChatPanelApi();
     if (api) {
       void api.send(promptText);
-      console.log('[pdf] 提示词 → chat:', promptText.slice(0, 60));
+      console.log('[pdf] 问 AI → chat:', promptText.slice(0, 60));
     } else {
       console.warn('[pdf] chat api not ready');
     }
@@ -1256,8 +1255,35 @@ function createPromptSendBtn(promptText: string): HTMLButtonElement {
   return btn;
 }
 
-/* ========== 文件交互"打开{文件名}"按钮 (右下角按钮行, hover 显示) ========== */
-/** 创建"打开{文件名}"按钮 (放按钮行容器内): 点击派发 animbook:pdf-annot-openfile (AnnotationActions 打开编辑器). */
+/* ========== 打开批注按钮 (右下角按钮行, hover 显示) ==========
+ * 点击派发 animbook:pdf-annot-modal (AnnotationActions 渲染 modal, codeblitz overlay 风格).
+ * 多条 comment 合并显示 (用 \n 分隔), title 写"批注", source 写 hostPath. */
+function createCommentOpenBtn(commentText: string): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.className = 'ab-pdf-comment-open';
+  btn.textContent = '打开批注';
+  btn.style.cssText = `
+    display: none;
+    font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
+    color: #fff; background: #8b5cf6; border: none; border-radius: 6px;
+    padding: 5px 10px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    pointer-events: auto; white-space: nowrap;
+  `;
+  btn.addEventListener('mouseenter', () => { btn.style.filter = 'brightness(1.1)'; });
+  btn.addEventListener('mouseleave', () => { btn.style.filter = 'none'; });
+  btn.onclick = (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    window.dispatchEvent(new CustomEvent('animbook:pdf-annot-modal', {
+      detail: { title: '批注', content: commentText },
+    }));
+  };
+  return btn;
+}
+
+/* ========== 演示示例"打开{文件名}"按钮 (右下角按钮行, hover 显示) ==========
+ * 交互类型名"演示示例" (popover toggle 文字), 按钮是"打开"动作, 点击派发
+ * animbook:pdf-annot-openfile → AnnotationActions → editorService.open (tab 打开). */
 function createOpenFileBtn(fileRef: { name: string; path: string }): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.className = 'ab-pdf-openfile';
