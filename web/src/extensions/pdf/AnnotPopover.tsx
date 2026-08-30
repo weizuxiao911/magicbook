@@ -211,7 +211,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
           {previewText}
         </div>
       )}
-      {/* 交互类型 toggle (多选): 加批注 / 问AI / 演示示例; 表单单显示 (切到哪个显示哪个) */}
+      {/* 交互类型 toggle (多选): 批注说明 / 提问AI / 示例演示; 表单单显示 (切到哪个显示哪个) */}
       <div className="ab-annot-popover__behavior">
         <span className="ab-annot-popover__behavior-label">交互</span>
         <span className="ab-annot-popover__behavior-toggle">
@@ -219,23 +219,23 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
             type="button"
             className={`ab-annot-popover__type-btn ${commentOn ? 'is-active' : ''}`}
             onClick={() => toggleInteract('comment')}
-          >加批注</button>
+          >批注说明</button>
           <button
             type="button"
             className={`ab-annot-popover__type-btn ${promptOn ? 'is-active' : ''}`}
             onClick={() => toggleInteract('prompt')}
-          >问AI</button>
+          >提问AI</button>
           <button
             type="button"
             className={`ab-annot-popover__type-btn ${fileOn ? 'is-active' : ''}`}
             onClick={() => toggleInteract('file')}
-          >演示示例</button>
+          >示例演示</button>
         </span>
       </div>
       {activeForm === 'comment' && commentOn && (
         <textarea
           className="ab-annot-popover__note"
-          placeholder="批注内容 (点击「打开批注」查看)"
+          placeholder="批注说明内容 (点击「打开批注」查看)"
           value={commentText}
           onChange={(e) => setCommentText(e.target.value)}
           rows={2}
@@ -245,7 +245,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
       {activeForm === 'prompt' && promptOn && (
         <textarea
           className="ab-annot-popover__note"
-          placeholder="问 AI 内容 (点击「问 AI」按钮发送给 AI)"
+          placeholder="提问 AI 内容 (点击「提问 AI」按钮发送给 AI)"
           value={promptText}
           onChange={(e) => setPromptText(e.target.value)}
           rows={2}
@@ -254,9 +254,9 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
       {activeForm === 'file' && fileOn && (
         <div className="ab-annot-popover__file">
           <div className="ab-annot-popover__file-head">
-            <span className="ab-annot-popover__file-label">{fileRef ? `已选: ${fileRef.name}` : '选择演示示例文件'}</span>
+            <span className="ab-annot-popover__file-label">{fileRef ? `已选: ${fileRef.name}` : '选择示例演示文件'}</span>
             {fileRef && (
-              <button type="button" className="ab-annot-popover__file-clear" onClick={() => setFileRef(null)} title="移除演示示例">×</button>
+              <button type="button" className="ab-annot-popover__file-clear" onClick={() => setFileRef(null)} title="移除示例演示">×</button>
             )}
           </div>
           <button type="button" className="ab-annot-popover__btn ab-annot-popover__btn--pick" onClick={openPicker}>
