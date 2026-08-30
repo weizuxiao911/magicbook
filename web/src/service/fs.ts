@@ -21,6 +21,7 @@ import { Injectable, Autowired } from '@opensumi/di';
 import { BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser';
 import { Domain, CommandService, FileChangeType, URI } from '@opensumi/ide-core-common';
 import { IFileServiceClient } from '@opensumi/ide-file-service/lib/common';
+import { IFileTreeService } from '@opensumi/ide-file-tree-next/lib/common';
 import { WorkbenchEditorService } from '@opensumi/ide-editor';
 import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
@@ -371,6 +372,16 @@ async function readPathHash(relPath: string): Promise<string | null> {
   try {
     const fsApi = (window as any).__APP_FS__;
     if (!fsApi?.read) return null;
+    // 先确认真实存在性: 用 FsPty stat (真实宿主磁盘, 不走 listCache 缓存).
+    // 删除后 read 可能返回空数组而非抛错, 且 exists() 走 listCache 缓存误报 → 空文件 hash
+    // 跟创建时一致 → skip, 删除事件被吞. stat 真实存在 → null (DELETED).
+    try {
+      const abs = absPath(relPath);
+      const { ok } = await getFsPty().request<{ size: number }>('stat', { path: abs }, 5000).catch(() => ({ ok: false, data: null as any }));
+      if (!ok) return null;
+    } catch {
+      return null;
+    }
     const bytes = await fsApi.read(relPath);
     if (!bytes || bytes.length === 0) return await contentHash(new Uint8Array(0));
     return await contentHash(bytes as Uint8Array);
@@ -656,6 +667,9 @@ export class FileSystemServiceImpl implements IFileSystem {
   @Autowired(IFileServiceClient)
   private readonly fileService!: IFileServiceClient;
 
+  @Autowired(IFileTreeService)
+  private readonly fileTreeService!: IFileTreeService;
+
   @Autowired(WorkbenchEditorService)
   private readonly editorService!: WorkbenchEditorService;
 
@@ -677,10 +691,40 @@ export class FileSystemServiceImpl implements IFileSystem {
     window.addEventListener('pagehide', () => stopFsWatcher());
     window.addEventListener('beforeunload', () => stopFsWatcher());
     // 把 fireFilesChange 注入到 watcher 模块 (避免循环 import) + 同步打开的编辑器 (外部修改 → reload)
-    bindWatcherFireFilesChange((changes) => {
+    bindWatcherFireFilesChange(async (changes) => {
+      // 清 BrowserFS 缓存: writable InMemory 目录树 + readable DynamicRequest FileIndex (entriesLoaded 旧列表)
+      // → explorer 重新 stat/readdir 拿真实数据
+      try { (window as any).__APP_WRITE_SYNC_FS__?.clearCache?.(); } catch { /* ignore */ }
+      try { (window as any).__RESET_BFS_CACHE__?.(); } catch { /* ignore */ }
+      changes.forEach((c) => this.invalidateParent(uriToRel(c.uri)));
       this.fileService.fireFilesChange({ changes });
+      // 额外 fire 父目录 → 触发 explorer 树刷新 (单文件 ADDED 不会自动刷新树).
+      // 根目录用 DELETED (type 2): explorer isRootAffected 只认 type > UPDATED 才强制刷新整树.
+      const dirChanges = new Map<string, boolean>();
+      changes.forEach((c) => {
+        const rel = uriToRel(c.uri);
+        const parent = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) || '/' : '/';
+        if (parent !== rel) {
+          const dirUri = parent === '/' ? `file://${WORKSPACE_ROOT}` : `file://${WORKSPACE_ROOT}${parent}`;
+          dirChanges.set(dirUri, true);
+        }
+      });
+      if (dirChanges.size > 0) {
+        this.fileService.fireFilesChange({
+          changes: Array.from(dirChanges.keys()).map((uri) => {
+            const isRoot = uri === `file://${WORKSPACE_ROOT}`;
+            return { uri, type: (isRoot ? 2 : 1) as FileChangeType };
+          }),
+        });
+      }
       // 外部修改 → 已打开且不 dirty 的编辑器直接更新内容 (绕开 OpenSumi getMd5 缓存链路)
       changes.forEach((c) => this.syncOpenEditor(uriToRel(c.uri)));
+      // 强制 explorer 树刷新 (fireFilesChange 的 ADDED 不会自动刷新树)
+      try {
+        await this.fileTreeService?.refresh();
+      } catch (e) {
+        console.warn('[filesystem] fileTree refresh fail:', e);
+      }
     });
     const onReady = () => {
       this.connectEvents();
@@ -1056,6 +1100,10 @@ export class FileSystemServiceImpl implements IFileSystem {
     });
     if (results.some((r) => !r.ok)) return false;
     this.invalidateParent(idePath);
+    // 记录自写 hash → pty watch 对比一致 → skip 不 fire (断循环)
+    if (typeof content === 'string') {
+      await recordSyncedHash(idePath, content);
+    }
     return true;
   }
 
@@ -1066,7 +1114,10 @@ export class FileSystemServiceImpl implements IFileSystem {
 
   async rm(idePath: string): Promise<boolean> {
     const ok = (await getFsPty().request('rm', { path: absPath(idePath) })).ok;
-    if (ok) this.invalidateParent(idePath);
+    if (ok) {
+      this.invalidateParent(idePath);
+      await recordSyncedHash(idePath, null);  // 自删记录 null → watcher 对比一致 skip
+    }
     return ok;
   }
 
