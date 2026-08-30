@@ -1281,13 +1281,13 @@ function createCommentOpenBtn(commentText: string): HTMLButtonElement {
   return btn;
 }
 
-/* ========== 示例演示"打开{文件名}"按钮 (右下角按钮行, hover 显示) ==========
- * 交互类型名"示例演示" (popover toggle 文字), 按钮是"打开"动作, 点击派发
+/* ========== 示例演示"演示示例"按钮 (右下角按钮行, hover 显示) ==========
+ * 交互类型名"示例演示" (popover toggle 文字), 按钮文字"演示示例" (用户拍板), 点击派发
  * animbook:pdf-annot-openfile → AnnotationActions → editorService.open (tab 打开). */
 function createOpenFileBtn(fileRef: { name: string; path: string }): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.className = 'ab-pdf-openfile';
-  btn.textContent = `打开 ${fileRef.name}`;
+  btn.textContent = `演示示例`;
   btn.style.cssText = `
     display: none;
     font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
