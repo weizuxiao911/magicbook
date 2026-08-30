@@ -805,16 +805,24 @@ export class FileSystemServiceImpl implements IFileSystem {
       const ed = monaco.editor.getEditors?.().find((e: any) => e.getModel?.() === target);
       if (ed && ed.getModifiedLinesCount?.() > 0) return;
       if (target.getAlternativeVersionId() !== target.getVersionId()) return; // dirty 兜底
-      // 读服务器新内容 → 更新 model (保留 undo 栈)
-      void getFileSystemService()
-        .read(relPath)
-        .then((bytes) => {
+      // 读服务器新内容 → 更新 model (保留 undo 栈).
+      // 先 stat 确认文件存在: 外部删除后 read 返回空数组 (非抛错), 直接更新会把删除当"空内容"
+      // → model 变化 → 触发写回 (WriteSyncFS.syncWrite) → 远程又创建空文件!
+      void (async () => {
+        try {
+          const st = await getFsPty().request<{ size: number }>('stat', { path: absPath(relPath) }, 5000).catch(() => ({ ok: false, data: null as any }));
+          if (!st.ok) {
+            // 文件已删除: 不更新编辑器 (防止空内容写回); 让 OpenSumi 自身处理 (tab 关闭等)
+            console.log('[fs] 外部删除 → 跳过编辑器同步:', relPath);
+            return;
+          }
+          const bytes = await getFileSystemService().read(relPath);
           const content = new TextDecoder().decode(bytes);
           if (content === target.getValue()) return;
           target.pushEditOperations([], [{ range: target.getFullModelRange(), text: content }], () => null);
           console.log('[fs] 外部修改 → 已同步编辑器:', relPath);
-        })
-        .catch(() => {});
+        } catch { /* read/stat 失败静默 */ }
+      })();
     } catch (e) {
       console.warn('[fs] syncOpenEditor failed:', relPath, e);
     }
