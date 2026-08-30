@@ -12,6 +12,11 @@
  *   - 自写去重: 写完前算 contentHash, 监听 fs:changed 时 hash 对比, 相同跳过 reload
  *   - 失败: 抛错给上层, 上层 toast + 保留 in-memory 状态 + 标"未保存"红点
  *     (无 FsPty 退避重试, IFileServiceClient 走 HTTP 失败就失败, 用户手动重试)
+ *
+ * 字段兼容 (2026-08-30 起):
+ *   - 读盘: parseSidecarAnnot 静默 strip `type` 字段 (历史 highlight/note, 已弃用), 不入 in-memory
+ *   - 写盘: SidecarAnnot 接口已无 type 字段, JSON.stringify 自然不带, 现有 type 会在下次重写时消失
+ *   - 旧 behavior 单字段: 读时合并到 interactions (保留兼容)
  */
 
 import { IFileServiceClient } from '@opensumi/ide-file-service';

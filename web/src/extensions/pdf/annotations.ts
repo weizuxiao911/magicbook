@@ -115,33 +115,48 @@ export async function runAnnotAction(action: AnnotAction, handlers: AnnotHandler
  * 位置: PDF 同目录, IDE 相对路径 = `/.{basename}.annotation` (前导 dot 隐藏, 仍可读)
  * 路径转换: sidecarPath() in PdfReaderView.tsx
  *
- * 用途: 用户在 PDF 上文本圈选, 弹出 popover 设置类型 / 颜色 / 备注, 持久化到 sidecar.
- *       跟内嵌 annotation 合并显示, 行为后续阶段 (modal/tab/terminal) 暂搁置.
+ * 用途: 用户在 PDF 上画矩形圈选区域, 弹出 popover 设置颜色 + 交互能力, 持久化到 sidecar.
+ *       跟内嵌 annotation 合并显示, 交互执行方式 (modal/tab/terminal) 暂搁置.
  *
- * Schema v1:
+ * Schema v1 (2026-08-30 清理: 删 type 字段, 标注不再区分"高亮/便签", 全部统一为高亮矩形):
  *   {
  *     "version": 1,
  *     "items": [
  *       {
  *         "id": "uuid-xxx",             // 客户端生成, 幂等写
  *         "page": 1,                    // 1-based
- *         "type": "highlight",          // highlight | note
  *         "rect": [x1, y1, x2, y2],     // PDF 原坐标 (左下原点)
- *         "selectedText": "...",        // 圈选文本快照 (note 模式也用作默认备注)
- *         "note": "用户备注",            // note 类型的备注; highlight 模式可空
+ *         "selectedText": "...",        // 圈选文本快照 (后续用于备注默认填充)
+ *         "note": "用户备注",            // 通用备注 (可空)
  *         "color": [55, 148, 255],      // rgb 0-255, 默认蓝
  *         "createdAt": "2026-08-29T..." // ISO
+ *         "interactions": [             // 交互能力 (可多选, 至少有 1 个才允许保存)
+ *           { "type": "comment", "text": "..." },  // 批注 (hover 显示文本)
+ *           { "type": "prompt",  "text": "..." }   // 提示词 (hover 显示"发送给AI"按钮)
+ *         ],
+ *         "file": { "name": "...", "path": "..." } // 关联文件 (hover 显示"打开"按钮)
  *       }
  *     ]
  *   }
  *
- * TODO 后续: action 字段
- *   "action": { "type": "modal"|"tab"|"terminal", "title": "...", "payload": "..." }
+ * ===== 概念辨析 (重要) =====
+ * "交互能力" (interactions/file 字段) = 标注**能做什么**: 批注 / 提示词 / 打开文件.
+ *   - 一期已实现: 批注(comment) / 提示词(prompt) / 打开文件(file).
+ *   - 这是用户**后续会拓展**的维度 (按需加新交互能力).
+ *
+ * "交互执行方式" (PdfAnnotMeta.action) = 点击标注时**怎么执行**行为: modal / tab / terminal.
+ *   - 仅 PDF 内嵌 annotation 用, 通过 contents `[modal:title] 内容` 约定.
+ *   - sidecar 一期暂不绑定执行方式, 仅记录"能力", hover 显示按钮.
+ *
+ * 历史: 早期 AI POC 时定义了 `type: highlight | note` 作为"标注类型", 实际只是视觉分类 (高亮 vs 便签图标),
+ *   跟"交互能力"是不同维度但被混淆, 导致 popover 让用户选"高亮/便签" — 用户明确这是 AI 自作主张.
+ *   2026-08-30 清理: 删 type 字段, 全部统一为高亮矩形 (color 决定颜色), 视觉不再分"高亮型/便签型".
+ *
+ * 兼容策略: 读盘时 strip `type` 字段 (忽略不入 in-memory), 写盘时不带 type 字段.
+ *   现有 sidecar.json 里的 type 字段会在下次重写时自动消失 (无需迁移脚本).
  */
 
-export type SidecarAnnotType = 'highlight' | 'note';
-
-/** 单个交互行为: comment = 悬停显示批注文本; prompt = 悬停显示"发送给AI"按钮 */
+/** 单个交互能力: comment = 悬停显示批注文本; prompt = 悬停显示"发送给AI"按钮 */
 export interface SidecarInteraction {
   type: 'comment' | 'prompt';
   text: string;
@@ -158,17 +173,16 @@ export interface SidecarFileRef {
 export interface SidecarAnnot {
   id: string;
   page: number;
-  type: SidecarAnnotType;
   rect: [number, number, number, number];
   selectedText: string;
   note: string;
   color: [number, number, number];
   createdAt: string;
-  /** 交互行为 (可多选: 批注/提示词), 无则纯高亮 */
+  /** 交互能力 (可多选: 批注/提示词), 无则纯高亮 */
   interactions?: SidecarInteraction[];
   /** 文件交互 (可选) */
   file?: SidecarFileRef;
-  /** 旧版单交互字段 (兼容读) */
+  /** 旧版单交互字段 (兼容读, 读时合并到 interactions) */
   behavior?: SidecarInteraction;
 }
 
@@ -177,10 +191,10 @@ export interface SidecarAnnotFile {
   items: SidecarAnnot[];
 }
 
-const VALID_TYPES: SidecarAnnotType[] = ['highlight', 'note'];
 const DEFAULT_COLOR: [number, number, number] = [55, 148, 255];
 
-/** 校验单条 sidecar annot, 字段缺失/类型错时返回 null. 容错为主. */
+/** 校验单条 sidecar annot, 字段缺失/类型错时返回 null. 容错为主.
+ *  type 字段: 历史遗留 (highlight/note), 2026-08-30 起已弃用, 读时静默 strip, 不入 in-memory. */
 export function parseSidecarAnnot(raw: any): SidecarAnnot | null {
   if (!raw || typeof raw !== 'object') return null;
   const id = String(raw.id || '').trim();
@@ -195,7 +209,6 @@ export function parseSidecarAnnot(raw: any): SidecarAnnot | null {
     Number(rect[2]) || 0,
     Number(rect[3]) || 0,
   ];
-  const type: SidecarAnnotType = VALID_TYPES.includes(raw.type) ? raw.type : 'highlight';
   // interactions: [{type:'comment'|'prompt', text}] (多选)
   let interactions: SidecarInteraction[] | undefined;
   if (Array.isArray(raw.interactions)) {
@@ -224,7 +237,6 @@ export function parseSidecarAnnot(raw: any): SidecarAnnot | null {
   return {
     id,
     page,
-    type,
     rect: r,
     selectedText: typeof raw.selectedText === 'string' ? raw.selectedText : '',
     note: typeof raw.note === 'string' ? raw.note : '',
@@ -251,19 +263,19 @@ export function parseSidecarFile(raw: any): SidecarAnnotFile {
 }
 
 /** sidecar annot → 跟内嵌 PdfAnnotMeta 同形, 复用现有渲染热区代码.
- *  有交互时 title/preview 取首个 comment/prompt 文本; raw 带完整 interactions + file 供渲染. */
+ *  有交互能力时 title/preview 取首个 comment/prompt 文本; raw 带完整 interactions + file 供渲染. */
 export function sidecarToAnnotMeta(s: SidecarAnnot): PdfAnnotMeta {
   const firstText = s.interactions?.find((i) => i.text)?.text || '';
   return {
     id: s.id,
-    subtype: s.type === 'note' ? 'Note' : 'Highlight',
+    subtype: 'Highlight',
     page: s.page,
     title: firstText || s.note || (s.selectedText ? s.selectedText.split('\n')[0].slice(0, 60) : '已批注'),
     preview: firstText || s.note || s.selectedText.slice(0, 120),
     action: null,
     raw: {
       id: s.id,
-      subtype: s.type === 'note' ? 'Note' : 'Highlight',
+      subtype: 'Highlight',
       rect: s.rect,
       contentsObj: { str: firstText || s.note || s.selectedText },
       color: new Uint8ClampedArray(s.color),

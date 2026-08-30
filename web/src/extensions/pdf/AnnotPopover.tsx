@@ -1,11 +1,18 @@
 /**
- * AnnotPopover — 文本圈选后悬浮操作窗口
+ * AnnotPopover — 画矩形后悬浮操作窗口
  *
- * 在文本选区右上角弹小 popover, 选类型 / 颜色 / 交互行为, 保存触发 onSave, 取消触发 onCancel.
- * 类型: highlight (默认) / note.
+ * 在矩形区域右上角弹小 popover, 选颜色 + 交互能力, 保存触发 onSave, 取消触发 onCancel.
+ *
  * 颜色: 8 色快速选择, 主题色自适应.
- * 交互行为 (可选): comment = 批注 (悬停显示文本); prompt = 提示词 (悬停显示"发送给AI"按钮).
+ * 交互能力 (可选, 至少选 1 个才允许保存):
+ *   - 批注  (comment) : 悬停显示批注文本
+ *   - 提示词 (prompt) : 悬停显示"发送给AI"按钮
+ *   - 文件  (file)    : 悬停显示"打开{文件名}"按钮
+ *
  * 编辑模式: 双击已有标注时传入 existing, 预填并保存覆盖.
+ *
+ * 注意: 2026-08-30 起, 标注不再有"类型"维度 (highlight/note 全部统一为高亮矩形).
+ *   此处 "type-btn" 类名是历史命名, 实际指交互能力按钮 (comment/prompt/file), 不要被误导.
  */
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -165,7 +172,6 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
     const annot: SidecarAnnot = {
       id: ex?.id || 'a-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
       page: state.page,
-      type: ex?.type || 'highlight',
       rect: state.rect,
       selectedText: state.selectedText,
       note: '',
