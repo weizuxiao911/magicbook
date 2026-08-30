@@ -15,13 +15,15 @@
  *   此处 "type-btn" 类名是历史命名, 实际指交互能力按钮 (comment/prompt/file), 不要被误导.
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
+import { useInjectable } from '@opensumi/ide-core-browser';
+import { IFileServiceClient } from '@opensumi/ide-file-service';
 import { notification } from '@opensumi/ide-components/lib/notification';
 import type { SidecarAnnot, SidecarInteraction } from './annotations';
 import { requestFilePicker } from '../filepicker/FilePicker';
-import { requestAI, type AIRequestHandle } from '../ask/AskService';
+import { ask, type AIRequestHandle } from '../ask/AskService';
 
 const COLORS: Array<{ name: string; rgb: [number, number, number] }> = [
   { name: '蓝', rgb: [55, 148, 255] },
@@ -57,6 +59,7 @@ export interface AnnotPopoverProps {
 }
 
 export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSave, onCancel }) => {
+  const fileService = useInjectable<IFileServiceClient>(IFileServiceClient);
   const [colorIdx, setColorIdx] = useState(0);
   /** 交互 toggle: 多选 (comment/prompt/file), 点击选中再点取消. 选中后下面分组显示输入 (可 × 删除). */
   const [commentOn, setCommentOn] = useState(false);
@@ -124,20 +127,46 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
     return () => window.removeEventListener('keydown', onKey, true);
   }, [state, onCancel]);
 
-  if (!state) return null;
-
-  // 边界修正: 选区下方居中, 超出视口时调整
+  // 定位: 紧贴标注位置 (锚点 = 标注右上角 state.x/y), 按可视区上下左右 4 向自适应.
+  // 先用 MAX_H 估算选方向渲染 (不闪), 再 useLayoutEffect 用实际高度重选方向 (单帧内到位).
   const W = 340;
   const PAD = 8;
-  // 默认: 选区下方居中. 实际高度自适应 (maxHeight: 80vh), 用 maxHeight 估算.
-  const MAX_H = Math.min(window.innerHeight * 0.8, 720);
-  let left = state.x - W / 2;
-  let top = state.y + PAD;
-  if (typeof window !== 'undefined') {
-    if (left < 4) left = 4;
-    if (left + W > window.innerWidth - 4) left = window.innerWidth - W - 4;
-    if (top + MAX_H > window.innerHeight - 4) top = Math.max(4, state.y - MAX_H - PAD);
-  }
+  const MAX_H = typeof window !== 'undefined' ? Math.min(window.innerHeight * 0.8, 720) : 480;
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1024;
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 768;
+  const pickPos = (ax: number, ay: number, h: number) => {
+    const candidates: Array<{ left: number; top: number }> = [
+      { left: ax + PAD, top: ay + PAD },           // 右下 (默认)
+      { left: ax - W - PAD, top: ay + PAD },       // 左下 (右边放不下)
+      { left: ax + PAD, top: ay - h - PAD },       // 右上 (下边放不下)
+      { left: ax - W - PAD, top: ay - h - PAD },   // 左上 (右下都不够)
+    ];
+    let pos = candidates[0];
+    for (const c of candidates) {
+      if (c.left >= 4 && c.left + W <= vw - 4 && c.top >= 4 && c.top + h <= vh - 4) {
+        pos = c;
+        break;
+      }
+    }
+    return {
+      left: Math.max(4, Math.min(pos.left, vw - W - 4)),
+      top: Math.max(4, Math.min(pos.top, vh - h - 4)),
+    };
+  };
+  const [pos, setPos] = useState({ left: 0, top: 0 });
+  useLayoutEffect(() => {
+    if (!state) return;
+    const el = ref.current;
+    if (!el) return;
+    const h = el.offsetHeight;
+    if (!h) return;
+    const next = pickPos(state.x, state.y, h);
+    setPos((prev) => (prev.left === next.left && prev.top === next.top ? prev : next));
+  }, [state, commentOn, promptOn, fileOn, generatingKind, commentText, promptText]);
+  const left = state ? pos.left : 0;
+  const top = state ? pos.top : 0;
+
+  if (!state) return null;
 
   const color = COLORS[colorIdx].rgb;
 
@@ -177,20 +206,37 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
     };
     const promptText = TEMPLATES[kind];
     setGeneratingKind(kind);
-    requestAI(promptText, {
-      onComplete: (text) => {
-        if (kind === 'comment') setCommentText(text);
-        else if (kind === 'prompt') setPromptText(text);
-        else if (kind === 'file') {
-          // 示例演示: AI 应返回 HTML 文本; 暂简单提示用户, 后续如需落盘再说
-          notification.info({ message: `示例演示 HTML 已生成 (${text.length} 字符), 复制后保存到文件`, type: 'info', duration: 4 });
-        }
-        if (kind !== 'file') {
-          notification.success({ message: 'AI 回答已回填到表单', type: 'success', duration: 3 });
-        }
-        activeGenRef.current = null;
-        setGeneratingKind(null);
-      },
+    ask(promptText, (message) => {
+      if (kind === 'comment') {
+        setCommentText(message);
+        notification.success({ message: 'AI 回答已回填到表单', type: 'success', duration: 3 });
+      } else if (kind === 'prompt') {
+        setPromptText(message);
+        notification.success({ message: 'AI 回答已回填到表单', type: 'success', duration: 3 });
+      } else if (kind === 'file') {
+        // 示例演示: AI 返回 HTML, 自动写盘到 workspace + 填 fileRef
+        const stem = (pdfName || 'demo').replace(/\.pdf$/i, '').replace(/[\\/:*?"<>|]/g, '_');
+        const fileName = `${stem}-demo-${Date.now()}.html`;
+        const relPath = `/${fileName}`;
+        const uri = `file://${WORKSPACE_ROOT}${relPath}`;
+        void (async () => {
+          try {
+            const stat = await fileService.getFileStat(uri).catch(() => null);
+            if (!stat) {
+              await fileService.createFile(uri, { content: message } as any);
+            } else {
+              await fileService.setContent(stat, message);
+            }
+            setFileRef({ name: fileName, path: uri });
+            notification.success({ message: `示例演示 HTML 已保存到 ${relPath}`, type: 'success', duration: 4 });
+          } catch (e) {
+            notification.error({ message: `文件保存失败: ${(e as any)?.message || e}`, type: 'error', duration: 5 });
+          }
+        })();
+      }
+      activeGenRef.current = null;
+      setGeneratingKind(null);
+    }, {
       onError: (err) => {
         notification.error({ message: `AI 生成失败: ${err.message}`, type: 'error', duration: 5 });
         activeGenRef.current = null;
@@ -236,10 +282,6 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
     onSave(annot);
   };
 
-  const previewText = state.selectedText.length > 100
-    ? state.selectedText.slice(0, 100) + '…'
-    : state.selectedText;
-
   return createPortal(
     <div
       ref={ref}
@@ -254,11 +296,6 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
           {state.existing ? `编辑标注 (第 ${state.page} 页)` : `第 ${state.page} 页`}
         </span>
       </div>
-      {previewText && (
-        <div className="ab-annot-popover__preview" title={state.selectedText}>
-          {previewText}
-        </div>
-      )}
       {/* 交互类型 toggle (多选): 批注说明 / AI讲解 / 示例演示; 选中的全部在下面分组显示 (可 × 删除) */}
       <div className="ab-annot-popover__behavior">
         <span className="ab-annot-popover__behavior-label">交互</span>
@@ -436,19 +473,6 @@ const POPOVER_STYLES = `
 .ab-annot-popover__hint {
   font-size: 10px;
   color: var(--descriptionForeground, var(--vscode-descriptionForeground, #9ca3af));
-}
-.ab-annot-popover__preview {
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--descriptionForeground, var(--vscode-descriptionForeground, #9ca3af));
-  background: rgba(128,128,128,0.08);
-  border-radius: 5px;
-  padding: 6px 8px;
-  max-height: 60px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 .ab-annot-popover__note {
   font: inherit;
