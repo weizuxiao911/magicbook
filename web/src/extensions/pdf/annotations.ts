@@ -209,14 +209,18 @@ export function parseSidecarAnnot(raw: any): SidecarAnnot | null {
     Number(rect[2]) || 0,
     Number(rect[3]) || 0,
   ];
-  // interactions: [{type:'comment'|'prompt', text}] (多选)
+  // interactions: [{type:'comment'|'prompt', text}] (多选, 但每 type 最多 1 个 — 读盘归一化去重)
   let interactions: SidecarInteraction[] | undefined;
   if (Array.isArray(raw.interactions)) {
     const list: SidecarInteraction[] = [];
+    const seen = new Set<string>();
     for (const it of raw.interactions) {
       if (it && typeof it === 'object' &&
           (it.type === 'comment' || it.type === 'prompt') &&
           typeof it.text === 'string') {
+        // 每 type 最多 1 个: 脏数据 (多次生成残留) 按 type 去重, 优先保留第一个
+        if (seen.has(it.type)) continue;
+        seen.add(it.type);
         list.push({ type: it.type, text: it.text });
       }
     }
