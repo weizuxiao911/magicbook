@@ -202,6 +202,37 @@ export function resetBrowserFSCache(): void {
 /** 暴露 resetBrowserFSCache 到全局 (fs.ts 避免循环 import 直接读) */
 (window as any).__RESET_BFS_CACHE__ = resetBrowserFSCache;
 
+/** 从 OverlayFS deletionLog 恢复指定路径 (文件真实存在时不能标记"已删"):
+ *  历史残留/误删标记会让 OverlayFS 一直认为文件不存在, 挡住 explorer/编辑器, 甚至触发反向删除远程. */
+export function restoreFromDeletionLog(relPath: string): void {
+  try {
+    const key = relPath.startsWith('/') ? relPath : `/${relPath}`;
+    const root = (browserNodeFs as any).getRootFS?.();
+    const mnt = root?.mntMap || root?._mntMap;
+    const visit = (f: any): void => {
+      if (!f) return;
+      const overlay = f._readable?.constructor?.name === 'UnlockedOverlayFS'
+        ? f._readable
+        : (f._fs?.constructor?.name === 'UnlockedOverlayFS' ? f._fs : null);
+      if (overlay?._deletedFiles && overlay._deletedFiles[key] === true) {
+        delete overlay._deletedFiles[key];
+        // 重建 deletionLog (只保留仍删除的路径)
+        const newLog = Object.keys(overlay._deletedFiles)
+          .filter((k) => overlay._deletedFiles[k])
+          .map((k) => `d${k}\n`)
+          .join('');
+        overlay._deleteLog = newLog;
+        try { overlay._writable?.writeFileSync?.('/.browserfs_deletedFiles.log', newLog, 'utf8', 'w', 420); } catch { /* ignore */ }
+        console.log('[bfs-restore] deletionLog restored:', key);
+      }
+      visit(f._fs); visit(f._mu); visit(f._readable); visit(f._writable);
+    };
+    if (mnt) for (const k of Object.keys(mnt)) visit(mnt[k]);
+    visit(root);
+  } catch { /* ignore */ }
+}
+(window as any).__RESTORE_DELETION_LOG__ = restoreFromDeletionLog;
+
 export const runtimeConfig: IAppRendererProps['runtimeConfig'] = {
   workspace: {
     filesystem: {
