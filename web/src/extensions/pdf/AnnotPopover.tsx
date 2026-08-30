@@ -69,6 +69,8 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
   const ref = useRef<HTMLDivElement>(null);
   /** AI 生成进行中 (用于禁用重复点击 + 错误回滚) */
   const activeGenRef = useRef<AIRequestHandle | null>(null);
+  /** 当前生成中的交互类型 (用于 loading 状态; 同时只允许 1 个进行中) */
+  const [generatingKind, setGeneratingKind] = useState<'comment' | 'prompt' | 'file' | null>(null);
 
   // 每次 state 变化时重置 (新建) 或预填 (编辑 existing)
   useEffect(() => {
@@ -162,7 +164,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
    *  流结束自动回填到 popover 对应 textarea (onComplete). 失败 toast 提示. */
   const handleGenerate = (kind: 'comment' | 'prompt' | 'file') => {
     if (!state) return;
-    if (activeGenRef.current) {
+    if (activeGenRef.current || generatingKind) {
       notification.warn({ message: '上一次 AI 生成未结束, 请稍候', type: 'warning', duration: 2 });
       return;
     }
@@ -174,6 +176,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
       file: `通读 ${file} 对选择的区域 (${rectDesc}) 进行理解,生成动画示例演示HTML,并保存文件到工作目录下`,
     };
     const promptText = TEMPLATES[kind];
+    setGeneratingKind(kind);
     requestAI(promptText, {
       onComplete: (text) => {
         if (kind === 'comment') setCommentText(text);
@@ -186,16 +189,20 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
           notification.success({ message: 'AI 回答已回填到表单', type: 'success', duration: 3 });
         }
         activeGenRef.current = null;
+        setGeneratingKind(null);
       },
       onError: (err) => {
         notification.error({ message: `AI 生成失败: ${err.message}`, type: 'error', duration: 5 });
         activeGenRef.current = null;
+        setGeneratingKind(null);
       },
     }).then((handle) => {
       activeGenRef.current = handle;
       console.log('[pdf] AI 生成已发, sessionId=', handle.sessionId);
     }).catch((err) => {
       notification.error({ message: `AI 生成启动失败: ${err.message}`, type: 'error', duration: 5 });
+      activeGenRef.current = null;
+      setGeneratingKind(null);
     });
   };
 
@@ -297,7 +304,8 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
             type="button"
             className="ab-annot-popover__btn ab-annot-popover__btn--gen"
             onClick={() => handleGenerate('comment')}
-          >生成</button>
+            disabled={generatingKind !== null}
+          >{generatingKind === 'comment' ? '生成中…' : (generatingKind ? '等待中…' : '生成')}</button>
         </div>
       )}
       {promptOn && (
@@ -322,7 +330,8 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
             type="button"
             className="ab-annot-popover__btn ab-annot-popover__btn--gen"
             onClick={() => handleGenerate('prompt')}
-          >生成</button>
+            disabled={generatingKind !== null}
+          >{generatingKind === 'prompt' ? '生成中…' : (generatingKind ? '等待中…' : '生成')}</button>
         </div>
       )}
       {fileOn && (
@@ -344,7 +353,8 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
               type="button"
               className="ab-annot-popover__btn ab-annot-popover__btn--gen"
               onClick={() => handleGenerate('file')}
-            >生成</button>
+              disabled={generatingKind !== null}
+            >{generatingKind === 'file' ? '生成中…' : (generatingKind ? '等待中…' : '生成')}</button>
           </div>
         </div>
       )}
@@ -557,9 +567,16 @@ const POPOVER_STYLES = `
   text-align: center;
   align-self: stretch;
   font-size: 11px;
+  transition: opacity 0.12s, filter 0.12s;
 }
-.ab-annot-popover__btn--gen:hover {
+.ab-annot-popover__btn--gen:hover:not(:disabled) {
   filter: brightness(1.1);
+}
+.ab-annot-popover__btn--gen:disabled {
+  background: rgba(128,128,128,0.4);
+  color: rgba(255,255,255,0.7);
+  cursor: not-allowed;
+  filter: none;
 }
 .ab-annot-popover__file-clear {
   font: 600 12px/1 sans-serif;
