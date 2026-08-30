@@ -448,16 +448,14 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
           flex-direction: row; gap: 4px; align-items: center;
         `;
         const actionBtns: HTMLButtonElement[] = [];
-        // 顺序: comment → prompt → file (按 schema 顺序)
+        // 顺序: comment → prompt → file. 每 type 最多 1 个 (interactions 读盘已去重, 这里兜底防脏数据).
         const comments = interactions.filter((i) => i.type === 'comment' && i.text);
         if (comments.length > 0) {
           actionBtns.push(createCommentOpenBtn(comments.map((c) => c.text).join('\n')));
         }
-        for (const it of interactions) {
-          if (it.type === 'prompt' && it.text) {
-            const b = createPromptSendBtn(it.text);
-            actionBtns.push(b);
-          }
+        const prompts = interactions.filter((i) => i.type === 'prompt' && i.text);
+        if (prompts.length > 0) {
+          actionBtns.push(createPromptSendBtn(prompts[0].text));
         }
         if (fileRef) actionBtns.push(createOpenFileBtn(fileRef));
         actionBtns.forEach((b) => { b.style.display = 'none'; btnRow.appendChild(b); });
