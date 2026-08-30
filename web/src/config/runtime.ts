@@ -46,6 +46,19 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
     (this as any).store?.clear?.();
   }
 
+  /** 精确移除 InMemory 中指定路径 (及其子项): 外部删除时调用, 让 OverlayFS fallback 到 readable.
+   *  注意: 不能 clearCache 全清 (目录树被清空后 OverlayFS 写文件 EBUSY). */
+  removePath(relPath: string): void {
+    const key = relPath.startsWith('/') ? relPath : `/${relPath}`;
+    const store = (this as any).store;
+    if (!store?.store) return;
+    for (const p of Object.keys(store.store)) {
+      if (p === key || p.startsWith(key + '/')) {
+        delete store.store[p];
+      }
+    }
+  }
+
   static Create(opts: unknown, cb: (err: Error | null, fs?: WriteSyncFS) => void): void {
     const inst = new WriteSyncFS();
     registerWriteSyncFS(inst);
@@ -171,19 +184,25 @@ export function resetBrowserFSCache(): void {
         // 只重置 readable (DynamicRequest) 的 entriesLoaded.
         const readable = (f as any)._readable || (f as any)._fs;
         if (readable?._index) {
-          // 只清根目录 inode 的 entriesLoaded (保留树结构): 下次 loadEntry 重新 readDirectory 拉最新.
-          // 不能整体重置 _index (explorer root 节点依赖, 清空会崩树).
+          // 重置 DirInode 缓存: DynamicRequest 用 `entriesLoaded` (动态属性, 无下划线) + `_ls` (children).
+          // 重置后下次 loadEntry 重新 readDirectory 拉最新 (否则外部删除残留).
           try {
             const idx = readable._index._index || {};
             let cleared = 0;
             for (const p of Object.keys(idx)) {
               const inode = idx[p];
-              if (inode && typeof inode === 'object' && 'entriesLoaded' in inode && inode.entriesLoaded) {
-                inode.entriesLoaded = false;
-                cleared++;
+              if (inode && typeof inode === 'object' && '_ls' in inode) {
+                if (inode.entriesLoaded) {
+                  inode.entriesLoaded = false;
+                  cleared++;
+                }
+                if (inode._ls && Object.keys(inode._ls).length > 0) {
+                  inode._ls = {};
+                  cleared++;
+                }
               }
             }
-            if (cleared > 0) console.log('[bfs-reset] entriesLoaded reset:', cleared);
+            if (cleared > 0) console.log('[bfs-reset] DirInode reset:', cleared);
           } catch { /* ignore */ }
         }
         // 嵌套: OverlayFS._fs / _mu 也可能是 OverlayFS
@@ -243,6 +262,8 @@ export const runtimeConfig: IAppRendererProps['runtimeConfig'] = {
           options: {
             // 列目录: BrowserFS 路径 → IDE 相对路径 → service.list → FileEntry [name, FileType]
             readDirectory: async (p) => {
+              // 强制最新: 清 service.list 的 listCache (否则缓存旧列表, 外部删除残留)
+              try { (getFileSystemService() as any).listCache?.clear?.(); } catch { /* ignore */ }
               const entries = await getFileSystemService().list(workspaceRel(p));
               return entries.map((e): [string, FileType] => [
                 e.name,

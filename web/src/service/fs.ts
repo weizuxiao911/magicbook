@@ -677,6 +677,10 @@ export class FileSystemServiceImpl implements IFileSystem {
   private fsClient: ReturnType<typeof createOpencodeClient> | null = null;
   /** SDK 事件流 (SSE, 用于 file.* 兜底) */
   private eventAbort: AbortController | null = null;
+  /** explorer 树重建防抖 timer (删除事件后重建) */
+  private treeRebuildTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 删除事件后重建 explorer 树 (BrowserFS 缓存/树节点残留, refresh 不移除) */
+  private scheduleTreeRebuild: () => void = () => {};
 
   constructor() {
     FileSystemServiceImpl.instance = this;
@@ -693,9 +697,17 @@ export class FileSystemServiceImpl implements IFileSystem {
     // 把 fireFilesChange 注入到 watcher 模块 (避免循环 import) + 同步打开的编辑器 (外部修改 → reload)
     bindWatcherFireFilesChange(async (changes) => {
       // 清 BrowserFS readable (DynamicRequest) entriesLoaded → explorer 重新拉真实目录.
-      // 注意: 不能清 writable InMemory (WriteSyncFS) — 目录树被清空后 OverlayFS 写文件
-      // createParentDirectoriesAsync stat 父目录失败 → EBUSY: root does not exist.
+      // 注意: 不能 clearCache 全清 (目录树被清空后 OverlayFS 写文件 EBUSY).
       try { (window as any).__RESET_BFS_CACHE__?.(); } catch { /* ignore */ }
+      // 外部删除 (DELETED): 精确移除 writable InMemory 中该路径 (否则 OverlayFS.readdir 合并旧目录树, 残留显示)
+      const writeFs = (window as any).__APP_WRITE_SYNC_FS__;
+      if (writeFs?.removePath) {
+        changes.forEach((c) => {
+          if (c.type === FileChangeType.DELETED) {
+            try { writeFs.removePath(uriToRel(c.uri)); } catch { /* ignore */ }
+          }
+        });
+      }
       changes.forEach((c) => this.invalidateParent(uriToRel(c.uri)));
       this.fileService.fireFilesChange({ changes });
       // 额外 fire 父目录 → 触发 explorer 树刷新 (单文件 ADDED 不会自动刷新树).
@@ -719,13 +731,46 @@ export class FileSystemServiceImpl implements IFileSystem {
       }
       // 外部修改 → 已打开且不 dirty 的编辑器直接更新内容 (绕开 OpenSumi getMd5 缓存链路)
       changes.forEach((c) => this.syncOpenEditor(uriToRel(c.uri)));
-      // 强制 explorer 树刷新 (fireFilesChange 的 ADDED 不会自动刷新树)
+      // 强制 explorer 树刷新: 删除事件 → 重建 root (BrowserFS 缓存/树节点残留, refresh 不移除);
+      // 其他事件 → refresh.
       try {
-        await this.fileTreeService?.refresh();
+        const hasDelete = changes.some((c) => c.type === FileChangeType.DELETED);
+        if (hasDelete) {
+          this.scheduleTreeRebuild();
+        } else {
+          await this.fileTreeService?.refresh();
+        }
       } catch (e) {
         console.warn('[filesystem] fileTree refresh fail:', e);
       }
     });
+    // 删除事件后重建 explorer 树 (防抖 + 延迟: opencode SDK file.list 删除后 ~1.5s 缓存才失效,
+    // 立即重建会拉到旧列表 (含已删项) 又显示回去. 延迟 2s 等缓存失效).
+    this.treeRebuildTimer = null;
+    this.scheduleTreeRebuild = () => {
+      if (this.treeRebuildTimer) return;
+      this.treeRebuildTimer = setTimeout(async () => {
+        this.treeRebuildTimer = null;
+        try {
+          // 重建前再 reset (fire 时的 reset 被 fireFilesChange 立即触发的 resolveChildren 消费了;
+          // 2s 后 SDK 缓存已失效, 再 reset 让重建时真正重新拉列表)
+          try { (window as any).__RESET_BFS_CACHE__?.(); } catch { /* ignore */ }
+          const tree = this.fileTreeService as any;
+          if (!tree?.root) return;
+          const roots = await tree.workspaceService?.roots;
+          const rootUri = roots?.[0]?.uri;
+          if (!rootUri) return;
+          const dirClass = tree.root.constructor;
+          const newRoot = new dirClass(tree, undefined, new (tree.root.uri.constructor)(rootUri), 'workspace', roots[0], 'workspace');
+          tree.root = newRoot;
+          tree.onWorkspaceChangeEmitter?.fire?.(newRoot);
+          await tree.refresh?.();
+          console.log('[filesystem] explorer 树已重建 (删除同步)');
+        } catch (e) {
+          console.warn('[filesystem] explorer 树重建失败:', e);
+        }
+      }, 2000);
+    };
     const onReady = () => {
       this.connectEvents();
       void this.startWatcher();
@@ -957,15 +1002,20 @@ export class FileSystemServiceImpl implements IFileSystem {
     const queryPath = norm === '/' ? '.' : norm.replace(/^\/+/, '');
     const c = this.ensureClient()
     const cwd = effectiveCwd()
-    const { data, error } = await c.file.list({ path: queryPath, directory: cwd })
-    if (error) throw new Error(`fs list failed: ${idePath}: ${(error as any)?.message || 'unknown'}`)
-    const entries: FsEntry[] = (data || []).map((e) => ({
-      name: e.name,
-      type: e.type === 'directory' ? 'directory' : 'file',
-    }));
-    // 回填 stat 缓存 (meta 直接命中, 避免重复 list)
-    this.listCache.set(norm, entries);
-    return entries;
+    // 目录可能已删除 (外部删/刷新竞态) → 返回空数组, 不抛错 (否则 explorer 刷新中断, 残留节点)
+    try {
+      const { data, error } = await c.file.list({ path: queryPath, directory: cwd })
+      if (error) return [];
+      const entries: FsEntry[] = (data || []).map((e) => ({
+        name: e.name,
+        type: e.type === 'directory' ? 'directory' : 'file',
+      }));
+      // 回填 stat 缓存 (meta 直接命中, 避免重复 list)
+      this.listCache.set(norm, entries);
+      return entries;
+    } catch {
+      return [];
+    }
   }
 
   async exists(idePath: string): Promise<boolean> {
@@ -1082,11 +1132,13 @@ export class FileSystemServiceImpl implements IFileSystem {
     onProgress?: (done: number, total: number) => void,
   ): Promise<boolean> {
     const abs = absPath(idePath);
-    // 写入前对比远程内容: 一样 → 跳过写入 (防重复写 + 防 OverlayFS EBUSY 写路径)
+    // 写入前对比远程内容: 文件已存在且内容一样 → 跳过写入 (防重复写 + 防 OverlayFS EBUSY 写路径).
+    // 先 stat 确认存在 (SDK read 对不存在返回空数组而非抛错, 直接对比会把"新建空文件"误判为内容一致跳过!)
     if (typeof content === 'string') {
       try {
-        const remote = await this.read(idePath);
-        if (remote) {
+        const st = await getFsPty().request<{ size: number }>('stat', { path: abs }, 5000).catch(() => ({ ok: false, data: null as any }));
+        if (st.ok) {
+          const remote = await this.read(idePath);
           const remoteText = new TextDecoder().decode(remote);
           if (remoteText === content) {
             // 内容一致: 不写, 但记录 hash (断循环), 返回成功
@@ -1094,7 +1146,7 @@ export class FileSystemServiceImpl implements IFileSystem {
             return true;
           }
         }
-      } catch { /* 读不到 (文件不存在/异常) → 正常写 */ }
+      } catch { /* 异常 → 正常写 */ }
     }
     const b64 = typeof content === 'string' ? bytesToBase64(content) : content.base64;
     // opencode pty 单次输入上限实测: b64 934 OK / 1068 TIMEOUT (~800 字节原文).
