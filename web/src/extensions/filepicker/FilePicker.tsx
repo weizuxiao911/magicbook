@@ -354,7 +354,7 @@ export function requestFilePicker(config: FilePickerConfig): void {
 }
 
 const STYLES = `
-.fp-overlay{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);padding:24px;animation:fp-fade .14s ease-out}
+.fp-overlay{position:fixed;inset:0;z-index:10002;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);padding:24px;animation:fp-fade .14s ease-out}
 @keyframes fp-fade{from{opacity:0}to{opacity:1}}
 .fp-modal{width:680px;max-width:100%;height:min(70vh,640px);max-height:min(calc(100vh - 72px),640px);display:flex;flex-direction:column;background:var(--ai-glass-bg,#1c1c22);-webkit-backdrop-filter:var(--ai-glass-blur,blur(18px) saturate(160%));backdrop-filter:var(--ai-glass-blur,blur(18px) saturate(160%));border:1px solid var(--ai-glass-edge,rgba(255,255,255,0.12));border-radius:16px;box-shadow:var(--ai-pop-shadow,0 16px 40px rgba(0,0,0,0.5));color:var(--ai-fg,#e5e7eb);overflow:hidden;animation:fp-pop .16s ease-out}
 @keyframes fp-pop{from{opacity:0;transform:translateY(8px) scale(0.98)}to{opacity:1;transform:translateY(0) scale(1)}}
