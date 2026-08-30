@@ -196,7 +196,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
     <div
       ref={ref}
       className="ab-annot-popover"
-      style={{ left, top, width: W, zIndex: 99999 }}
+      style={{ left, top, width: W, zIndex: 10001 }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
