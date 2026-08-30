@@ -20,7 +20,7 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 
 | 维度 | 含义 | 例子 | 阶段 |
 |---|---|---|---|
-| **交互能力** (interactions / file) | 标注**能做什么** | 批注(comment) / 提示词(prompt) / 打开文件(file) | **一期 (本文档)** — 后续会持续拓展 |
+| **交互能力** (interactions / file) | 标注**能做什么** | 批注(comment) / AI讲解(prompt) / 打开文件(file) | **一期 (本文档)** — 后续会持续拓展 |
 | **交互执行方式** (PdfAnnotMeta.action) | 标注**怎么执行** (仅 PDF 内嵌 annotation 用) | `[modal:title] 内容` / `[tab:title] 内容` / `[terminal] cmd` | **一期 (内嵌走老路径)** — sidecar 一期暂不绑定执行方式 |
 | **视觉样式** | 标注长什么样 | 半透明矩形 + 颜色 (color) + hover 加深 | **一期 (统一高亮)** |
 
@@ -68,7 +68,7 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 
       "interactions": [                // 交互能力 (可多选, 至少 1 个才允许保存; 历史: 2026-08-30 起无 type 字段)
         { "type": "comment", "text": "批注内容 (hover 显示)" },
-        { "type": "prompt",  "text": "提示词 (hover 显示「发送给AI」按钮)" }
+        { "type": "prompt",  "text": "..." }   // AI讲解 (hover 显示"AI讲解"按钮)
       ],
       "file": { "name": "...", "path": "file:///workspace/..." }   // 可选: 关联文件
     }
@@ -84,15 +84,15 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 |---|---|---|
 | **统一高亮** | 矩形热区, 半透明色块叠加 (alpha 0.08 → hover 0.25) + 虚线边框 | color 决定颜色 (8 色可选, 见 AnnotPopover COLORS) |
 | **删除按钮** | 右上角 × 圆形按钮 (hover 显示) | 点击直接删除 (in-memory + 写盘过滤) |
-| **交互按钮** | 右下角按钮行 (hover 显示), 多个按钮 flex 一行右对齐 | 提示词→"发送给AI"; 文件→"打开{文件名}"; 批注→hover 弹 tip 显示文本 |
+| **交互按钮** | 右下角按钮行 (hover 显示), 多个按钮 flex 一行右对齐 | 批注说明→"打开批注"; AI讲解→"AI讲解"; 示例演示→"打开{文件名}" |
 
 > **历史纠偏**: 早期 §3.3 定义了 `highlight` (色块) / `note` (便签图标) 两种视觉, 2026-08-30 清理:
 > 1. `type` 字段从 schema 删除, 全部统一为高亮矩形
-> 2. 批注/提示词/文件三种"交互能力"通过 interactions/file 字段表达, 跟"视觉样式"是不同维度
+> 2. 批注/AI讲解/文件三种"交互能力"通过 interactions/file 字段表达, 跟"视觉样式"是不同维度
 > 3. 视觉不再分"高亮型/便签型", 仅靠 color + hover 加深区分
 
 > TODO 后续 (按需拓展, 不预先实现):
-> - 更多交互能力 (除批注/提示词/打开文件外)
+> - 更多交互能力 (除批注/AI讲解/打开文件外)
 > - 自定义颜色 / 调色板 (现 8 色固定)
 
 ### 3.4 字段兼容 / 版本升级
@@ -119,7 +119,7 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 4. popover 内容 (门户到 document.body, z-index 99999, 不被 chat 遮):
    - 标题: "第 N 页" (新建) / "编辑标注" (编辑已有)
    - 选区文本预览 (selectedText 截断显示)
-   - 交互能力多选 toggle: 批注 / 提示词 / 文件 (至少 1 个, 选中显示对应表单)
+   - 交互能力多选 toggle: 批注 / AI讲解 / 文件 (至少 1 个, 选中显示对应表单)
    - 颜色: 8 色蓝/黄/绿/红/紫/橙/青/粉 (默认蓝)
    - [取消] [保存]
    ↓
@@ -249,10 +249,10 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 - [x] Rect 矩形选择 (mousedown/move/up 画蓝色蒙层)
 - [x] 鼠标坐标 → PDF 原坐标 (跨页忽略, 5x5 px 最小尺寸过滤)
 - [x] 矩形蒙层在弹窗时保留, 保存/取消时移除
-- [x] popover (门户到 body, z-index 99999) — 颜色 (8 色) + 交互能力多选 (批注/提示词/文件) + 区域预览 + 至少 1 个交互校验 + 保存/取消
+- [x] popover (门户到 body, z-index 99999) — 颜色 (8 色) + 交互能力多选 (批注/AI讲解/文件) + 区域预览 + 至少 1 个交互校验 + 保存/取消
 - [x] sidecar 标注渲染: 统一高亮 (alpha 0.08 → hover 0.25), 无 tip
 - [x] sidecar 标注 hover 显示 X 按钮 (右上角): 点击直接删除 (从 in-memory + 写盘过滤)
-- [x] sidecar 标注 hover 显示右下角按钮行: 提示词→"发送给AI" → chat.send; 文件→"打开{name}" → editor.open
+- [x] sidecar 标注 hover 显示右下角按钮行: 批注说明→"打开批注" → modal; AI讲解→"AI讲解" → chat.send; 示例演示→"打开{name}" → editor.open
 - [x] sidecar 标注 hover 显示批注 tip (合并多条 comment 文本)
 - [x] sidecar 标注 dblclick → 弹编辑 popover (覆盖已有 annot, 按 id 幂等)
 - [x] 内嵌 annotation 仍走老路径 (hover tip + click action)
@@ -264,7 +264,7 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 
 > **AI 自主做的禁区** (AGENTS.md 强化): 任何"看起来显然"或"用户应该会喜欢"的自作主张都**不做**. 一期没拍板的功能, 后续讨论.
 
-- [ ] **更多交互能力** (除批注/提示词/打开文件外, 用户后续按需拓展)
+- [ ] **更多交互能力** (除批注/AI讲解/打开文件外, 用户后续按需拓展)
 - [ ] **侧栏列表** (按页分组, 跳转/搜索)
 - [ ] **备注 textarea** (note 字段编辑器, 现仅 interactions.file 字段触发; 通用 note 字段无独立 UI)
 - [ ] **文本选择 (替代/补充 Rect)** (text layer 已启用, 未用于选择)
@@ -287,7 +287,7 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 | 2026-08-29 | AI 在 sidecar 标注上**自作主张**挂 `showAnnotTip` 弹"已批注" | 用户**明确禁止**悬停提示"已标注" | 拆开渲染: sidecar 无 tip 只高亮, 强化 AGENTS.md 铁律 |
 | 2026-08-29 | popover 固定在 PdfReaderView 内被 chat 遮 | 改用 React Portal 渲染到 document.body, z-index 99999 | 实施 |
 | 2026-08-29 | 之前 `setUserScaleIdx` 闭包快照丢 click | 改 functional update `setUserScaleIdx((prev) => ...)` | 修 |
-| **2026-08-30** | **AI POC 时定义 `type: highlight \| note` 作为"标注类型"** | **用户明确: 这不是 PDF 交互能力, 是 AI 自作主张; 真实交互能力 = 批注/提示词/打开文件, 视觉/交互/执行方式三个维度不能混** | **删 type 字段: 全部统一为高亮矩形 (color 决定颜色); popover 不再有"高亮/便签"切换; 读时 strip, 写时自动不带, 旧 type 在下次重写时自然消失; 文档统一改为"交互能力/交互执行方式/视觉样式"三分** |
+| **2026-08-30** | **AI POC 时定义 `type: highlight \| note` 作为"标注类型"** | **用户明确: 这不是 PDF 交互能力, 是 AI 自作主张; 真实交互能力 = 批注/AI讲解/打开文件, 视觉/交互/执行方式三个维度不能混** | **删 type 字段: 全部统一为高亮矩形 (color 决定颜色); popover 不再有"高亮/便签"切换; 读时 strip, 写时自动不带, 旧 type 在下次重写时自然消失; 文档统一改为"交互能力/交互执行方式/视觉样式"三分** |
 
 ---
 
@@ -295,7 +295,7 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 
 > 任何"看起来显然"或"用户应该会喜欢"的功能, 都列在这等用户拍板. AI **不**自作主张.
 
-1. **更多交互能力** (除批注/提示词/打开文件外, 用户后续按需拓展)
+1. **更多交互能力** (除批注/AI讲解/打开文件外, 用户后续按需拓展)
 2. **侧栏列表** (按页分组, 跳转/搜索)
 3. **备注 textarea** (note 字段编辑器, 通用备注独立 UI)
 4. **文本选择 / Rect 二选一** (Rect 一期, 文本后续)
