@@ -70,10 +70,12 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
   const [fileOn, setFileOn] = useState(false);
   const [fileRef, setFileRef] = useState<{ name: string; path: string } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  /** AI 生成进行中 (用于禁用重复点击 + 错误回滚) */
-  const activeGenRef = useRef<AIRequestHandle | null>(null);
-  /** 当前生成中的交互类型 (用于 loading 状态; 同时只允许 1 个进行中) */
-  const [generatingKind, setGeneratingKind] = useState<'comment' | 'prompt' | 'file' | null>(null);
+  /** 每个交互类型的生成句柄 (独立并发, 互不干扰) */
+  const activeGenRefs = useRef<Map<'comment' | 'prompt' | 'file', AIRequestHandle>>(new Map());
+  /** 每个交互类型的生成中状态 (独立 loading) */
+  const [generating, setGenerating] = useState<Record<'comment' | 'prompt' | 'file', boolean>>({ comment: false, prompt: false, file: false });
+  const setGenLoading = (kind: 'comment' | 'prompt' | 'file', loading: boolean) =>
+    setGenerating((prev) => ({ ...prev, [kind]: loading }));
 
   // 每次 state 变化时重置 (新建) 或预填 (编辑 existing)
   useEffect(() => {
@@ -162,7 +164,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
     if (!h) return;
     const next = pickPos(state.x, state.y, h);
     setPos((prev) => (prev.left === next.left && prev.top === next.top ? prev : next));
-  }, [state, commentOn, promptOn, fileOn, generatingKind, commentText, promptText]);
+  }, [state, commentOn, promptOn, fileOn, generating, commentText, promptText]);
   const left = state ? pos.left : 0;
   const top = state ? pos.top : 0;
 
@@ -189,12 +191,11 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
     });
   };
 
-  /** AI 生成: 按交互类型拼 prompt 模板, 通过 ask 拓展发请求 (独立 session, 不污染 chat 历史).
-   *  流结束自动回填到 popover 对应 textarea (onComplete). 失败 toast 提示. */
+  /** AI 生成: 每个交互类型独立并发 (各用自己的 session, 独立 loading, 独立回填, 独立重置). */
   const handleGenerate = (kind: 'comment' | 'prompt' | 'file') => {
     if (!state) return;
-    if (activeGenRef.current || generatingKind) {
-      notification.warn({ message: '上一次 AI 生成未结束, 请稍候', type: 'warning', duration: 2 });
+    if (activeGenRefs.current.has(kind)) {
+      notification.warn({ message: '该交互类型正在生成中, 请稍候', type: 'warning', duration: 2 });
       return;
     }
     const file = pdfName || '当前 PDF';
@@ -205,7 +206,11 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
       file: `通读 ${file} 对选择的区域 (${rectDesc}) 进行理解,生成动画示例演示HTML,并保存文件到工作目录下`,
     };
     const promptText = TEMPLATES[kind];
-    setGeneratingKind(kind);
+    const finish = () => {
+      activeGenRefs.current.delete(kind);
+      setGenLoading(kind, false);
+    };
+    setGenLoading(kind, true);
     ask(promptText, (message) => {
       if (kind === 'comment') {
         setCommentText(message);
@@ -234,21 +239,18 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
           }
         })();
       }
-      activeGenRef.current = null;
-      setGeneratingKind(null);
+      finish();
     }, {
       onError: (err) => {
         notification.error({ message: `AI 生成失败: ${err.message}`, type: 'error', duration: 5 });
-        activeGenRef.current = null;
-        setGeneratingKind(null);
+        finish();
       },
     }).then((handle) => {
-      activeGenRef.current = handle;
-      console.log('[pdf] AI 生成已发, sessionId=', handle.sessionId);
+      activeGenRefs.current.set(kind, handle);
+      console.log('[pdf] AI 生成已发, sessionId=', handle.sessionId, 'kind=', kind);
     }).catch((err) => {
       notification.error({ message: `AI 生成启动失败: ${err.message}`, type: 'error', duration: 5 });
-      activeGenRef.current = null;
-      setGeneratingKind(null);
+      finish();
     });
   };
 
@@ -341,8 +343,8 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
             type="button"
             className="ab-annot-popover__btn ab-annot-popover__btn--gen"
             onClick={() => handleGenerate('comment')}
-            disabled={generatingKind !== null}
-          >{generatingKind === 'comment' ? '生成中…' : (generatingKind ? '等待中…' : '生成')}</button>
+            disabled={generating.comment}
+          >{generating.comment ? '生成中…' : '生成'}</button>
         </div>
       )}
       {promptOn && (
@@ -367,8 +369,8 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
             type="button"
             className="ab-annot-popover__btn ab-annot-popover__btn--gen"
             onClick={() => handleGenerate('prompt')}
-            disabled={generatingKind !== null}
-          >{generatingKind === 'prompt' ? '生成中…' : (generatingKind ? '等待中…' : '生成')}</button>
+            disabled={generating.prompt}
+          >{generating.prompt ? '生成中…' : '生成'}</button>
         </div>
       )}
       {fileOn && (
@@ -390,8 +392,8 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
               type="button"
               className="ab-annot-popover__btn ab-annot-popover__btn--gen"
               onClick={() => handleGenerate('file')}
-              disabled={generatingKind !== null}
-            >{generatingKind === 'file' ? '生成中…' : (generatingKind ? '等待中…' : '生成')}</button>
+              disabled={generating.file}
+            >{generating.file ? '生成中…' : '生成'}</button>
           </div>
         </div>
       )}
