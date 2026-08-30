@@ -1259,7 +1259,7 @@ function createPromptSendBtn(promptText: string): HTMLButtonElement {
 function createCommentOpenBtn(commentText: string): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.className = 'ab-pdf-comment-open';
-  btn.textContent = '打开批注';
+  btn.textContent = '批注';
   btn.style.cssText = `
     display: none;
     font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
