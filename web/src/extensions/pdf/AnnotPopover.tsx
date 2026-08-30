@@ -11,6 +11,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
+import { notification } from '@opensumi/ide-components/lib/notification';
 import type { SidecarAnnot, SidecarInteraction } from './annotations';
 import { requestFilePicker } from '../filepicker/FilePicker';
 
@@ -151,6 +152,15 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
   };
 
   const handleSave = () => {
+    // 至少选择一种交互方式, 否则不让保存 (停留 popover + codeblitz 提示)
+    const hasInteraction =
+      (commentOn && commentText.trim()) ||
+      (promptOn && promptText.trim()) ||
+      (fileOn && fileRef);
+    if (!hasInteraction) {
+      notification.error({ message: '请至少选择一种交互方式', type: 'error', duration: 3 });
+      return;
+    }
     const ex = state.existing;
     const annot: SidecarAnnot = {
       id: ex?.id || 'a-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
