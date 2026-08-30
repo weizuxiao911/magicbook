@@ -34,7 +34,7 @@ export const ActionsView: React.FC = () => {
   // 品牌/logo 从全局配置 (__APP_CONFIG__.chatConfig.brand) 读取, 不硬编码
   const brand = useMemo(() => {
     const cfg = (window as any).__APP_CONFIG__;
-    return cfg?.chatConfig?.brand || { name: 'AI 工作台', logoChar: '' };
+    return cfg?.chatConfig?.brand || { name: 'AI 工作台', logo: '' };
   }, []);
 
   // 当前工作目录 (read-only 显示, 切换入口在 chat 输入框底部)
@@ -70,30 +70,6 @@ export const ActionsView: React.FC = () => {
   };
 
   useEffect(() => {
-    // 启动时: 确保 right slot 有激活的面板. OpenSumi 布局缓存可能是
-    // { currentId: "", size: 396 } (折叠态但容器占宽) → 刷新后右侧空栏.
-    // 延迟到容器注册完再激活 AI 面板; 仅从未激活过时激活一次,
-    // 避免用户折叠后定时器又把 right 重新展开.
-    let disposed = false;
-    let activated = false;
-    const activateRight = () => {
-      if (activated) return;
-      const rightService = layoutService.getTabbarService(SlotLocation.right);
-      if (!rightService.currentContainerId.get()) {
-        const first = rightService.containersMap.keys().next().value;
-        if (first) {
-          rightService.updateCurrentContainerId(first);
-          activated = true;
-        }
-      } else {
-        activated = true;
-      }
-    };
-    // 多试几次 (容器异步注册)
-    for (const delay of [100, 300, 800, 2000]) {
-      setTimeout(() => { if (!disposed) activateRight(); }, delay);
-    }
-
     const sync = (slot: string, setter: (v: boolean) => void) => () => {
       setter(layoutService.isVisible(slot));
     };
@@ -122,7 +98,6 @@ export const ActionsView: React.FC = () => {
       disposables.push(service.onSizeChange(syncFn));
     });
     return () => {
-      disposed = true;
       disposables.forEach((d) => d.dispose());
     };
   }, [layoutService]);
@@ -239,8 +214,8 @@ export const ActionsView: React.FC = () => {
         }}
         title={cwd || '尚未选择工作目录'}
       >
-        {brand.logoChar ? (
-          <span style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }}>{brand.logoChar}</span>
+        {brand.logo ? (
+          <span style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }}>{brand.logo}</span>
         ) : (
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M5 6 L12 18 L19 6" />

@@ -7,7 +7,7 @@
  *   - list / read / find: opencode 全局 API (/api/fs/list, /api/fs/read/*, /find/file), 走 x-opencode-directory 切工作目录
  *   - write / rm / mkdirp / move / readBinary: opencode 全局 PTY (单例 FsPty), 跨平台命令构造器
  *   - 事件: 独立 fs watcher (PTY 跑 node:fs.watch recursive:true) + 兜底 SDK /global/event SSE
- *   - 单实例: BrowserFS backend (config/bfs.ts, RemoteFS) 内部调用本实例,
+ *   - 单实例: 业务代码与容器共用同一文件系统实例,
  *     opensumi 容器与业务代码共用同一文件系统实例
  *
  * 路径: 一律 IDE 相对路径 (/foo), server 在 cwd 下操作.
@@ -35,6 +35,15 @@ import {
 } from './env';
 
 // ---- 工具函数 ----
+
+/** file:///workspace/1.txt → /1.txt (IDE 相对路径) */
+function uriToRel(uri: string): string {
+  const marker = `file://${WORKSPACE_ROOT}`;
+  if (uri.startsWith(marker)) return uri.slice(marker.length) || '/';
+  const idx = uri.indexOf('://');
+  const path = idx >= 0 ? uri.slice(idx + 3).replace(/^\/+/, '/') : uri;
+  return path.startsWith('/') ? path : `/${path}`;
+}
 
 /** IDE 路径 → opencode /api/fs/read 用的相对路径（去前导 / 和 /workspace 前缀, 跟 opencode 端 cwd 拼接） */
 function relPathForRead(idePath: string): string {
@@ -99,39 +108,79 @@ const FS_PTY_WORKER = [
   "    else if(r.op==='move'){fs.mkdirSync(path.dirname(r.to),{recursive:true});fs.renameSync(r.from,r.to);out(true);}",
   "    else if(r.op==='readB64'){out(true,{b64:fs.readFileSync(r.path).toString('base64')});}",
   "    else if(r.op==='stat'){const s=fs.statSync(r.path);out(true,{size:s.size,mtimeMs:Math.floor(s.mtimeMs),isDir:s.isDirectory()});}",
+  "    else if(r.op==='ping'){out(true,{pong:true});}",
   "    else out(false,null,'unknown op '+r.op);",
   "  }catch(e){out(false,null,String(e&&e.message||e),e&&e.code||'');}",
   "}});",
 ].join('');
 
 class FsPty {
+  /** 串行化: 上一个请求的 promise (一次只跑一个原子 pty 会话, 避免并发写同文件竞争) */
+  private queue: Promise<unknown> = Promise.resolve();
+
+  /** 原子 pty 会话: 创建 pty + 连 ws + 发 op(s) + 收响应, finally 关 ws + kill server 端 pty.
+   *  每次操作独立生命周期 → 无长连接失联/无心跳/无自愈, 天然干净. */
+  private async runSession<T>(
+    ops: Array<{ op: string; payload: Record<string, unknown>; timeoutMs?: number }>,
+  ): Promise<{ results: Array<{ ok: boolean; data: any }>; session: PtySession }> {
+    const session = new PtySession();
+    try {
+      await session.init();
+      const results: Array<{ ok: boolean; data: any }> = [];
+      for (const { op, payload, timeoutMs } of ops) {
+        results.push(await session.request(op, payload, timeoutMs));
+      }
+      return { results, session };
+    } finally {
+      void session.dispose();
+    }
+  }
+
+  /** 单 op 原子会话 */
+  async request<T = any>(op: string, payload: Record<string, unknown>, timeoutMs = 10000): Promise<{ ok: boolean; data: T }> {
+    const next = this.queue.then(async () => {
+      const { results } = await this.runSession([{ op, payload, timeoutMs }]);
+      return results[0] as { ok: boolean; data: T };
+    });
+    this.queue = next.catch(() => {});
+    return next;
+  }
+
+  /** 多 op 同会话 (write 分块: 首块 write + 后续 append 共用一个 pty, 保证原子) */
+  async batch<T = any>(
+    ops: Array<{ op: string; payload: Record<string, unknown>; timeoutMs?: number }>,
+    onEach?: (i: number, r: { ok: boolean; data: any }) => void,
+  ): Promise<Array<{ ok: boolean; data: T }>> {
+    const next = this.queue.then(async () => {
+      const { results, session } = await this.runSession(ops);
+      results.forEach((r, i) => onEach?.(i, r));
+      return results as Array<{ ok: boolean; data: T }>;
+    });
+    this.queue = next.catch(() => {});
+    return next;
+  }
+}
+
+/** 单个 pty 会话: create → ws → op(s) → close. 生命周期随一次操作, 用完即弃. */
+class PtySession {
   private ptyId: string | null = null;
   private ws: WebSocket | null = null;
-  /** 串行化: 上一个请求的 promise */
-  private queue: Promise<unknown> = Promise.resolve();
+  private sdk: ReturnType<typeof createOpencodeClient> | null = null;
   /** 等待中的请求 (id → resolve/reject/timer) */
   private pending = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   /** worker 响应行缓冲 (跨 ws 帧拼接 JSON 行) */
   private respBuf = '';
   private nextId = 1;
 
-  private initPromise: Promise<void> | null = null;
-
-  /** 懒初始化: create node worker pty + connect ws. 幂等. */
-  private async init(): Promise<void> {
-    if (this.initPromise) return this.initPromise;
-    this.initPromise = this.doInit();
-    return this.initPromise;
-  }
-
-  private async doInit(): Promise<void> {
+  /** 创建 node worker pty + connect ws */
+  async init(): Promise<void> {
     const base = appBaseUrl();
     if (!base) throw new Error('fs pty: app base url not ready');
     const cwd = effectiveCwd();
     if (!cwd) throw new Error('fs pty: no cwd (APP_CWD unset and hostCwd not yet probed)');
 
     const sdk = createOpencodeClient({ baseUrl: base, headers: cwdHeader(), responseStyle: 'fields', throwOnError: true });
-    console.log('[fs-pty] init node worker, cwd=', cwd);
+    this.sdk = sdk;
     const { data: createData, error: createErr } = await sdk.pty.create({ directory: cwd, command: 'node', args: ['-e', FS_PTY_WORKER], cwd });
     if (createErr || !createData) throw new Error(`fs pty: create worker failed: ${(createErr as any)?.message || 'no data'}`);
     this.ptyId = (createData as any).id;
@@ -155,9 +204,19 @@ class FsPty {
       this.pending.forEach((p) => { if (p.timer) clearTimeout(p.timer); p.reject(err); });
       this.pending.clear();
       this.ws = null;
-      this.ptyId = null;
-      this.initPromise = null;
     };
+  }
+
+  /** 主动清理: 关 ws + reject pending + kill server 端 pty. 幂等. */
+  async dispose(): Promise<void> {
+    if (this.ptyId && this.sdk) {
+      try { await this.sdk.pty.remove({ ptyID: this.ptyId }); }
+      catch { /* server 可能已断, 忽略 */ }
+    }
+    this.ptyId = null;
+    if (this.ws) { try { this.ws.close(); } catch { /* */ } this.ws = null; }
+    this.pending.forEach((p) => { if (p.timer) clearTimeout(p.timer); p.reject(new Error('fs pty: session disposed')); });
+    this.pending.clear();
   }
 
   /** 处理一段 ws 数据: 剥离控制帧 → 按 \n 切 JSON 响应行 → dispatch */
@@ -208,32 +267,33 @@ class FsPty {
     }
   }
 
-  /** 执行一个 node fs 操作 (串行化 promise chain) */
-  async request<T = any>(op: string, payload: Record<string, unknown>, timeoutMs = 10000): Promise<{ ok: boolean; data: T }> {
-    const next = this.queue.then(async () => {
-      await this.init();
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('fs pty: not initialized');
-      const id = String(this.nextId++);
-      const line = JSON.stringify({ id, op, ...payload });
-      const p = new Promise<{ ok: boolean; data: T }>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.pending.delete(id);
-          reject(new Error(`fs pty op timeout (${timeoutMs}ms): ${op}`));
-        }, timeoutMs);
-        this.pending.set(id, { resolve: resolve as any, reject, timer });
-      });
-      this.ws.send(`${line}\n`);
-      return await p;
-    }) as Promise<{ ok: boolean; data: T }>;
-    this.queue = next;
-    return next;
+  /** 发一个 op 并等响应 (同会话内 id 递增, 串行) */
+  request<T = any>(op: string, payload: Record<string, unknown>, timeoutMs = 10000): Promise<{ ok: boolean; data: T }> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('fs pty: not initialized');
+    const id = String(this.nextId++);
+    const line = JSON.stringify({ id, op, ...payload });
+    const p = new Promise<{ ok: boolean; data: T }>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`fs pty op timeout (${timeoutMs}ms): ${op}`));
+      }, timeoutMs);
+      this.pending.set(id, { resolve: resolve as any, reject, timer });
+    });
+    this.ws.send(`${line}\n`);
+    return p;
   }
 }
 
 let _fsPty: FsPty | null = null;
 function getFsPty(): FsPty {
-  if (!_fsPty) _fsPty = new FsPty();
+  if (!_fsPty) {
+    _fsPty = new FsPty();
+  }
   return _fsPty;
+}
+/** 强制销毁当前 FsPty 单例. 下次 getFsPty() 重建. */
+export function resetFsPty(): void {
+  _fsPty = null;
 }
 
 // ---- FsWatcher (合并自 service/watcher.ts) ----
@@ -255,6 +315,7 @@ const TYPE_MAP: Record<string, FileChangeType> = {
 
 let watcherPtyId: string | null = null;
 let watcherWs: WebSocket | null = null;
+let watcherSdk: ReturnType<typeof createOpencodeClient> | null = null;
 let watcherRetryCount = 0;
 let watcherStopped = false;
 let watcherCwd = '';
@@ -262,6 +323,22 @@ let watcherStdoutBuf = '';
 let watcherFireFn: ((changes: Array<{ uri: string; type: FileChangeType }>) => void) | null = null;
 /** 已同步路径 → 内容 hash (fs.watch 事件对比: 一致 = 自己写/无变化, 跳过不 fire; 不一致 = 外部改, fire) */
 const watcherSyncedHashes = new Map<string, string | null>();
+
+/** 记录"自己写的"内容 hash — WriteSyncFS 写服务器成功后调用.
+ *  断循环: 编辑器保存 → 写服务器 → fs.watch 事件 → hash 对比一致 → skip 不 fire;
+ *  外部修改 (vim/Finder) 无记录 → hash 不同 → fire 通知 codeblitz.
+ *  @param content 内容 (string/Uint8Array); null 表示"已删除" (watcher 读不到文件时对比 null)
+ *  @returns Promise: 调用方 (WriteSyncFS.syncWrite) await 保证 hash 先于 watcher 对比写入 */
+export function recordSyncedHash(relPath: string, content: string | Uint8Array | null): Promise<void> {
+  if (content === null) {
+    watcherSyncedHashes.set(relPath, null);
+    return Promise.resolve();
+  }
+  const bytes = typeof content === 'string' ? new TextEncoder().encode(content) : content;
+  return contentHash(bytes).then((h) => {
+    watcherSyncedHashes.set(relPath, h);
+  });
+}
 
 // ---- 真实 stat (FsPty node worker 'stat' op) ----
 
@@ -300,15 +377,6 @@ async function readPathHash(relPath: string): Promise<string | null> {
   } catch {
     return null;  // 文件不存在 (删除/目录)
   }
-}
-
-/** editor 保存内容 hash (runtime.ts onDidSaveTextDocument 调用) */
-export function recordEditorSaveHash(relPath: string, content: string): void {
-  void (async () => {
-    const bytes = new TextEncoder().encode(content);
-    const h = await contentHash(bytes);
-    watcherSyncedHashes.set(relPath, h);
-  })();
 }
 
 export function bindWatcherFireFilesChange(fn: typeof watcherFireFn): void {
@@ -361,12 +429,14 @@ function handleJsonObject(obj: any): void {
   if ('cursor' in obj || obj.type === 'cursor' || obj.type === 'resize' || 'method' in obj) return;
   if (typeof obj.e !== 'string' || typeof obj.p !== 'string') return;
   // fs.watch → OpenSumi 事件类型转换:
-  //   node:fs.watch (跨平台) 的 'rename' 事件语义是 "路径节点被重命名/创建/删除",
-  //   filename 是否存在区分 add/unlink. 用 client.file.list 父目录看 entry 判断 (不走 PTY).
-  //   注: 别用 UPDATED — OpenSumi editor 收到 UPDATED 报 "已经被在磁盘上修改,不能保存"
+  //   node:fs.watch (跨平台) 的 'rename' 事件语义是 "路径节点被重命名/创建/删除/修改",
+  //   macOS 上外部写入 (vim/Finder) 常表现为 rename 而非 change.
+  //   OpenSumi fs-resource 的 onFilesChanged 只对 ADDED/DELETED 触发编辑器 reload (清缓存+ResourceNeedUpdateEvent),
+  //   UPDATED 分支仅当缓存 undefined 才更新 → 已打开文件不 reload.
+  //   故外部修改: 文件仍存在 → ADDED (reload 已打开编辑器); 不存在 → DELETED.
   let opencodeEvent: FileChangeType;
   if (obj.e === 'rename') {
-    opencodeEvent = FileChangeType.ADDED;  // 先 ADDED, OpenSumi 自己 stat 修正
+    opencodeEvent = FileChangeType.ADDED;  // 防抖后 readPathHash null (不存在) 再改 DELETED
   } else {
     const t = TYPE_MAP[obj.e];
     if (t === undefined) { console.log('[watcher] unknown event type:', obj.e); return; }
@@ -382,7 +452,9 @@ function handleJsonObject(obj: any): void {
   //   自己保存 (editor 记录 hash) / 无变化 → 跳过不 fire (断循环)
   //   外部修改 → hash 不同 → fire
   //   防抖: fs.watch 高频触发时合并, 且等 editor 保存 hash 记录完成
-  const key = obj.p;
+  // key 统一 IDE 相对路径格式 (带前导 /), 跟 recordSyncedHash 的 workspaceRel 一致 —
+  // 否则 WriteSyncFS 写后记录的是 /1.txt, watcher 对比的是 1.txt → 永远匹配不上, 断循环失效
+  const key = obj.p.startsWith('/') ? obj.p : `/${obj.p}`;
   const prev = debounceMap.get(key);
   if (prev) clearTimeout(prev.timer);
   const timer = setTimeout(() => {
@@ -395,11 +467,16 @@ function handleJsonObject(obj: any): void {
         console.log('[watcher] skip (hash same)', key, h);
         return;
       }
-      console.log('[watcher] → fireFilesChange', uri, opencodeEvent, { old: synced, now: h });
+      // rename 事件按最终状态修正: 文件不存在 → DELETED; 存在 → UPDATED (已默认)
+      let finalEvent = opencodeEvent;
+      if (h === null) {
+        finalEvent = FileChangeType.DELETED;
+      }
+      console.log('[watcher] → fireFilesChange', uri, finalEvent, { old: synced, now: h });
       // 外部修改: 清 stat 缓存, 下次 stat 拿新 mtime/size (编辑器重载后 checkInSync 同值)
       invalidateStat(key);
       if (watcherFireFn) {
-        watcherFireFn([{ uri, type: opencodeEvent }]);
+        watcherFireFn([{ uri, type: finalEvent }]);
       }
       // 更新已同步 hash (文件存在 → hash; 不存在 → null)
       watcherSyncedHashes.set(key, h);
@@ -473,6 +550,7 @@ export async function startFsWatcher(cwd: string): Promise<void> {
       return;
     }
     console.log('[watcher] pty created, id=', watcherPtyId);
+    watcherSdk = sdk;
 
     const wsBase = secureUrl(base).replace(/^http/, 'ws');
     const socket = new WebSocket(`${wsBase}/pty/${watcherPtyId}/connect?directory=${encodeURIComponent(cwd)}`);
@@ -510,7 +588,8 @@ export async function startFsWatcher(cwd: string): Promise<void> {
     };
     socket.onclose = (ev) => {
       console.log('[watcher] ws close', ev?.code);
-      if (!watcherStopped) scheduleWatcherRetry();
+      // 正常关闭 (1000/1005) = 主动停或被杀 → 不重连; 异常断开 (1006) → 重试
+      if (!watcherStopped && ev?.code !== 1000 && ev?.code !== 1005) scheduleWatcherRetry();
     };
     socket.onerror = (e) => {
       console.warn('[watcher] ws error', e);
@@ -531,7 +610,14 @@ export function stopFsWatcher(): void {
     try { watcherWs.close(); } catch { /* */ }
     watcherWs = null;
   }
+  // 杀 server 端 watcher pty (只关 ws 不杀 → 僵尸 pty 堆积, 页面 reload 累积十几个)
+  const ptyId = watcherPtyId;
+  const sdk = watcherSdk;
   watcherPtyId = null;
+  watcherSdk = null;
+  if (ptyId && sdk) {
+    void sdk.pty.remove({ ptyID: ptyId }).catch(() => {});
+  }
   console.log('[watcher] stopped, cwd was=', watcherCwd);
   watcherCwd = '';
 }
@@ -579,19 +665,61 @@ export class FileSystemServiceImpl implements IFileSystem {
   onStart(): void {
     (window as any).__APP_FS__ = this;
     console.log('[filesystem] service ready, baseUrl:', appBaseUrl() || '(unset)');
-    // 把 fireFilesChange 注入到 watcher 模块 (避免循环 import)
-    bindWatcherFireFilesChange((changes) => this.fileService.fireFilesChange({ changes }));
-    window.addEventListener('runtime-ready', () => {
+    // 页面卸载: 停 watcher + 杀 server 端 pty (防 reload 后僵尸 watcher 堆积)
+    window.addEventListener('pagehide', () => stopFsWatcher());
+    window.addEventListener('beforeunload', () => stopFsWatcher());
+    // 把 fireFilesChange 注入到 watcher 模块 (避免循环 import) + 同步打开的编辑器 (外部修改 → reload)
+    bindWatcherFireFilesChange((changes) => {
+      this.fileService.fireFilesChange({ changes });
+      // 外部修改 → 已打开且不 dirty 的编辑器直接更新内容 (绕开 OpenSumi getMd5 缓存链路)
+      changes.forEach((c) => this.syncOpenEditor(uriToRel(c.uri)));
+    });
+    const onReady = () => {
       this.connectEvents();
       void this.startWatcher();
       void this.verifyOpensumiLink();
       void this.refreshExplorer();
       this.watchEditorState();
       this.restoreOpenedEditors();
-    });
+    };
+    // 单次启动: runtime-ready 事件或 baseUrl 就绪, 二选一 (都调会 stop→start 双启 watcher)
     if (appBaseUrl()) {
-      this.connectEvents();
-      void this.startWatcher();
+      onReady();
+    } else {
+      window.addEventListener('runtime-ready', onReady);
+    }
+  }
+
+  /** 外部修改 → 同步已打开的编辑器: 文件在打开 tab 且不 dirty 时, 读服务器新内容更新 monaco model.
+   *  绕开 OpenSumi 原生链路 (fireFilesChange → getMd5 走 BrowserFS 缓存 → md5 对比 → reload, 不可靠). */
+  private syncOpenEditor(relPath: string): void {
+    if (!relPath || relPath === '/') return;
+    try {
+      const monaco: any = (window as any).monaco;
+      if (!monaco?.editor) return;
+      // 找对应 model (uri: file:///workspace/<rel>)
+      const models = monaco.editor.getModels();
+      const target = models.find((m: any) => {
+        const s = String(m.uri?.toString?.() || '');
+        return s === `file://${WORKSPACE_ROOT}${relPath}` || s.endsWith(relPath);
+      });
+      if (!target) return;
+      // dirty (用户有未保存修改) → 不覆盖
+      const ed = monaco.editor.getEditors?.().find((e: any) => e.getModel?.() === target);
+      if (ed && ed.getModifiedLinesCount?.() > 0) return;
+      if (target.getAlternativeVersionId() !== target.getVersionId()) return; // dirty 兜底
+      // 读服务器新内容 → 更新 model (保留 undo 栈)
+      void getFileSystemService()
+        .read(relPath)
+        .then((bytes) => {
+          const content = new TextDecoder().decode(bytes);
+          if (content === target.getValue()) return;
+          target.pushEditOperations([], [{ range: target.getFullModelRange(), text: content }], () => null);
+          console.log('[fs] 外部修改 → 已同步编辑器:', relPath);
+        })
+        .catch(() => {});
+    } catch (e) {
+      console.warn('[fs] syncOpenEditor failed:', relPath, e);
     }
   }
 
@@ -706,8 +834,12 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   /**
-   * 订阅 opencode 事件流 (兜底). 内部 PTY watcher 已覆盖 file.* 事件, 这里只订阅其他 event
-   * 类型 (message.* / a2ui.* 等). 简化: 暂时只 log 一下, 后续如需 SSE 推非 fs 事件再展开.
+   * 订阅 opencode 事件流. fs 相关 (file.edited / file.watcher.updated) 全部订阅:
+   *   - 跟 host PTY fs.watch (通道 1) 双源重复 → OpenSumi BrowserFS 内部去重, 不冲突
+   *   - 必须订阅, 否则 editor stat cache 跟 host disk 失同步 → "操作过于频繁" 冲突
+   *     (实测: 2e8f06f 屏蔽后, editor 跟 host disk 12 个文件 stat cache 不一致, 弹同步提示)
+   *   - 注: onDidDeleteFiles 误触侧已实测不存在 (写文件内部不 unlink,
+   *     走 open+write), 所以订阅 fs.* 事件不会引发误删
    */
   private async connectEvents(): Promise<void> {
     const base = appBaseUrl();
@@ -715,20 +847,19 @@ export class FileSystemServiceImpl implements IFileSystem {
     if (this.eventAbort) return;
     const abort = new AbortController();
     this.eventAbort = abort;
+    const typeMap: Record<string, FileChangeType> = {
+      add: FileChangeType.ADDED,
+      change: FileChangeType.UPDATED,
+      unlink: FileChangeType.DELETED,
+    };
     try {
       const client = this.ensureClient();
       const events = await client.event.subscribe(undefined, { signal: abort.signal });
-      console.log('[filesystem] event.subscribe ok');
-      const typeMap: Record<string, FileChangeType> = {
-        add: FileChangeType.ADDED,
-        change: FileChangeType.UPDATED,
-        unlink: FileChangeType.DELETED,
-      };
+      console.log('[filesystem] event.subscribe ok (fs 事件已重新订阅, 修 editor stat 同步)');
       for await (const evt of events.stream) {
         const t = (evt as any).type as string;
         if (!t) continue;
-        // 处理 file.* 事件: opencode 自身操作(写/读/删通过 opencode 走)→ fireFilesChange
-        //   PTY watcher 覆盖外部修改; 两者都 fireFilesChange, OpenSumi 内部去重
+        // fs 事件重新订阅: file.edited / file.watcher.updated → fireFilesChange + dispatch fs:changed
         let changeType: string | null = null;
         let relPath = '';
         if (t === 'file.edited') {
@@ -892,6 +1023,7 @@ export class FileSystemServiceImpl implements IFileSystem {
   /**
    * 写文件: base64 内容通过 FsPty node worker 'write'/'append' 写到绝对路径 (node fs API, 无 shell).
    *   大文件分块: 每块 ≤ CHUNK_BYTES base64, 首块 'write' (truncate) 后续 'append'.
+   *   原子性: 所有块在同一个 pty 会话内完成 (batch), 创建1次 pty → 发完所有块 → 关闭.
    *   父目录: worker 内自动 mkdir -p.
    *   onProgress?: (bytesWritten, totalBytes) 实时回调, 让 UI 显示进度
    */
@@ -902,19 +1034,22 @@ export class FileSystemServiceImpl implements IFileSystem {
   ): Promise<boolean> {
     const abs = absPath(idePath);
     const b64 = typeof content === 'string' ? bytesToBase64(content) : content.base64;
-    const CHUNK = 4 * 1024; // base64 chars / 块 (远低于 ws 单帧安全大小)
+    // opencode pty 单次输入上限实测: b64 934 OK / 1068 TIMEOUT (~800 字节原文).
+    // CHUNK (b64 chars) 必须远小于该限制: 取 600 → 对应 450 字节原文, 留 40% 余量.
+    const CHUNK = 600; // base64 chars / 块 (实测 opencode pty 单行输入 < 1KB 安全)
+    const ops: Array<{ op: string; payload: Record<string, unknown>; timeoutMs?: number }> = [];
     // 首块 write (truncate, 空内容也建空文件)
-    const first = b64.slice(0, CHUNK);
-    let ok = (await getFsPty().request('write', { path: abs, b64: first }, this.writeTimeoutMs(first.length))).ok;
-    if (!ok) return false;
-    onProgress?.(first.length, b64.length);
+    ops.push({ op: 'write', payload: { path: abs, b64: b64.slice(0, CHUNK) }, timeoutMs: this.writeTimeoutMs(Math.min(CHUNK, b64.length)) });
     // 剩余块 append
     for (let i = CHUNK; i < b64.length; i += CHUNK) {
       const chunk = b64.slice(i, i + CHUNK);
-      const r = await getFsPty().request('append', { path: abs, b64: chunk }, this.writeTimeoutMs(chunk.length));
-      if (!r.ok) return false;
-      onProgress?.(Math.min(i + chunk.length, b64.length), b64.length);
+      ops.push({ op: 'append', payload: { path: abs, b64: chunk }, timeoutMs: this.writeTimeoutMs(chunk.length) });
     }
+    // 一次 pty 会话完成所有块 (原子写)
+    const results = await getFsPty().batch(ops, (i, r) => {
+      if (r.ok) onProgress?.(Math.min((i + 1) * CHUNK, b64.length), b64.length);
+    });
+    if (results.some((r) => !r.ok)) return false;
     this.invalidateParent(idePath);
     return true;
   }

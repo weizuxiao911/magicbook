@@ -5,6 +5,7 @@ import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/inject
 import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 
 import { WorkspacePicker } from '../extensions/workspace/WorkspacePicker';
+import { FilePicker } from '../extensions/filepicker/FilePicker';
 
 export function LayoutComponent(): React.ReactElement {
   useInjectable<IMainLayoutService>(IMainLayoutService);
@@ -30,6 +31,7 @@ export function LayoutComponent(): React.ReactElement {
         </SplitPanel>
       </BoxPanel>
       <WorkspacePicker />
+      <FilePicker />
     </React.Fragment>
   );
 }

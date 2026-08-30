@@ -24,7 +24,9 @@ export class DefaultLayoutContribution implements ClientAppContribution {
   private readonly layoutService!: IMainLayoutService;
 
   onDidStart(): void {
-    this.layoutService.toggleSlot(SlotLocation.left, true);
+    // 不再强制 toggleSlot(left, true) — 之前为保证 left slot 展开, 但导致用户折叠后
+    // 刷新页面又自动展开, 干扰用户. OpenSumi 框架自身把 layout state 持久化到 localStorage,
+    // 不需要 numas 启动时强制覆盖.
   }
 }
 

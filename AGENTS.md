@@ -11,6 +11,98 @@
 >
 > 解释权归用户. AI 自主做的仅限: 拼写/格式/注释修复、已约定命名替换、单元测试补全、只读操作 (跑命令/读日志/截图). 其他全部走 `question` 让用户拍板.
 
+### **交互协议铁律** (2026-08-29 加, 记到骨子里)
+
+> **所有需要拍板/选择/决策/不可逆操作的交互, 必须通过 `question` 工具列选项让用户拍板. 不得用普通文本/隐式同意/默认执行替代.**
+
+适用范围 (跟"AI 协作铁律"叠加, 此条最强):
+- 任何 AI 准备执行的「可能争议」动作: 库/命令/命名/目录选型、公开 API/数据模型/schema 变更、跨模块/跨项目耦合、新依赖/新工具/新流程/CI 步骤、删除/覆盖/迁移/远程写入/重写历史等不可逆动作
+- AI 给方案推荐 + 备选时, **必须** 用 `question` 工具让用户点选, 不得用文本"我准备 X / 你 OK 吗? / 如果你同意" 等隐式询问 (隐式同意容易漏, 必须显式 question 工具)
+- 「直接做」清单 (拼写/格式/注释修复、已约定命名替换、单元测试补全、只读操作) 之外的所有动作, 一律 `question`
+
+反模式 (已发生, 记入档案):
+- 文本里写"我准备 X" / "要不要 X" / "OK 吗" 等代替 question 工具
+- 多个候选方案时, 文本里列但不让用户显式点选
+- AI 替用户判断"这一步会争议吗", 自作主张做"明显"的动作 — **判断权归用户**
+- `question` 工具不可用时 (工具层 fallback), 必须等用户文字明确确认才执行, 仍不能自主做
+
+### **功能设计与架构决策铁律** (2026-08-29 加, 记到骨子里)
+
+> **一切功能设计和架构决策必须由用户拍板, AI 不得自行加戏.**
+>
+> 适用范围: 任何**未在对话中跟用户明确确认**的功能/特性/视觉/交互/状态/边界处理. 包括但不限于:
+>
+> - 交互行为 (e.g. 悬停时是否提示, 选中后是否可取消, 哪些操作可触发哪些反馈)
+> - 视觉细节 (e.g. 是否显示某提示文字, 颜色/动画/动效, 默认值)
+> - 状态机分支 (e.g. 错误/成功/空状态如何展示, 边界情况如何处理)
+> - 字段/数据模型新增 (e.g. sidecar schema 加字段, popover 加控件)
+> - 任何看起来"理所当然"或"用户应该会喜欢"的自作主张
+>
+> **典型反模式** (已发生, 记入档案):
+> - 在 sidecar 标注上自作主张挂 `showAnnotTip`, 弹"已批注"系统提示. 用户**明确禁止**悬停提示"已标注" → 改: sidecar 标注只视觉高亮, 不挂 tip.
+> - 之前把 modal/tab/terminal 当成"标注设置"的一部分, 实则是"运行时交互行为", 概念混淆. 用户纠正: 标注设置 = 类型/颜色/内容/位置, 跟行为是两个维度.
+>
+> **正确做法**: 不确定就问. 用 `question` 工具让用户拍板. AI 自主做的话**只**做用户**已确认**过的部分, 没确认的一律**不做** (哪怕看起来显然).
+>
+> 写代码前先自问: "这一步会争议吗? 是的 → 必须 `question`, 哪怕推荐方案再合理".
+
+### **代码改动 → 提交/推送 流程铁律** (2026-08-29 加, 记到骨子里)
+
+> **任何代码改动后, AI 必须用 `question` 工具反馈改动内容 + 列出提交/推送选项, 由用户决策. AI 不**自作主张** `git add` / `git commit` / `git push`.
+>
+> **流程**:
+> 1. 改动完代码, 跑 `git status` / `git diff --stat`, 列清楚改了什么文件 / 加了多少行
+> 2. 用 `question` 工具反馈:
+>    - 改了哪些文件 (简短列表)
+>    - 关键改动点 (1-2 句话)
+>    - 选项: 提交 / 推送 / 拆 commit / 暂存 / 不提交 (你拍板)
+> 3. 用户**拍板**后才执行 `git add` / `commit` / `push`
+>
+> **典型选项** (AI 列, 用户选):
+> - 提交 (1 个 commit) / 拆 N 个 commit / 不提交
+> - 推送 gitlab / 推送 github / 两个都推 / 不推
+> - 提交信息 AI 写 / 用户给
+>
+> **多远程仓库同步**: 本仓库配置了 2 个远程 (gitlab: `gitlab.grjky.com/new-app/numas`, github: `weizuxiao911/numas`).
+> 用户拍板"推送"时, **默认两个远程仓库都要推** (gitlab + github), 除非用户明确只推某一个.
+> 推送后自检 `git push` 两个 remote 都执行, 缺一个要补 (2026-08-29 发生过只推 gitlab, 用户问"2远程仓库都推送了吗").
+>
+> **典型反模式** (已发生):
+> - 改完代码**直接** `git push` 没问 (用户纠偏: 流程铁律)
+> - 推送只推了 gitlab, 漏了 github (用户纠偏: 两个远程仓库都要同步)
+
+### **分层架构铁律** (2026-08-29 加, 记到骨子里)
+
+> **所有拓展文件系统操作必须通过 codeblitz 的文件系统和 opencode 访问服务器端, 不得直连 service.**
+>
+> 分层 (单向, 外层调内层, 内层不调外层):
+>
+> ```
+> 外部  →  service  →  commands  →  codeblitz  →  extensions
+> ```
+>
+> 适用范围:
+> - extensions (`web/src/extensions/*`) 读写文件: 必须走 codeblitz (`@opensumi/ide-file-service` 的 `IFileServiceClient`) → opencode server fs API
+> - **严禁** extensions 直接调用 service 层的 `__APP_FS__` (FsPty 单例) / `service/fs.ts` 的任何方法
+> - service 层 (`web/src/service/*`) 是被 commands / codeblitz / 其他 service 调用的基础设施, 不暴露给 extensions 直调
+> - commands 层 (`web/src/commands/*`) 定义对外 API / token / interface, 是 service 与 codeblitz 之间的契约
+>
+> 原因 (用户已发生反模式, 记入档案):
+> - extensions 直连 service 的 FsPty 走 ws 长连接 + PTY 协议, 易崩 (标 2 个 PDF 标注就把 FsPty 搞崩)
+> - explorer / 其他 editor 走 codeblitz IFileServiceClient (HTTP, 无长连接) 不会崩, 路径不一致导致 fs 行为分裂
+> - 直连破坏分层, 业务代码绕过 commands 接口, 后续重构/测试/扩展都难
+>
+> **典型反模式** (已发生):
+> - PDF 标注 sidecar 读写走 `service/fs.ts` 的 `__APP_FS__.read/write` (FsPty), 标 2 个就触发 FsPty 异常, 业务请求卡死
+> - PDF 读 PDF binary 走对了 `fileService.readFile()` (IFileServiceClient), 写 sidecar 走错路, 同一文件两种文件 I/O 路径
+>
+> **正确做法**:
+> - extensions 写文件: `useInjectable(IFileServiceClient)` → `getFileStat` → `setContent` / `createFile`
+> - extensions 读文件: `fileService.readFile(uri)`
+> - extensions 需要 service 层能力 (e.g. 跨服务调用): 通过 commands 层暴露的 token / interface 拿
+> - service 层不依赖任何 extension 内部组件, 反之亦然
+> - 后续重构 sidecar: 切到 IFileServiceClient, 跟 explorer / editor 走同一条路
+
 ## 当前状态
 
 | 端 | 目录 | 职责 |
@@ -26,7 +118,7 @@
 ## 品牌资产
 
 - 名称: **Numas** (无括号中文, 跟 `index.html` title 一致)
-- Logo: `web/src/assets/logo.svg` — **🐮 emoji 原样** (Apple 系统 emoji 字体, 透明背景); chat webview 内通过 `brand.ts.logoChar='🐮'` 渲染
+- Logo: `web/src/assets/logo.svg` — **🐮 emoji 原样** (Apple 系统 emoji 字体, 透明背景); chat webview 内通过 `brand.ts.logo='🐮'` 渲染
 - Favicon: `web/src/assets/favicon.ico` (16/32/48 PNG-in-ICO) + `favicon.png` (64x64) — 🐮 emoji 截图抠图 (sharp 去白底), 透明 RGBA
 - 重生成: `.tmp/favicon-build/build-cow.js` (用 playwright 截 Apple Color Emoji, sharp 抠图+拼 ICO)
 - 调试日志需要保留 (`web/src/extensions/chat/commands/api.ts` 的 `[meta] stat` 之类) 后续排除问题用

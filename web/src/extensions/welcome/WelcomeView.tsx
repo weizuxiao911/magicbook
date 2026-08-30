@@ -12,7 +12,7 @@ import { EnvToken, type IEnvService } from '@/commands/env';
  * 工作区无打开文件时由 WelcomeContribution.onDidRestoreState 自动打开.
  *
  * 内容:
- *   - logo (品牌 logoChar) + 品牌名 + 标语 (从全局配置 __APP_CONFIG__.chatConfig.brand 读取)
+ *   - logo (品牌 logo) + 品牌名 + 标语 (从全局配置 __APP_CONFIG__.chatConfig.brand 读取)
  *   - 快捷操作: 上传文件到工作区
  */
 export const WelcomeView: React.FC<{ resource?: any }> = () => {
@@ -24,7 +24,7 @@ export const WelcomeView: React.FC<{ resource?: any }> = () => {
   // 品牌/logo 从全局配置 (__APP_CONFIG__.chatConfig.brand) 读取, 不硬编码
   const brand = useMemo(() => {
     const cfg = (window as any).__APP_CONFIG__;
-    return cfg?.chatConfig?.brand || { name: 'AI 工作台', logoChar: '', tagline: '' };
+    return cfg?.chatConfig?.brand || { name: 'AI 工作台', logo: '', title: '' };
   }, []);
 
   const workspaceDir = env?.getCwdSync?.() || '';
@@ -67,8 +67,8 @@ export const WelcomeView: React.FC<{ resource?: any }> = () => {
       <style>{STYLES}</style>
       <div className="ab-welcome__inner">
         <div className="ab-welcome__logo">
-          {brand.logoChar ? (
-            <span style={{ fontSize: 30, fontWeight: 700 }}>{brand.logoChar}</span>
+          {brand.logo ? (
+            <span style={{ fontSize: 30, fontWeight: 700 }}>{brand.logo}</span>
           ) : (
             <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
@@ -77,11 +77,12 @@ export const WelcomeView: React.FC<{ resource?: any }> = () => {
           )}
         </div>
         <h1 className="ab-welcome__title">{brand.name}</h1>
-        {brand.tagline && <p className="ab-welcome__subtitle">{brand.tagline}</p>}
+        {brand.subtitle && <p className="ab-welcome__subtitle">{brand.subtitle}</p>}
 
-        {workspaceDir && (
+        {/* workspaceDir 显示 (按需求去掉) */}
+        {/* {workspaceDir && (
           <p className="ab-welcome__cwd" title={workspaceDir}>工作区: {workspaceDir}</p>
-        )}
+        )} */}
 
         <div className="ab-welcome__actions">
           {/* 上传文件入口已移到 chat 顶部 + 按钮 (showOpenFilePicker), welcome 不再提供 */}

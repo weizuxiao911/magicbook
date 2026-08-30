@@ -18,7 +18,7 @@ import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 import type { IAgent, AgentMessage, AgentModel, AgentSession } from '../commands/agent';
 import { AgentToken } from '../commands/agent';
-import { appBaseUrl, effectiveCwd, cwdHeader } from './env';
+import { appBaseUrl, effectiveCwd, cwdHeader, isPathNotFoundError } from './env';
 
 let _client: any = null;
 
@@ -94,16 +94,27 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
     // 2.5 APP_CWD 校验: 用户选的目录可能被删/移走, 留着会导致后续 file/pty 全 500
     //    走 SDK client.file.list 校验 (跟 AGENTS.md 铁律: 走 SDK, 不直 fetch)
     //    SDK throwOnError=true → 错误抛, 用 try/catch 抓
+    //    用户业务规则:
+    //      - 有 APP_CWD 且宿主机存在 → 按 APP_CWD 加载 (正常)
+    //      - 有 APP_CWD 但宿主机不存在 (真删) → 重置 APP_CWD + reload
+    //      - 短暂不可用 (connection / timeout / 5xx) → 保留 APP_CWD, 等下次重试
+    //    区分: 错误信息含 not found / ENOENT / no such file → 真删, 其他 → 短暂不可用
     if (cwd && cwd !== hostCwd) {
       try {
         const c = this.getClient();
         if (c) {
           await c.file.list({ path: '.', directory: cwd });
         }
-      } catch {
-        console.warn('[agent] APP_CWD stale, 移除并降级到 hostCwd:', cwd, '→', hostCwd);
-        localStorage.removeItem('APP_CWD');
-        this._runtime.cwd = hostCwd;
+      } catch (e: any) {
+        if (isPathNotFoundError(e)) {
+          console.warn('[agent] APP_CWD 宿主机不存在, 重置 + reload:', cwd, e?.message);
+          try { localStorage.removeItem('APP_CWD'); } catch { /* */ }
+          window.location.reload();
+          return;
+        }
+        // 短暂不可用: 保留 APP_CWD, 保留 runtime.cwd = cwd (用户意愿优先)
+        console.warn('[agent] APP_CWD browse 失败 (短暂不可用), 保留 localStorage:', cwd, e?.message);
+        this._runtime.cwd = cwd;
       }
     }
     // 注入全局配置（env / fs/uri / terminal 读这里）

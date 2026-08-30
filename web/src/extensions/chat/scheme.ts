@@ -10,10 +10,10 @@
 
 export interface ChatBrand {
   name: string;
-  nameZh: string;
-  tagline: string;
+  title: string;
+  subtitle: string;
   greeting: string;
-  logoChar: string;
+  logo: string;
 }
 
 export interface ChatSuggestion {

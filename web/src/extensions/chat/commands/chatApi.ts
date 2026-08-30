@@ -10,7 +10,7 @@
 
 export interface ChatPanelApi {
   /** 新建会话 */
-  new(): void | Promise<void>;
+  newSession(): void | Promise<void>;
   /** 显示历史会话弹窗 */
   sessions(): void;
   /** 发送指令 */

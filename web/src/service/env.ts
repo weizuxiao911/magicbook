@@ -47,6 +47,16 @@ export function cwdHeader(): Record<string, string> {
   return cwd ? { 'x-opencode-directory': encodeURI(cwd) } : {};
 }
 
+/** 错误是否表示 "路径不存在" (ENOENT / not found / no such file)
+ *  用于 stale APP_CWD 检测分流:
+ *    - 真删: 重置 APP_CWD + reload
+ *    - 其他 (connection / timeout / 5xx): 短暂不可用, 保留 APP_CWD
+ *  跨 opencode SDK / node fs / shell 错误信息匹配. */
+export function isPathNotFoundError(e: any): boolean {
+  const msg = (e?.message || e?.err || String(e || '')).toString();
+  return /not\s*found|ENOENT|no\s*such\s*file|cannot\s*find|路径不存在/i.test(msg);
+}
+
 /**
  * URL 协议升级: 页面 https 时, http→https / ws→wss (mixed content 浏览器拒绝)
  * 单一 helper, 所有自建 ws/sse 入口统一走, 避免散落
