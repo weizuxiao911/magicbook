@@ -16,15 +16,28 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 
 ---
 
-## 2. 核心概念 (重要: 区分两个易混的"标注"概念)
+## 2. 核心概念 (重要: 区分三个易混的维度)
 
-| 概念 | 含义 | 例子 | 阶段 |
+| 维度 | 含义 | 例子 | 阶段 |
 |---|---|---|---|
-| **标注设置** | 标注本身的属性 (类型 / 颜色 / 文字 / 位置) | "这条是黄色高亮, 内容是 XXX" | **一期 (本文档)** |
-| **标注行为** | 标注被点击时**做什么** (弹 modal / 开 tab / 跑 terminal 命令) | "点这条 → 弹出 modal 显示 XXX" | **后续阶段, 暂搁置** |
+| **交互能力** (interactions / file) | 标注**能做什么** | 批注(comment) / 提示词(prompt) / 打开文件(file) | **一期 (本文档)** — 后续会持续拓展 |
+| **交互执行方式** (PdfAnnotMeta.action) | 标注**怎么执行** (仅 PDF 内嵌 annotation 用) | `[modal:title] 内容` / `[tab:title] 内容` / `[terminal] cmd` | **一期 (内嵌走老路径)** — sidecar 一期暂不绑定执行方式 |
+| **视觉样式** | 标注长什么样 | 半透明矩形 + 颜色 (color) + hover 加深 | **一期 (统一高亮)** |
 
-> **纠偏记录**: 早期讨论把 `modal/tab/terminal` 当成"标注设置"的一部分, 这是错的.
-> 那是**运行时交互行为**, 跟"标注怎么设"是两个维度. 一期只做"标注设置", 行为后续.
+> **2026-08-30 纠偏 (本节核心)**:
+> 早期 AI POC 时定义了 `type: highlight | note` 作为"标注类型", 实际只是视觉分类, 跟"交互能力"是不同维度却被混在一起, popover 让用户选"高亮/便签"完全是 AI 自作主张.
+>
+> **清理结果**:
+> - 删 `SidecarAnnot.type` 字段, 全部统一为高亮矩形 (color 决定颜色)
+> - popover 不再有"高亮/便签"切换, 顶部只显示"第 N 页 / 编辑标注"
+> - 读盘时静默 strip `type` 字段 (不入 in-memory), 写盘时自动不带, 现有 type 在下次重写时自然消失
+> - 文档所有"标注类型"措辞统一改为"交互能力"或"视觉样式", 避免再被混淆
+>
+> **概念边界 (强约束)**:
+> - "交互能力" = 标注做什么 (comment/prompt/file), 跟"颜色 / 区域"是不同维度, 一期不绑死, 用户后续会按需加
+> - "交互执行方式" = 点击时怎么运行 (modal/tab/terminal), 仅内嵌 annotation 用 contents 约定
+> - "视觉样式" = 颜色/hover 效果, 全部统一 (不再分"高亮型/便签型")
+> - 一期不做的事, **坚决不加** (跟 §2 早期纠偏记录同源)
 
 ---
 
@@ -38,39 +51,56 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 - **路径转换**: `sidecarPathFromResource()` in `PdfReaderView.tsx:104-119`
 - **冲突处理**: 不处理 (假定同目录无同名 PDF, OS 天然限制)
 
-### 3.2 Schema v1 (`web/src/extensions/pdf/annotations.ts:166-215`)
+### 3.2 Schema v1 (`web/src/extensions/pdf/annotations.ts:198-261`)
 
 ```json
 {
   "version": 1,
   "items": [
     {
-      "id": "a-{base36}-{rand}",   // 客户端生成, 幂等写
-      "page": 1,                   // 1-based
-      "type": "highlight",         // highlight | note
-      "rect": [x1, y1, x2, y2],    // PDF 原坐标 (左下原点)
-      "selectedText": "",          // 一期不用, 留空 (后续 rect 选区可能填)
-      "note": "用户备注",           // note 类型备注; highlight 模式可空
-      "color": [55, 148, 255],     // rgb 0-255, 默认蓝
-      "createdAt": "2026-08-29T..." // ISO
+      "id": "a-{base36}-{rand}",       // 客户端生成, 幂等写
+      "page": 1,                       // 1-based
+      "rect": [x1, y1, x2, y2],        // PDF 原坐标 (左下原点)
+      "selectedText": "",              // 圈选文本快照 (后续可作备注默认填充)
+      "note": "用户备注",               // 通用备注 (可空)
+      "color": [55, 148, 255],         // rgb 0-255, 默认蓝
+      "createdAt": "2026-08-29T...",   // ISO
+
+      "interactions": [                // 交互能力 (可多选, 至少 1 个才允许保存; 历史: 2026-08-30 起无 type 字段)
+        { "type": "comment", "text": "批注内容 (hover 显示)" },
+        { "type": "prompt",  "text": "提示词 (hover 显示「发送给AI」按钮)" }
+      ],
+      "file": { "name": "...", "path": "file:///workspace/..." }   // 可选: 关联文件
     }
   ]
 }
 ```
 
-### 3.3 标注类型 (一期)
+> 注: 上面 `//` 注释是 markdown 展示用, 实际 JSON 不支持. 写盘时通过 `JSON.stringify(file, null, 2)` 不带注释, 字段含义以本表为准.
 
-| 类型 | 视觉 | 用途 |
+### 3.3 视觉样式 (一期统一)
+
+| 形态 | 视觉 | 备注 |
 |---|---|---|
-| `highlight` | 矩形热区, 半透明色块叠加 (alpha 0.08) + 虚线边框 | 突出区域 |
-| `note` | 同 highlight (一期视觉统一, 后续加便签图标) | 留便签 |
+| **统一高亮** | 矩形热区, 半透明色块叠加 (alpha 0.08 → hover 0.25) + 虚线边框 | color 决定颜色 (8 色可选, 见 AnnotPopover COLORS) |
+| **删除按钮** | 右上角 × 圆形按钮 (hover 显示) | 点击直接删除 (in-memory + 写盘过滤) |
+| **交互按钮** | 右下角按钮行 (hover 显示), 多个按钮 flex 一行右对齐 | 提示词→"发送给AI"; 文件→"打开{文件名}"; 批注→hover 弹 tip 显示文本 |
 
-> TODO 后续: `box` (边框) / `underline` / `strikeout` / `text` (可见批注文字).
+> **历史纠偏**: 早期 §3.3 定义了 `highlight` (色块) / `note` (便签图标) 两种视觉, 2026-08-30 清理:
+> 1. `type` 字段从 schema 删除, 全部统一为高亮矩形
+> 2. 批注/提示词/文件三种"交互能力"通过 interactions/file 字段表达, 跟"视觉样式"是不同维度
+> 3. 视觉不再分"高亮型/便签型", 仅靠 color + hover 加深区分
+
+> TODO 后续 (按需拓展, 不预先实现):
+> - 更多交互能力 (除批注/提示词/打开文件外)
+> - 自定义颜色 / 调色板 (现 8 色固定)
 
 ### 3.4 字段兼容 / 版本升级
 
 - 未知字段忽略 (向前兼容)
-- 缺字段用默认值 (`color` 默认蓝, `type` 默认 highlight)
+- 缺字段用默认值 (`color` 默认蓝, `interactions/file` 可选)
+- 旧 `type` 字段: 读时静默 strip (历史 highlight/note, 已弃用), 写时自动不带, 现有 type 在下次重写时消失 (无需迁移)
+- 旧 `behavior` 单字段: 读时合并到 `interactions` (保留兼容)
 - `version` 字段保留, 后续 schema 升级时校验
 
 ---
@@ -87,14 +117,15 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 3. mouseup → 算 PDF 原坐标 → 弹 popover (右上角)
    ↓
 4. popover 内容 (门户到 document.body, z-index 99999, 不被 chat 遮):
-   - 类型切换: 高亮 / 便签 (默认 highlight)
-   - 颜色: 4 色蓝/黄/绿/红 (默认蓝)
-   - 区域标注提示 (因为 selectedText 空, 显示"区域标注 (第 N 页)")
+   - 标题: "第 N 页" (新建) / "编辑标注" (编辑已有)
+   - 选区文本预览 (selectedText 截断显示)
+   - 交互能力多选 toggle: 批注 / 提示词 / 文件 (至少 1 个, 选中显示对应表单)
+   - 颜色: 8 色蓝/黄/绿/红/紫/橙/青/粉 (默认蓝)
    - [取消] [保存]
    ↓
 5. 矩形蒙层**保留显示** (data-active="1", 蓝色半透明), 提示"这是要标注的区域"
    ↓
-6. 点保存 → 写盘 + 渲染为标注热区 + 矩形蒙层移除
+6. 点保存 → 校验 (至少 1 个交互) → 写盘 + 渲染为标注热区 + 矩形蒙层移除
    7. 点取消 → 矩形蒙层移除 (不写盘)
 ```
 
@@ -212,30 +243,33 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 
 ### 7.1 已完成 (一期 MVP)
 
-- [x] sidecar JSON schema 定义 (highlight/note + color + note + page/rect)
-- [x] 读盘: `__APP_FS__.read` + 容错
-- [x] 写盘: read-merge-write + debounce 500ms + 自写去重 (hash)
+- [x] sidecar JSON schema 定义 (无 type 字段, 2026-08-30 起统一高亮)
+- [x] 读盘: `__APP_FS__.read` + 容错 + strip 旧 type 字段
+- [x] 写盘: read-merge-write + debounce 500ms + 自写去重 (hash) + 不带 type 字段
 - [x] Rect 矩形选择 (mousedown/move/up 画蓝色蒙层)
 - [x] 鼠标坐标 → PDF 原坐标 (跨页忽略, 5x5 px 最小尺寸过滤)
 - [x] 矩形蒙层在弹窗时保留, 保存/取消时移除
-- [x] popover (门户到 body, z-index 99999) — 类型切换 / 4 色 / 区域标注提示 / 保存/取消
-- [x] sidecar 标注渲染: 视觉高亮 (alpha 0.08 → hover 0.25), 无 tip
-- [x] **sidecar 标注 hover 显示 X 按钮 (右上角)**: 点击直接删除 (从 in-memory + 写盘过滤)
+- [x] popover (门户到 body, z-index 99999) — 颜色 (8 色) + 交互能力多选 (批注/提示词/文件) + 区域预览 + 至少 1 个交互校验 + 保存/取消
+- [x] sidecar 标注渲染: 统一高亮 (alpha 0.08 → hover 0.25), 无 tip
+- [x] sidecar 标注 hover 显示 X 按钮 (右上角): 点击直接删除 (从 in-memory + 写盘过滤)
+- [x] sidecar 标注 hover 显示右下角按钮行: 提示词→"发送给AI" → chat.send; 文件→"打开{name}" → editor.open
+- [x] sidecar 标注 hover 显示批注 tip (合并多条 comment 文本)
+- [x] sidecar 标注 dblclick → 弹编辑 popover (覆盖已有 annot, 按 id 幂等)
 - [x] 内嵌 annotation 仍走老路径 (hover tip + click action)
 - [x] fs:changed 监听, 外部修改自动 reload
 - [x] 失败 toast + 红点标记
-- [x] end-to-end 验证: 画矩形 → 弹 popover → 保存 → PDF 上看到高亮 → hover 显示 X → 点击删除 → 标注消失 + sidecar 写空 items
+- [x] end-to-end 验证: 画矩形 → 弹 popover → 保存 → PDF 上看到高亮 → hover 显示批注/按钮/X → 点击删除 → 标注消失 + sidecar 写空 items (type 字段自动 strip)
 
 ### 7.2 未做 (待用户拍板)
 
 > **AI 自主做的禁区** (AGENTS.md 强化): 任何"看起来显然"或"用户应该会喜欢"的自作主张都**不做**. 一期没拍板的功能, 后续讨论.
 
-- [ ] **编辑标注** (点击已存标注, 修改类型/颜色/位置/备注)
+- [ ] **更多交互能力** (除批注/提示词/打开文件外, 用户后续按需拓展)
 - [ ] **侧栏列表** (按页分组, 跳转/搜索)
-- [ ] **备注 textarea** (note 模式, popover 内输入)
+- [ ] **备注 textarea** (note 字段编辑器, 现仅 interactions.file 字段触发; 通用 note 字段无独立 UI)
 - [ ] **文本选择 (替代/补充 Rect)** (text layer 已启用, 未用于选择)
-- [ ] **调色板自定义** (默认 4 色: 蓝/黄/绿/红, 一期够)
-- [ ] **更多标注类型** (box / underline / strikeout / text)
+- [ ] **调色板自定义** (默认 8 色: 蓝/黄/绿/红/紫/橙/青/粉, 一期够)
+- [ ] **更多视觉样式** (box / underline / strikeout / text 边框型 — 但 type 字段已删, 仅在交互能力上拓展)
 - [ ] **跨页选区** (一期不支持)
 - [ ] **撤销** (删除后 5s 内可恢复 — 复杂, 一期不做)
 - [ ] **删除确认弹窗** (用户口头说"点 X 删除"未要求确认, 当前**直接删**; 一期不做确认 modal)
@@ -253,6 +287,7 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 | 2026-08-29 | AI 在 sidecar 标注上**自作主张**挂 `showAnnotTip` 弹"已批注" | 用户**明确禁止**悬停提示"已标注" | 拆开渲染: sidecar 无 tip 只高亮, 强化 AGENTS.md 铁律 |
 | 2026-08-29 | popover 固定在 PdfReaderView 内被 chat 遮 | 改用 React Portal 渲染到 document.body, z-index 99999 | 实施 |
 | 2026-08-29 | 之前 `setUserScaleIdx` 闭包快照丢 click | 改 functional update `setUserScaleIdx((prev) => ...)` | 修 |
+| **2026-08-30** | **AI POC 时定义 `type: highlight \| note` 作为"标注类型"** | **用户明确: 这不是 PDF 交互能力, 是 AI 自作主张; 真实交互能力 = 批注/提示词/打开文件, 视觉/交互/执行方式三个维度不能混** | **删 type 字段: 全部统一为高亮矩形 (color 决定颜色); popover 不再有"高亮/便签"切换; 读时 strip, 写时自动不带, 旧 type 在下次重写时自然消失; 文档统一改为"交互能力/交互执行方式/视觉样式"三分** |
 
 ---
 
@@ -260,13 +295,13 @@ PDF 阅读器 (PdfReaderView) 当前**只读 PDF 内嵌 annotation** (pdf.js `ge
 
 > 任何"看起来显然"或"用户应该会喜欢"的功能, 都列在这等用户拍板. AI **不**自作主张.
 
-1. **编辑标注** (点击已存标注, 修改类型/颜色/位置/备注)
-2. **侧栏列表** (要不要)
-3. **备注 textarea** (note 模式要不要文本输入)
+1. **更多交互能力** (除批注/提示词/打开文件外, 用户后续按需拓展)
+2. **侧栏列表** (按页分组, 跳转/搜索)
+3. **备注 textarea** (note 字段编辑器, 通用备注独立 UI)
 4. **文本选择 / Rect 二选一** (Rect 一期, 文本后续)
-5. **调色板颜色** (默认 4 色够吗, 要加更多?)
+5. **调色板颜色** (默认 8 色够吗, 要加更多?)
 6. **跨页选区** (一期支持还是不支持)
-7. **更多标注类型** (box / underline / strikeout / text)
+7. **更多视觉样式** (box / underline / strikeout / text 边框型 — 但 type 字段已删, 仅在交互能力维度上考虑)
 8. **删除撤销** (5s 内可恢复, 复杂)
 9. **删除确认弹窗** (直接删 vs 弹确认 modal)
 
