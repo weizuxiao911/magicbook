@@ -18,7 +18,7 @@ import { FileType } from '@codeblitzjs/ide-browserfs/lib/core/node_fs_stats';
 import Stats from '@codeblitzjs/ide-browserfs/lib/core/node_fs_stats';
 import { InMemoryStore } from '@codeblitzjs/ide-browserfs/lib/backend/InMemory';
 import { SyncKeyValueFileSystem } from '@codeblitzjs/ide-browserfs/lib/generic/key_value_filesystem';
-import { BrowserFS } from '@codeblitzjs/ide-sumi-core/lib/server/node';
+import { BrowserFS, fs as browserNodeFs } from '@codeblitzjs/ide-sumi-core/lib/server/node';
 import { WORKSPACE_ROOT, type IAppRendererProps } from '@codeblitzjs/ide-core';
 
 import { getFileSystemService, recordSyncedHash } from '../service/fs';
@@ -39,8 +39,17 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
     super({ store: new InMemoryStore() });
   }
 
+  /** 清空 writable InMemory 缓存: 外部文件变更后调用, 让 OverlayFS stat/readdir
+   *  fallback 到 readable (DynamicRequest → opencode 真实数据), 否则 InMemory 里
+   *  旧目录树 (挂载/展开时写入) 优先, explorer 看到过期列表. 已保存内容在服务器, 无丢失. */
+  clearCache(): void {
+    (this as any).store?.clear?.();
+  }
+
   static Create(opts: unknown, cb: (err: Error | null, fs?: WriteSyncFS) => void): void {
-    cb(null, new WriteSyncFS());
+    const inst = new WriteSyncFS();
+    registerWriteSyncFS(inst);
+    cb(null, inst);
   }
 
   static isAvailable(): boolean {
@@ -129,6 +138,70 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
 
 // 注册 WriteSyncFS 为 BrowserFS 后端 (挂载前, 模块加载时)
 BrowserFS.addFileSystemType(WriteSyncFS.Name, WriteSyncFS as any);
+
+/** 全局持有 WriteSyncFS 实例 (挂载后由 codeblitz 创建, 供 fs.ts 外部变更后 clearCache) */
+const WRITE_FS_KEY = '__APP_WRITE_SYNC_FS__';
+export function registerWriteSyncFS(fs: WriteSyncFS | null): void {
+  (window as any)[WRITE_FS_KEY] = fs;
+}
+
+/** 重置 BrowserFS readable (DynamicRequest) 的 FileIndex 缓存:
+ *  外部文件变更后调用, 让 stat/readdir 重新从后端拉真实目录 (否则 entriesLoaded 缓存旧列表). */
+export function resetBrowserFSCache(): void {
+  try {
+    const root = (browserNodeFs as any).getRootFS?.();
+    // 收集所有可重置的 fs (根 OverlayFS / MountableFileSystem 挂载点的 OverlayFS)
+    const candidates: any[] = [];
+    if (root?._readable || root?._writable) {
+      candidates.push(root);
+    }
+    // MountableFileSystem: mntMap / _mntMap (path → fs)
+    const mnt = root?.mntMap || root?._mntMap || root?._mnts;
+    if (mnt) {
+      for (const k of Object.keys(mnt)) {
+        const fs = mnt[k] || mnt.get?.(k);
+        if (fs) candidates.push(fs);
+      }
+    }
+    for (const fs of candidates) {
+      // 递归清 (嵌套 OverlayFS: Mountable → OverlayFS(_fs) → UnlockedOverlayFS(_readable/_writable))
+      const clearOne = (f: any): void => {
+        if (!f) return;
+        // UnlockedOverlayFS: 清 writable InMemory + readable DynamicRequest FileIndex
+        try { (f as any)._writable?.clearCache?.(); } catch { /* ignore */ }
+        try { (f as any)._mu?.clearCache?.(); } catch { /* ignore */ }
+        const readable = (f as any)._readable || (f as any)._fs;
+        if (readable?._index) {
+          // 只清根目录 inode 的 entriesLoaded (保留树结构): 下次 loadEntry 重新 readDirectory 拉最新.
+          // 不能整体重置 _index (explorer root 节点依赖, 清空会崩树).
+          try {
+            const idx = readable._index._index || {};
+            let cleared = 0;
+            for (const p of Object.keys(idx)) {
+              const inode = idx[p];
+              if (inode && typeof inode === 'object' && 'entriesLoaded' in inode && inode.entriesLoaded) {
+                inode.entriesLoaded = false;
+                cleared++;
+              }
+            }
+            if (cleared > 0) console.log('[bfs-reset] entriesLoaded reset:', cleared);
+          } catch { /* ignore */ }
+        }
+        // 嵌套: OverlayFS._fs / _mu 也可能是 OverlayFS
+        clearOne((f as any)._fs);
+        clearOne((f as any)._mu);
+        clearOne((f as any)._readable);
+        clearOne((f as any)._writable);
+      };
+      clearOne(fs);
+    }
+  } catch (e) {
+    console.warn('[bfs-reset] fail:', e);
+  }
+}
+
+/** 暴露 resetBrowserFSCache 到全局 (fs.ts 避免循环 import 直接读) */
+(window as any).__RESET_BFS_CACHE__ = resetBrowserFSCache;
 
 export const runtimeConfig: IAppRendererProps['runtimeConfig'] = {
   workspace: {
