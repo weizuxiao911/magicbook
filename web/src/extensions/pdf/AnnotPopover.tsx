@@ -67,6 +67,8 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
   const [fileOn, setFileOn] = useState(false);
   const [fileRef, setFileRef] = useState<{ name: string; path: string } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  /** AI 生成进行中 (用于禁用重复点击 + 错误回滚) */
+  const activeGenRef = useRef<AIRequestHandle | null>(null);
 
   // 每次 state 变化时重置 (新建) 或预填 (编辑 existing)
   useEffect(() => {
@@ -124,15 +126,15 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
 
   // 边界修正: 选区下方居中, 超出视口时调整
   const W = 340;
-  const H = 340;
   const PAD = 8;
-  // 默认: 选区下方居中
+  // 默认: 选区下方居中. 实际高度自适应 (maxHeight: 80vh), 用 maxHeight 估算.
+  const MAX_H = Math.min(window.innerHeight * 0.8, 720);
   let left = state.x - W / 2;
   let top = state.y + PAD;
   if (typeof window !== 'undefined') {
     if (left < 4) left = 4;
     if (left + W > window.innerWidth - 4) left = window.innerWidth - W - 4;
-    if (top + H > window.innerHeight - 4) top = Math.max(4, state.y - H - PAD);
+    if (top + MAX_H > window.innerHeight - 4) top = Math.max(4, state.y - MAX_H - PAD);
   }
 
   const color = COLORS[colorIdx].rgb;
@@ -158,7 +160,6 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
 
   /** AI 生成: 按交互类型拼 prompt 模板, 通过 ask 拓展发请求 (独立 session, 不污染 chat 历史).
    *  流结束自动回填到 popover 对应 textarea (onComplete). 失败 toast 提示. */
-  const activeGenRef = useRef<AIRequestHandle | null>(null);
   const handleGenerate = (kind: 'comment' | 'prompt' | 'file') => {
     if (!state) return;
     if (activeGenRef.current) {
