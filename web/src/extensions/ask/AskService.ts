@@ -32,8 +32,8 @@ export interface AIRequestCallbacks {
 export interface AIRequestHandle {
   /** 内部 sessionId (opencode) */
   sessionId: string;
-  /** 取消订阅 (不影响 chat / opencode 后端, 仅不接收后续事件) */
-  cancel: () => void;
+  /** 取消: abort 后端对话 (client.session.abort) + 停止监听 + 清理. 返回 Promise. */
+  cancel: () => Promise<void>;
 }
 
 interface ActiveRequest {
@@ -157,7 +157,16 @@ class AskService {
 
     return {
       sessionId,
-      cancel: () => { this.active.delete(sessionId); },
+      cancel: async () => {
+        // 终止后端生成 (session.abort) + 清理 active + 清超时 timer
+        const req = this.active.get(sessionId);
+        if (req?.timer) clearTimeout(req.timer);
+        this.active.delete(sessionId);
+        try {
+          const c = getClient();
+          if (c?.session?.abort) await c.session.abort({ sessionID: sessionId });
+        } catch { /* 终止失败忽略 */ }
+      },
     };
   }
 

@@ -254,6 +254,17 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
     });
   };
 
+  /** 取消生成: 终止该交互类型的 ask (后端 abort) + 重置按钮. */
+  const handleCancelGenerate = (kind: 'comment' | 'prompt' | 'file') => {
+    const handle = activeGenRefs.current.get(kind);
+    if (!handle) { setGenLoading(kind, false); return; }
+    void handle.cancel().then(() => {
+      activeGenRefs.current.delete(kind);
+      setGenLoading(kind, false);
+      notification.info({ message: '已取消生成', type: 'info', duration: 2 });
+    });
+  };
+
   const handleSave = () => {
     // 至少选择一种交互类型, 否则不让保存 (停留 popover + codeblitz 提示)
     const hasInteraction =
@@ -341,10 +352,10 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
           />
           <button
             type="button"
-            className="ab-annot-popover__btn ab-annot-popover__btn--gen"
-            onClick={() => handleGenerate('comment')}
-            disabled={generating.comment}
-          >{generating.comment ? '生成中…' : '生成'}</button>
+            className={`ab-annot-popover__btn ${generating.comment ? 'ab-annot-popover__btn--gen-cancel' : 'ab-annot-popover__btn--gen'}`}
+            onClick={() => (generating.comment ? handleCancelGenerate('comment') : handleGenerate('comment'))}
+            disabled={false}
+          >{generating.comment ? '取消' : '生成'}</button>
         </div>
       )}
       {promptOn && (
@@ -367,10 +378,10 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
           />
           <button
             type="button"
-            className="ab-annot-popover__btn ab-annot-popover__btn--gen"
-            onClick={() => handleGenerate('prompt')}
-            disabled={generating.prompt}
-          >{generating.prompt ? '生成中…' : '生成'}</button>
+            className={`ab-annot-popover__btn ${generating.prompt ? 'ab-annot-popover__btn--gen-cancel' : 'ab-annot-popover__btn--gen'}`}
+            onClick={() => (generating.prompt ? handleCancelGenerate('prompt') : handleGenerate('prompt'))}
+            disabled={false}
+          >{generating.prompt ? '取消' : '生成'}</button>
         </div>
       )}
       {fileOn && (
@@ -390,10 +401,10 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, pdfName, onSa
             </button>
             <button
               type="button"
-              className="ab-annot-popover__btn ab-annot-popover__btn--gen"
-              onClick={() => handleGenerate('file')}
-              disabled={generating.file}
-            >{generating.file ? '生成中…' : '生成'}</button>
+              className={`ab-annot-popover__btn ${generating.file ? 'ab-annot-popover__btn--gen-cancel' : 'ab-annot-popover__btn--gen'}`}
+              onClick={() => (generating.file ? handleCancelGenerate('file') : handleGenerate('file'))}
+              disabled={false}
+            >{generating.file ? '取消' : '生成'}</button>
           </div>
         </div>
       )}
@@ -603,6 +614,19 @@ const POPOVER_STYLES = `
   color: rgba(255,255,255,0.7);
   cursor: not-allowed;
   filter: none;
+}
+.ab-annot-popover__btn--gen-cancel {
+  background: rgba(220,60,60,0.9);
+  color: #fff;
+  font-weight: 600;
+  padding: 4px 10px;
+  text-align: center;
+  align-self: stretch;
+  font-size: 11px;
+  transition: opacity 0.12s, filter 0.12s;
+}
+.ab-annot-popover__btn--gen-cancel:hover {
+  filter: brightness(1.1);
 }
 .ab-annot-popover__file-clear {
   font: 600 12px/1 sans-serif;
