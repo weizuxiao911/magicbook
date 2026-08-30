@@ -98,8 +98,13 @@ export const AnnotationActions: React.FC = () => {
       if (!path) return;
       void (async () => {
         try {
-          // path 是 IDE 相对路径 (如 /docs/a.txt) → file:///workspace/docs/a.txt
-          const uri = new URI(`file://${path.startsWith('/') ? path : `/${path}`}`);
+          // path 是 codeblitz 源路径 (file:///workspace/...) 或 IDE 相对路径 (/docs/a.txt)
+          let uri: URI;
+          if (path.startsWith('file://')) {
+            uri = new URI(path);
+          } else {
+            uri = new URI(`file:///workspace${path.startsWith('/') ? path : `/${path}`}`);
+          }
           await editorService.open(uri, { preview: false, focus: true });
         } catch (err) {
           console.warn('[annot] open file failed:', path, err);

@@ -31,6 +31,8 @@ export interface FilePickerConfig {
   onCancel?: () => void;
   /** 初始目录 (默认当前工作目录) */
   initialPath?: string;
+  /** 浏览根目录 (绝对路径): 不能 goUp/面包屑离开 root 范围 */
+  root?: string;
 }
 
 function shellQuote(s: string): string {
@@ -129,9 +131,23 @@ export const FilePicker: React.FC = () => {
   }, []);
 
   const mode = configRef.current?.mode || 'all';
+  /** root 绝对路径 (浏览上限, config.root 传入) */
+  const rootRef = useRef<string>('');
+
+  /** 是否在 root 范围内 */
+  const withinRoot = useCallback((absPath: string): boolean => {
+    const root = rootRef.current;
+    if (!root) return true;
+    return absPath === root || absPath.startsWith(root.replace(/\/+$/, '') + '/');
+  }, []);
 
   const doBrowse = useCallback(async (dir: string) => {
     if (!dir.trim()) return;
+    // 不能浏览 root 之外
+    if (!withinRoot(dir)) {
+      doBrowse(rootRef.current);
+      return;
+    }
     setLoading(true);
     try {
       const r = await browseDir(dir);
@@ -143,7 +159,7 @@ export const FilePicker: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [notifyError]);
+  }, [notifyError, withinRoot]);
 
   useEffect(() => {
     const onRequest = (e: Event) => {
@@ -151,19 +167,21 @@ export const FilePicker: React.FC = () => {
       const cfg: FilePickerConfig | null = d.config || null;
       if (!cfg) return;
       configRef.current = cfg;
+      rootRef.current = cfg.root || '';
       setOpen(true);
       setEntries([]); setSelected(null); setMkMode(false); setMkName('');
       setTimeout(() => {
         inputRef.current?.focus();
-        // 初始目录: config.initialPath 优先, 否则当前工作目录
+        // 初始目录: config.initialPath 优先, 否则当前工作目录 (均在 root 内)
         const stored = (() => { try { return localStorage.getItem('APP_CWD') || ''; } catch { return ''; } })();
         const fallback = (window as any).__APP_CONFIG__?.cwd || '';
-        doBrowse(cfg.initialPath || stored || fallback || '/');
+        const start = cfg.initialPath || stored || fallback || '/';
+        doBrowse(withinRoot(start) ? start : (rootRef.current || start));
       }, 100);
     };
     window.addEventListener('filepicker:request', onRequest);
     return () => window.removeEventListener('filepicker:request', onRequest);
-  }, [doBrowse]);
+  }, [doBrowse, withinRoot]);
 
   const handlePick = useCallback((entry: DirEntry) => {
     if (!entrySelectable(entry, configRef.current?.mode || 'all')) return;
@@ -198,8 +216,12 @@ export const FilePicker: React.FC = () => {
   }, [doBrowse]);
 
   const goUp = useCallback(() => {
-    if (!currentPath || currentPath === '/') return;
-    doBrowse(currentPath.replace(/\/+$/, '').split('/').slice(0, -1).join('/') || '/');
+    const root = rootRef.current;
+    if (!currentPath || currentPath === '/' || currentPath === root) return;
+    const parent = currentPath.replace(/\/+$/, '').split('/').slice(0, -1).join('/') || '/';
+    // 不能越出 root
+    if (root && parent !== root && !parent.startsWith(root.replace(/\/+$/, '') + '/')) return;
+    doBrowse(parent);
   }, [currentPath, doBrowse]);
 
   if (!open) return null;
@@ -232,10 +254,16 @@ export const FilePicker: React.FC = () => {
         <div className="fp-bread">
           {segments.map((seg, i) => {
             const p = '/' + segments.slice(0, i + 1).join('/');
+            const root = rootRef.current;
+            const withinRoot = !root || p === root.replace(/\/+$/, '') || p.startsWith(root.replace(/\/+$/, '') + '/');
             return (
               <React.Fragment key={p}>
                 {i > 0 && <span className="fp-bread-sep">›</span>}
-                <button className="fp-bread-item" onClick={() => doBrowse(p)}>{seg}</button>
+                {withinRoot ? (
+                  <button className="fp-bread-item" onClick={() => doBrowse(p)}>{seg}</button>
+                ) : (
+                  <span className="fp-bread-item fp-bread-item--locked">{seg}</span>
+                )}
               </React.Fragment>
             );
           })}
@@ -340,6 +368,8 @@ const STYLES = `
 .fp-x:hover{background:var(--ai-hover,rgba(255,255,255,0.06));color:var(--ai-fg,#e5e7eb)}
 .fp-bread{display:flex;align-items:center;padding:6px 18px;gap:2px;font-size:12.5px;border-top:1px solid var(--ai-divider,rgba(255,255,255,0.06));border-bottom:1px solid var(--ai-divider,rgba(255,255,255,0.06));flex-shrink:0;overflow-x:auto;min-height:34px;background:rgba(255,255,255,0.02)}
 .fp-bread-item{background:none;border:none;color:var(--ai-fg-muted,#9ca3af);cursor:pointer;padding:3px 6px;border-radius:4px;white-space:nowrap;font-size:12.5px;transition:all .12s}
+.fp-bread-item--locked{opacity:.4;cursor:default}
+.fp-bread-item--locked:hover{background:transparent}
 .fp-bread-item:hover{background:var(--ai-hover,rgba(255,255,255,0.06));color:var(--ai-fg,#e5e7eb)}
 .fp-bread-sep{color:var(--ai-fg-muted,#6b7280);font-size:11px;opacity:.5;user-select:none}
 .fp-bread-up{background:none;border:none;color:var(--ai-fg-muted,#9ca3af);cursor:pointer;padding:4px 6px;border-radius:4px;display:flex;flex-shrink:0;transition:all .12s}

@@ -20,9 +20,11 @@ export const WorkspacePicker: React.FC = () => {
   useEffect(() => {
     const h = () => {
       // 打开目录选择器 (复用 filepicker, 仅目录模式); 初始路径 = 当前工作目录
+      // 注意: 不传 root — workspace 需要能切到任意目录 (含上级)
+      const cwd = effectiveCwd();
       requestFilePicker({
         mode: 'directories',
-        initialPath: effectiveCwd() || '/',
+        initialPath: cwd || '/',
         onPick: (dir) => {
           // 唯一变更入口 (写 APP_CWD + recent + 派 workspace:changed + reload)
           setCwd(dir.path);

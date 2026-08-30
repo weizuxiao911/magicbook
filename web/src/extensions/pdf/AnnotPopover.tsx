@@ -10,6 +10,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 import type { SidecarAnnot, SidecarInteraction } from './annotations';
 import { requestFilePicker } from '../filepicker/FilePicker';
 
@@ -130,12 +131,21 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({ state, onSave, onCan
 
   const color = COLORS[colorIdx].rgb;
 
-  /** 打开服务器文件选择器 (复用 filepicker 拓展, 仅文件模式) */
+  /** 打开服务器文件选择器 (复用 filepicker, 仅文件模式, 限定工作目录) */
   const openPicker = () => {
+    const cwdAbs = (() => {
+      try { return localStorage.getItem('APP_CWD') || ''; } catch { return ''; }
+    })() || (window as any).__APP_CONFIG__?.cwd || '';
     requestFilePicker({
       mode: 'files',
+      root: cwdAbs, // 限定在工作目录内选择
       onPick: (f) => {
-        setFileRef({ name: f.name, path: f.path });
+        // 绝对路径 → codeblitz 源路径: /Users/.../cwd/index.html → file:///workspace/index.html
+        const rel = cwdAbs && f.path.startsWith(cwdAbs)
+          ? f.path.slice(cwdAbs.length)
+          : f.path;
+        const idePath = rel.startsWith('/') ? rel : `/${rel}`;
+        setFileRef({ name: f.name, path: `file://${WORKSPACE_ROOT}${idePath}` });
       },
     });
   };
