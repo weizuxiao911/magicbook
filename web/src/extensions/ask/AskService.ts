@@ -1,21 +1,21 @@
 /**
- * Ask 拓展 — 通用 AI 通道
+ * Ask 拓展 — 通用 AI 通道 (codeblitz 拓展标准, 跟 filepicker 同构)
  *
- * 跟 filepicker 一样: 注册全局 API (`requestAI`), 任何拓展可直接调, 无需经 chat panel.
+ * 核心: `ask(prompt, callback(message))` — 任何拓展可直接调, 无需经 chat panel.
  * 适用场景: PDF 标注的"生成"按钮 / 任何程序侧需要独立会话跟 AI 交互的功能.
+ *
+ * 链路:
+ *   ask 调用 → 创建会话 → 发送提示词 → 全局监听按会话过滤 → 组装结果回调
  *
  * 架构:
  *   - 内部维护单 EventSource 订阅 /global/event (opencode 全局 SSE)
- *   - 每个 request 创建一个独立 session (POST /session) + 异步发 prompt (POST /session/:id/prompt_async)
- *   - 流式响应按 sessionId 派发给对应 callback (onDelta / onComplete)
- *   - session.idle / session.status: idle → 触发 onComplete(累积的 text)
+ *   - 每次 ask 创建一个独立 session (client.session.create) + 异步发 prompt (client.session.promptAsync)
+ *   - 流式响应按 sessionId 派发给对应回调, session.idle → 组装完整 text 回调
  *
  * 用法:
- *   import { requestAI } from '../ask/AskService';
- *   const req = requestAI('通读 xxx 进行批注', {
- *     onDelta: (chunk) => console.log('增量:', chunk),
- *     onComplete: (text) => console.log('完整回答:', text),
- *     onError: (err) => console.error(err),
+ *   import { ask } from '../ask/AskService';
+ *   const req = ask('通读 xxx 进行批注', (message) => {
+ *     console.log('完整回答:', message);
  *   });
  *   // 取消: req.cancel()
  */
@@ -157,10 +157,17 @@ function getInstance(): AskService {
   return _instance;
 }
 
-/** 对外 API: 跟 chat 隔离的 AI 通道. 每次调用创建独立 session, 不污染 chat 历史. */
-export function requestAI(prompt: string, callbacks: AIRequestCallbacks = {}): Promise<AIRequestHandle> {
-  return getInstance().request(prompt, callbacks);
+/** 对外 API: 跟 chat 隔离的 AI 通道. 每次调用创建独立 session, 不污染 chat 历史.
+ *  `ask(prompt, callback(message))` — callback 收完整组装结果. */
+export function ask(prompt: string, callback: (message: string) => void, opts: { onError?: (err: Error) => void } = {}): Promise<AIRequestHandle> {
+  return getInstance().request(prompt, {
+    onComplete: callback,
+    onError: opts.onError,
+  });
 }
+
+/** 兼容旧名 (若其他调用处还引用 requestAI) */
+export const requestAI = ask;
 
 export function disposeAskService() {
   _instance?.dispose();
