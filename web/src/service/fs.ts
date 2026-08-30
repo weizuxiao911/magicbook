@@ -478,6 +478,11 @@ function handleJsonObject(obj: any): void {
       if (watcherFireFn) {
         watcherFireFn([{ uri, type: finalEvent }]);
       }
+      // 派发 fs:changed CustomEvent (跟 SDK event.subscribe 兜底路径一致, sidecar/其他拓展监听)
+      const typeLabel = finalEvent === FileChangeType.ADDED ? 'add'
+        : finalEvent === FileChangeType.DELETED ? 'unlink'
+        : 'change';
+      window.dispatchEvent(new CustomEvent('fs:changed', { detail: { type: typeLabel, path: key } }));
       // 更新已同步 hash (文件存在 → hash; 不存在 → null)
       watcherSyncedHashes.set(key, h);
     })();
