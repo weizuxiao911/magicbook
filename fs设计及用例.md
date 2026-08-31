@@ -47,3 +47,56 @@ n\n\n”
 1. chat 发送“创建chat1.txt”，完成后 explorer 同步创建
 2. 前端打开 chat1.txt，chat 发送“chat1.txt写入内容123456”，打开的editor内容区同步显示“123456”
 3. chat 发送“删除chat.txt", explorer 同步删除
+
+### 2.4 删除同步与缓存残留 (2026-09-01 修复项)
+
+> 背景: OverlayFS 对"只存在于宿主机"的路径只写墓碑不删 writable; WriteSyncFS InMemory 残留会让
+> explorer 显示已删文件; chokidar --polling 对空目录删除无事件. 本组用例验证修复后最终一致.
+
+1. explorer 删除**本会话编辑过**的文件 (InMemory 有残留) → 宿主机必须删除, explorer 必须消失, 宿主机不得出现 `.browserfs_deletedFiles.log`
+2. 宿主机删除**本会话编辑过**的文件 → explorer 必须消失 (InMemory 残留被清), 编辑器 tab 标记"已删除"
+3. 宿主机创建空目录 → explorer 出现; 宿主机删除该空目录 → explorer 消失 (watchexec 覆盖空目录盲区)
+4. 宿主机创建非空目录 (含文件) → explorer 出现; 宿主机 `rm -rf` 删除 → explorer 消失
+5. explorer 递归删除目录 (含子目录/文件) → 宿主机必须同步删除
+
+### 2.5 断循环与最终一致性
+
+1. 编辑器保存 → 宿主机内容一致, 且 watcher 不得重复触发 (hash 对比 skip, 无循环写)
+2. 宿主机修改已打开文件 → 未 dirty 编辑器自动同步新内容, 且**不得自动写回宿主机** (无循环写)
+3. 宿主机删除已打开文件 → 编辑器 tab 不得写回重建 (显示"已删除"即可)
+
+### 2.6 边界场景
+
+1. 中文路径: 创建/编辑/删除"中文目录/中文文件名.md" 双向同步正常
+2. 大文件: 编辑器写入 ≥1MB 文件, 宿主机内容一致
+3. watcher 崩溃恢复: kill watcher pty 进程 → 自动重试重建, 同步不永久失效
+
+## 3. 执行记录
+
+> 执行日期: 2026-09-01; 环境: dev (opencode 24096 + webpack 7788), watcher = watchexec;
+> 执行方式: playwright 操作 explorer/编辑器 + 宿主机 bash 操作对照.
+
+| 用例 | 结果 | 备注 |
+| --- | --- | --- |
+| 2.1-1 | ✅ | explorer 创建目录 111 → 宿主机同步创建 (fileService.createFolder) |
+| 2.1-2 | ✅ | explorer 创建 111/10.txt → 宿主机同步创建 |
+| 2.1-3 | ✅ | 编辑器输入保存 → 宿主机内容一致 (尾随换行为 monaco 自身行为, 不影响一致性) |
+| 2.1-4 | ✅ | explorer 删除 111 (含文件) → 宿主机同步删除, 无 `.browserfs_deletedFiles.log` 残留 |
+| 2.2-1 | ✅ | 宿主机创建 222 → explorer 同步出现 |
+| 2.2-2 | ✅ | 宿主机创建 222/1.txt → explorer 同步出现 |
+| 2.2-3 | ✅ | 宿主机写入 "hi" → 已打开编辑器自动同步 "hi", 且不自动写回宿主机 |
+| 2.2-4 | ✅ | 宿主机删除 222 → explorer 同步消失 (修复目录 hash 对比吞事件后通过) |
+| 2.3-1 | ✅ | chat 建 chat1.txt → explorer 同步出现 |
+| 2.3-2 | ✅ | chat 改内容 "hello world" → 已打开编辑器实时同步 |
+| 2.3-3 | ✅ | chat 删除 chat1.txt → 宿主机删除 + explorer 同步消失 |
+| 2.4-1 | ✅ | explorer 删除已编辑文件 (InMemory 残留) → 宿主机删除, 无墓碑残留 |
+| 2.4-2 | ✅ | 宿主机删除已编辑文件 → explorer 消失, tab 标记「已删除」 |
+| 2.4-3 | ✅ | 空目录创建/删除双向同步 (watchexec 覆盖 chokidar --polling 盲区) |
+| 2.4-4 | ✅ | 非空目录 `rm -rf` → explorer 同步消失 |
+| 2.4-5 | ✅ | explorer 递归删除 3 层目录 → 宿主机同步删除, 无墓碑残留 |
+| 2.5-1 | ✅ | 保存 → 宿主机一致 + watcher hash 对比 skip, 无循环写 |
+| 2.5-2 | ✅ | 宿主机改未 dirty 编辑器 → 同步内容, 不自动写回 |
+| 2.5-3 | ✅ | 宿主机删已打开文件 → tab 标记「已删除」, 不写回重建 |
+| 2.6-1 | ✅ | 中文路径创建/编辑/删除双向同步全部正常 |
+| 2.6-2 | ✅ | 1MB 文件编辑器保存 → 宿主机 1048576 字节完整一致 (分块写入 ~10s) |
+| 2.6-3 | ✅ | kill watcher pty → 自动重试恢复, 恢复后同步正常 |
