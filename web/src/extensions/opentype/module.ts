@@ -120,11 +120,13 @@ export class OpenTypeContribution implements BrowserEditorContribution, CommandC
     const openTypes = await this.resolveOpenTypes(uri);
     if (openTypes.length === 0) return;
 
+    // VSCode Open With 风格: 每项 2 行 — label (打开方式名) + detail (描述)
     const makeItems = (run: (mode: number, item: IEditorOpenType) => boolean) =>
       openTypes.map(
         (item) =>
           new QuickOpenItem({
-            label: item.title || (item as any).componentId || item.type,
+            label: openTypeLabel(item),
+            detail: openTypeDetail(item),
             run: (mode) => run(mode, item),
           }),
       );
@@ -221,6 +223,26 @@ export class OpenTypeContribution implements BrowserEditorContribution, CommandC
     // 3. 当前文件立即用所选方式打开
     await this.openWith(uri, item);
   }
+}
+
+/** 已知编辑器组件描述 (VSCode Open With 第二行; 未知组件兜底 componentId) */
+const COMPONENT_DESCRIPTIONS: Record<string, string> = {
+  'numas.pdf-reader': 'PDF 阅读器 (pdf.js 流式分页渲染)',
+  'numas.html-viewer': 'HTML 查看器',
+  'webapp.welcome': '欢迎页',
+};
+
+/** 打开方式 label: code → 文本编辑器 (不用 OpenSumi 的 "代码"), 组件 → title/componentId */
+function openTypeLabel(item: IEditorOpenType): string {
+  if (item.type === 'code') return '文本编辑器';
+  return item.title || (item as any).componentId || item.type;
+}
+
+/** 打开方式 detail (第二行描述) */
+function openTypeDetail(item: IEditorOpenType): string {
+  if (item.type === 'code') return '使用内置文本编辑器打开';
+  const cid = (item as any).componentId;
+  return COMPONENT_DESCRIPTIONS[cid] || (cid ? `拓展组件: ${cid}` : '');
 }
 
 @Injectable()
