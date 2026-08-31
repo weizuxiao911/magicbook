@@ -28,7 +28,19 @@ async function probeShells(sdk: any, cwd: string): Promise<string> {
     const { data } = await sdk.pty.shells({ directory: cwd });
     const list = (data as any) as Array<{ name: string; path: string; acceptable: boolean }>;
     if (!Array.isArray(list) || !list.length) return '';
-    return list.find((s) => s.acceptable)?.path || '';
+    const acc = list.filter((s) => s.acceptable);
+    if (!acc.length) return '';
+    // 平台偏好 (pty.shells 列表顺序不定, bash 常排最前 — 不能取第一个):
+    //   macOS → zsh; Windows → pwsh/powershell; Linux → bash/sh
+    if (typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')) {
+      return acc.find((s) => /zsh/i.test(s.name))?.path
+        || acc.find((s) => /bash/i.test(s.name))?.path
+        || acc[0].path;
+    }
+    if (typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent)) {
+      return acc.find((s) => /pwsh|powershell/i.test(s.name))?.path || acc[0].path;
+    }
+    return acc.find((s) => /bash|sh/i.test(s.name))?.path || acc[0].path;
   } catch {
     return '';
   }

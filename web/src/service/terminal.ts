@@ -225,7 +225,7 @@ export class RemoteTerminalService implements ITerminalNodeService {
     (window as any).__APP_TERMINAL__ = this;
   }
 
-  /** 等 opencode 地址就绪（app_base_url 注入即就绪; 终端可能在登录前被创建） */
+  /** 等 pty 地址就绪（app_base_url 注入即就绪; 终端可能在登录前被创建） */
   private async waitPtyReady(): Promise<void> {
     if (appBaseUrl()) return;
     await new Promise<void>((resolve) => {
@@ -241,6 +241,40 @@ export class RemoteTerminalService implements ITerminalNodeService {
         resolve();
       }, 5000);
     });
+  }
+
+  /** 等 runtime-ready (initRuntime 注入 defaultShell/cwd) — 超时 5s 不阻塞, 保证 shell 类型是宿主事实而非 OpenSumi 默认 */
+  private async waitRuntimeReady(): Promise<void> {
+    if ((window as any).__APP_CONFIG__?.defaultShell) return;
+    await new Promise<void>((resolve) => {
+      const onReady = () => {
+        window.removeEventListener('runtime-ready', onReady);
+        resolve();
+      };
+      window.addEventListener('runtime-ready', onReady);
+      setTimeout(() => {
+        window.removeEventListener('runtime-ready', onReady);
+        resolve();
+      }, 5000);
+    });
+  }
+
+  /**
+   * 解析终端工作目录: launchConfig.cwd (OpenSumi 传入, codeblitz 虚拟路径 /workspace/xxx) → 宿主机绝对路径.
+   * 无 cwd (普通新建终端) → workspace 根 (getPtyCwd).
+   * 路径映射 (问题 3): codeblitz /workspace/rel ↔ 宿主机 effectiveCwd()/rel ↔ opencode x-opencode-directory (effectiveCwd)
+   */
+  private async resolveLaunchCwd(launchConfig: IShellLaunchConfig): Promise<string> {
+    const raw = launchConfig.cwd;
+    if (raw) {
+      const s = typeof raw === 'string' ? raw : ((raw as any).fsPath || String(raw)) as string;
+      const rel = s.replace(/^\/workspace(?:\/|$)/, '').replace(/^\/+/, '');
+      if (rel) {
+        const base = effectiveCwd();
+        if (base) return `${base.replace(/\/+$/, '')}/${rel}`;
+      }
+    }
+    return this.getPtyCwd();
   }
 
   /** 确保默认 shell 就绪: 未注入时从 opencode SDK pty.shells 取宿主默认 */
@@ -293,8 +327,9 @@ export class RemoteTerminalService implements ITerminalNodeService {
   async create2(id: string, _cols: number, _rows: number, launchConfig: IShellLaunchConfig): Promise<IPtyProcessProxy | undefined> {
     try {
       await this.waitPtyReady();
+      await this.waitRuntimeReady();
       await this.ensureDefaultShell();
-      const cwd = await this.getPtyCwd();
+      const cwd = await this.resolveLaunchCwd(launchConfig);
       const info = await this.createPty(launchConfig, cwd);
       const ws = new WebSocket(this.wsUrl(info.id, cwd));
       // 等 ws 握手完成再返回（否则前端立即可输入, 触发 CONNECTING 态 send 报错）
