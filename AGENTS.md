@@ -174,8 +174,9 @@
 | **opencode 装全局** | 用户要求 `npm i -g opencode-ai` | `ensureInstalled` 加 `global=true` 选项, npm i -g 安装 + PATH 全局优先解析 | `dev.js` line 87-133 |
 | **macOS killPort 失效** | BSD lsof `-ti <port>` 必须带冒号 `-ti :port`, 老代码不带冒号在 macOS 无效 | lsof args 改 `lsof -ti :PORT` | `dev.js#killPort` line 142-150 |
 | **explorer 删除不同步宿主机** | codeblitz OverlayFS 对 readable-only 路径只写墓碑日志, 不走 writable.unlinkSync | `_syncSync` 拦截 `/.browserfs_deletedFiles.log`, 解析 `d<path>` 逐条 syncRm 宿主机 | `web/src/config/runtime.ts` (2026-09-01) |
-| **watcher 全灭 (FSEvents EMFILE)** | opencode bun-pty spawn 子进程 FSEvents 必炸 (fs.watch/chokidar 默认全废), 轮询可用 | watcher 改全局 `chokidar-cli --polling`; onclose 一律重试 | `web/src/service/fs.ts`; 部署前置 `npm i -g chokidar-cli` (2026-09-01) |
-| **dev.js 依赖版本判断** | ensureInstalled 只查 bin 存在性, package.json 增依赖不触发重装; chokidar-cli 也是新前置没自检 | depsReady 对比 package.json+lock hash 与 `node_modules/.numas-deps-hash` (老环境无 marker 自动补写不重装); ensureInstalled 加 afterInstall 回调; chokidar-cli 进 ensureInstalled 自装 | `dev.js` (2026-09-01) |
+| **watcher 全灭 (FSEvents EMFILE)** | opencode bun-pty spawn 子进程 FSEvents 必炸 (fs.watch/chokidar 默认全废), chokidar --polling 有盲区 (空目录删除无事件) | watcher 改 **watchexec --only-emit-events** (Rust FSEvents 直连, pty 里全事件正常); onclose 一律重试 | `web/src/service/fs.ts`; 部署前置 watchexec (dev.js 按平台自装) (2026-09-01) |
+| **dev.js 依赖版本判断** | ensureInstalled 只查 bin 存在性, package.json 增依赖不触发重装; watchexec 也是新前置没自检 | depsReady 对比 package.json+lock hash 与 `node_modules/.numas-deps-hash` (老环境无 marker 自动补写不重装); ensureInstalled 加 afterInstall 回调; watchexec 进 ensureInstalled 按平台自装 (brew/apt/winget) | `dev.js` (2026-09-01) |
+| **宿主机删目录 explorer 残留 (hash 对比吞事件)** | readPathHash 读目录失败返回 null 与"已删除"无法区分, 目录创建/删除 hash 一致 → skip 吞事件 | 目录返回 `'dir'` 存在性标记 (DIR_HASH), 不与 null 混淆 | `web/src/service/fs.ts#readPathHash` (2026-09-01) |
 
 ## 踩坑速查
 
@@ -222,7 +223,7 @@
 | explorer「无打开的文件夹」 | 挂载时 fsUrl 未就绪 | workspaceDir='/' + RemoteFS 根目录 stat 兜底 |
 | stat 输出 `directory\|11808\|...` | 早期 stat 走错路径返回 | 重构后 meta 走 FsPty 跑平台 stat |
 | **explorer 删除宿主机文件不删 + 宿主机多出 `.browserfs_deletedFiles.log`** | codeblitz OverlayFS 对"只存在于 readable(宿主机)"的路径**不调 writable.unlinkSync**, 只写墓碑到 `/.browserfs_deletedFiles.log`; WriteSyncFS 的 unlinkSync 漏斗收不到, 而墓碑日志却被 syncWrite 同步到宿主机 | `WriteSyncFS._syncSync` 拦截墓碑日志: 解析 `d<path>` 行逐个 syncRm 宿主机, 日志只进 InMemory 不写宿主机 (runtime.ts, 2026-09-01) |
-| **宿主机建文件不实时同步 explorer (watcher 死)** | opencode (bun-pty 0.4.8) spawn 的子进程里 FSEvents 全废: `fs.watch` (recursive/非递归) 必异步 EMFILE, chokidar 默认 fsevents 静默死; **usePolling / fs.watchFile / 手写 readdir 轮询正常** (2026-09-01 全矩阵实测); 且旧 onclose 把 close 1000 当"主动停"不重试 | watcher 改全局 **chokidar-cli --polling** (`npm i -g chokidar-cli` 是部署前置, 不依赖 web/ 本地依赖); onclose 非 watcherStopped 一律重试; chokidar-cli 事件 `event:path` 行解析 (勿加 --silent, 会连事件一起关) |
+| **宿主机建文件不实时同步 explorer (watcher 死)** | opencode (bun-pty 0.4.8) spawn 的子进程里 FSEvents 对 node 全废: `fs.watch` (recursive/非递归) 必异步 EMFILE, chokidar 默认 fsevents 静默死; chokidar --polling 可用但有盲区 (空目录删除无事件, unlinkDir 路径是绝对); **watchexec (Rust, FSEvents 直连) 在 pty 里全事件正常** (2026-09-01 全矩阵实测); 且旧 onclose 把 close 1000 当"主动停"不重试 | watcher 改 **watchexec --only-emit-events** (JSON 行解析, 绝对路径 strip cwd; dev.js 自检自装, 按平台 brew/apt/winget); onclose 非 watcherStopped 一律重试 | `web/src/service/fs.ts`; 部署前置 watchexec (2026-09-01) |
 
 ### registry / vsix (:7790, HTTPS, kt-ext)
 
@@ -247,7 +248,7 @@ git clone https://github.com/weizuxiao911/numas
 cd numas && npm install
 cd cli && npm install && cd ..
 cd client && npm install && cd ..
-npm i -g chokidar-cli               # 部署前置: watcher PTY 依赖 (FSEvents 在 opencode pty 必炸, 轮询兜底)
+# watchexec 部署前置: watcher PTY 依赖 (dev.js 启动自动检查安装, 也可手动: brew install watchexec / apt install watchexec / winget install watchexec.watchexec)
 npm run dev
 
 # 验证

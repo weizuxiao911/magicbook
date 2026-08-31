@@ -9,7 +9,7 @@
  *   0. Node 版本检查 (≥ 20, 用户唯一前置)
  *   1. 检查 web deps 完整性 (web/node_modules/.bin/webpack + 依赖 hash marker), 没装/版本变更才 npm install
  *   2. 检查 opencode (PATH 全局 + web 本地兜底), 没装就 npm i -g opencode-ai
- *   3. 检查 chokidar-cli (PATH 全局, fs watcher PTY 依赖 — FSEvents 在 opencode pty 必炸, 轮询兜底), 没装就 npm i -g
+ *   3. 检查 watchexec (fs watcher PTY 依赖 — node FSEvents 在 opencode pty 必炸, watchexec 实测可用), 没装按平台装
  *   4. 清掉端口残留 zombie (上轮跑剩的), 避免 listen EADDRINUSE
  *   5. 启 opencode (serve 模式, detached, 进程组 pgid=-pid)
  *   6. 注入 env (APP_BASE_URL / OPENCODE_PORT / WEB_PORT) → spawn npm run dev
@@ -167,13 +167,22 @@ if (!opencodeBin) {
   console.error('[numas] opencode 装上但找不到 binary, 检查 PATH 和 web/node_modules');
   process.exit(1);
 }
-// 3. chokidar-cli (全局, fs watcher PTY 依赖 — opencode pty 子进程 FSEvents 必炸 (EMFILE),
-//    watcher 走 chokidar-cli --polling 轮询; --ignore-scripts 跳过 fsevents prebuilt (polling 不需要))
+// 3. watchexec (fs watcher PTY 依赖 — opencode pty 子进程里 node FSEvents 必炸 (EMFILE),
+//    watchexec Rust 实现实测正常且覆盖轮询盲区; 按平台安装)
+function installWatchexecCmd() {
+  if (process.platform === 'darwin') return ['brew', ['install', 'watchexec']];
+  if (process.platform === 'win32') return ['winget', ['install', '--id', 'watchexec.watchexec', '--accept-source-agreements', '--accept-package-agreements']];
+  // linux: 优先 apt (Debian/Ubuntu), 兜底 cargo
+  return ['apt-get', ['install', '-y', 'watchexec']];
+}
 ensureInstalled(
-  'chokidar-cli',
-  () => whichCmd('chokidar'),
-  npmCmd,
-  ['install', '-g', '--prefer-offline', '--ignore-scripts', 'chokidar-cli'],
+  'watchexec',
+  () => whichCmd('watchexec'),
+  ...(() => {
+    const [cmd, args] = installWatchexecCmd();
+    // apt-get 需要 sudo; cargo 兜底提示走 ensureInstalled 的失败分支
+    return [cmd === 'apt-get' && process.getuid?.() !== 0 ? 'sudo' : cmd, cmd === 'apt-get' && process.getuid?.() !== 0 ? ['apt-get', ...args] : args];
+  })(),
   WEB,
   { global: true },
 );

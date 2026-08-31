@@ -367,7 +367,11 @@ async function contentHash(bytes: Uint8Array): Promise<string> {
   }
 }
 
-/** 读路径内容 hash (浏览器 fs.read → SDK /file/content) */
+/** 目录路径的 hash 标记 (目录无内容, 用存在性标记对比, 不能与"已删除 null"混淆) */
+const DIR_HASH = 'dir';
+
+/** 读路径状态 hash: 文件 → 内容 hash; 目录 → 'dir' 标记; 不存在 → null (DELETED).
+ *  注: 目录不能走 fs.read (读目录失败返回 null 会被当成"已删除", 创建/删除 hash 一致 → skip 吞事件). */
 async function readPathHash(relPath: string): Promise<string | null> {
   try {
     const fsApi = (window as any).__APP_FS__;
@@ -377,8 +381,9 @@ async function readPathHash(relPath: string): Promise<string | null> {
     // 跟创建时一致 → skip, 删除事件被吞. stat 真实存在 → null (DELETED).
     try {
       const abs = absPath(relPath);
-      const { ok } = await getFsPty().request<{ size: number }>('stat', { path: abs }, 5000).catch(() => ({ ok: false, data: null as any }));
+      const { ok, data } = await getFsPty().request<{ size: number; isDir: boolean }>('stat', { path: abs }, 5000).catch(() => ({ ok: false, data: null as any }));
       if (!ok) return null;
+      if (data?.isDir) return DIR_HASH;
     } catch {
       return null;
     }
@@ -468,13 +473,13 @@ function handleJsonObject(obj: any): void {
 }
 
 /**
- * 启 fs watcher PTY (跑 chokidar-cli --polling, 输出 "event:path" 行)
+ * 启 fs watcher PTY (跑 watchexec --only-emit-events, JSON 事件行输出)
  * @param cwd 监听根目录
  *
- * 踩坑 (2026-09-01 实测): opencode (bun-pty) spawn 的子进程里 FSEvents 全废 —
- *   fs.watch (recursive/非递归) 必异步 EMFILE, chokidar 默认 fsevents 静默死收不到事件,
- *   chokidar usePolling / fs.watchFile 轮询可用. 故 watcher 走全局 chokidar-cli --polling
- *   (部署前置: 宿主机 npm i -g chokidar-cli), 不依赖 web/ 的任何本地依赖 (纯 web 工程).
+ * 踩坑 (2026-09-01 实测): opencode (bun-pty) spawn 的子进程里 FSEvents 对 node 全废 —
+ *   fs.watch (recursive/非递归) 必异步 EMFILE, chokidar 默认 fsevents 静默死, chokidar --polling
+ *   可用但有盲区 (空目录删除无事件 + unlinkDir 路径是绝对). watchexec (Rust, FSEvents 直连)
+ *   在 pty 里全事件正常 (含空目录删除), 无轮询延迟. 部署前置: 宿主机安装 watchexec (dev.js 自检自装).
  */
 export async function startFsWatcher(cwd: string): Promise<void> {
   stopFsWatcher();
@@ -502,8 +507,10 @@ export async function startFsWatcher(cwd: string): Promise<void> {
   // chokidar-cli: --polling 必须 (FSEvents 在 opencode pty 子进程不可用); --poll-interval 1000ms;
   // -i 忽略 node_modules (chokidar 默认已忽略 dotfiles); 事件输出 "event:path" 行 (勿加 --silent, 会连事件一起关).
   // dotfiles 默认不监听 (chokidar dot:false) — .git/.opencode/.DS_Store 等不推 explorer.
-  const command = 'chokidar';
-  const args = ['**/*', '--polling', '--poll-interval', '1000', '-i', '**/node_modules/**'];
+  const command = 'watchexec';
+  // watchexec (Rust, FSEvents 直连): opencode pty 子进程里 node fs.watch/chokidar fsevents 全废 (EMFILE),
+  // watchexec 实测正常且覆盖 chokidar --polling 的盲区 (空目录删除无事件). 事件 JSON 行输出, 绝对路径.
+  const args = ['--shell', 'none', '--only-emit-events', '--emit-events-to', 'json-stdio', '--watch', cwd];
   console.log('[watcher] start, cwd=', cwd);
 
   try {
@@ -548,18 +555,24 @@ export async function startFsWatcher(cwd: string): Promise<void> {
       }
       console.log('[watcher] ws msg chunk:', JSON.stringify(chunk).slice(0, 300));
       watcherStdoutBuf += chunk;
-      // chokidar-cli 逐行解析: "event:path" (相对 cwd). 一帧可能含多行; 控制帧 (\u0000{"cursor":0}) 无换行,
-      // 与事件行同批时被 strip 后不匹配 event 前缀, 安全跳过; 纯控制帧残留无换行, 等下一批一起消费.
+      // watchexec JSON 事件逐行解析: {"tags":[{"kind":"fs","simple":"create|modify|remove"},{"kind":"path","absolute":"/abs"}]}
+      // 一帧可能含多行; 控制帧 (\u0000{"cursor":0}) 无换行, 与事件行同批时 strip 后 JSON.parse 失败跳过.
       let nl: number;
       while ((nl = watcherStdoutBuf.indexOf('\n')) >= 0) {
         const line = watcherStdoutBuf.slice(0, nl).trim();
         watcherStdoutBuf = watcherStdoutBuf.slice(nl + 1);
         if (!line) continue;
-        const clean = line.replace(/\u0000/g, '').replace(/\{"cursor":[^}]*\}/g, '').trim();
-        const m = /^(add|addDir|unlink|unlinkDir|change):(.+)$/.exec(clean);
-        if (!m) continue;
-        const e = m[1] === 'addDir' ? 'add' : m[1] === 'unlinkDir' ? 'unlink' : m[1];
-        handleJsonObject({ e, p: m[2] });
+        let evt: any;
+        try { evt = JSON.parse(line.replace(/\u0000/g, '')); } catch { continue; }
+        const simple = evt?.tags?.find((t: any) => t.kind === 'fs')?.simple;
+        const abs = evt?.tags?.find((t: any) => t.kind === 'path')?.absolute;
+        if (!simple || !abs) continue;
+        // 绝对路径 → 相对 cwd (watchexec 一律绝对路径, 跟 chokidar unlinkDir 同样处理)
+        const rel = abs.startsWith(cwd) ? abs.slice(cwd.length).replace(/^\/+/, '') : abs.replace(/^\/+/, '');
+        if (!rel) continue;
+        const e = simple === 'create' ? 'add' : simple === 'remove' ? 'unlink' : simple === 'modify' ? 'change' : null;
+        if (!e) continue;
+        handleJsonObject({ e, p: rel });
       }
     };
     socket.onclose = (ev) => {
