@@ -394,46 +394,6 @@ export function bindWatcherFireFilesChange(fn: typeof watcherFireFn): void {
   watcherFireFn = fn;
 }
 
-/** brace matching 增量 JSON 解析: 一个 ws 帧可能含多个 JSON object 拼一起
- *  ({"cursor":0}{"e":"rename","p":"a"}{"e":"change","p":"b"})
- *  也可能一个 object 跨两个 ws 帧 — 不完整时 rest 保留等下次
- *  考虑 string 内的引号 / 反斜杠, 不被误判 brace
- */
-function extractJsonObjects(buf: string): { objects: any[]; rest: string } {
-  const objects: any[] = [];
-  let i = 0;
-  while (i < buf.length) {
-    const start = buf.indexOf('{', i);
-    if (start < 0) break;
-    let depth = 0;
-    let end = -1;
-    let inStr = false;
-    let escape = false;
-    for (let j = start; j < buf.length; j++) {
-      const c = buf[j];
-      if (escape) { escape = false; continue; }
-      if (c === '\\') { escape = true; continue; }
-      if (c === '"') { inStr = !inStr; continue; }
-      if (inStr) continue;
-      if (c === '{') depth++;
-      else if (c === '}') {
-        depth--;
-        if (depth === 0) { end = j; break; }
-      }
-    }
-    if (end < 0) break;  // 不完整, 等更多数据
-    const sub = buf.slice(start, end + 1);
-    try {
-      const obj = JSON.parse(sub);
-      if (obj && typeof obj === 'object') objects.push(obj);
-    } catch (e: any) {
-      console.warn('[watcher] JSON parse fail:', sub, e?.message ?? String(e));
-    }
-    i = end + 1;
-  }
-  return { objects, rest: buf.slice(i) };
-}
-
 /** fs.watch 事件防抖表 (路径 → 定时器): PTY watcher + SDK event.subscribe 共用,
  *  同一 path 300ms 窗口内多次事件合并为一次 fire (双路径不重复). */
 const debounceMap = new Map<string, { timer: ReturnType<typeof setTimeout>; event: FileChangeType; uri: string }>();
@@ -508,8 +468,13 @@ function handleJsonObject(obj: any): void {
 }
 
 /**
- * 启 fs watcher PTY (跑 node -e 'inline fs.watch script')
+ * 启 fs watcher PTY (跑 chokidar-cli --polling, 输出 "event:path" 行)
  * @param cwd 监听根目录
+ *
+ * 踩坑 (2026-09-01 实测): opencode (bun-pty) spawn 的子进程里 FSEvents 全废 —
+ *   fs.watch (recursive/非递归) 必异步 EMFILE, chokidar 默认 fsevents 静默死收不到事件,
+ *   chokidar usePolling / fs.watchFile 轮询可用. 故 watcher 走全局 chokidar-cli --polling
+ *   (部署前置: 宿主机 npm i -g chokidar-cli), 不依赖 web/ 的任何本地依赖 (纯 web 工程).
  */
 export async function startFsWatcher(cwd: string): Promise<void> {
   stopFsWatcher();
@@ -534,24 +499,11 @@ export async function startFsWatcher(cwd: string): Promise<void> {
 
   watcherCwd = cwd;
   watcherStopped = false;
-  // node 脚本 (单行无 ' " \n, 用 \x27 替代单引号避免 shell 拆 arg)
-  const nodeScript = [
-    "const fs=require(\"node:fs\");",
-    "const ROOT=process.argv[1];",
-    "let ws=[];",
-    "try{",
-    "  const w=fs.watch(ROOT,{recursive:true,persistent:true},(e,f)=>{",
-    "    const rel=f||\"\";",
-    "    try{process.stdout.write(JSON.stringify({e,p:rel})+\"\\n\");}catch{}",
-    "  });",
-    "  ws.push(w);",
-    "}catch(e){process.stderr.write(\"watcher err: \"+e.message+\"\\n\");}",
-    "process.on(\"SIGTERM\",()=>{try{ws.forEach(w=>w.close());}catch{}process.exit(0);});",
-    "process.on(\"SIGINT\",()=>{try{ws.forEach(w=>w.close());}catch{}process.exit(0);});",
-  ].join('');
-  // command 单 word, args 数组传参数 (跟 terminal.ts 一样, opencode /pty 接受 args 数组)
-  const command = 'node';
-  const args = ['-e', nodeScript, cwd];
+  // chokidar-cli: --polling 必须 (FSEvents 在 opencode pty 子进程不可用); --poll-interval 1000ms;
+  // -i 忽略 node_modules (chokidar 默认已忽略 dotfiles); 事件输出 "event:path" 行 (勿加 --silent, 会连事件一起关).
+  // dotfiles 默认不监听 (chokidar dot:false) — .git/.opencode/.DS_Store 等不推 explorer.
+  const command = 'chokidar';
+  const args = ['**/*', '--polling', '--poll-interval', '1000', '-i', '**/node_modules/**'];
   console.log('[watcher] start, cwd=', cwd);
 
   try {
@@ -596,19 +548,26 @@ export async function startFsWatcher(cwd: string): Promise<void> {
       }
       console.log('[watcher] ws msg chunk:', JSON.stringify(chunk).slice(0, 300));
       watcherStdoutBuf += chunk;
-      // brace matching 增量解析: 一个 ws 帧可能含多个 JSON object 拼一起
-      // ({"cursor":0}{"e":"rename","p":"a"}{"e":"change","p":"b"})
-      // 也可能一个 object 跨两个 ws 帧 — 不完整时等下次
-      const { objects, rest } = extractJsonObjects(watcherStdoutBuf);
-      watcherStdoutBuf = rest;
-      for (const obj of objects) {
-        handleJsonObject(obj);
+      // chokidar-cli 逐行解析: "event:path" (相对 cwd). 一帧可能含多行; 控制帧 (\u0000{"cursor":0}) 无换行,
+      // 与事件行同批时被 strip 后不匹配 event 前缀, 安全跳过; 纯控制帧残留无换行, 等下一批一起消费.
+      let nl: number;
+      while ((nl = watcherStdoutBuf.indexOf('\n')) >= 0) {
+        const line = watcherStdoutBuf.slice(0, nl).trim();
+        watcherStdoutBuf = watcherStdoutBuf.slice(nl + 1);
+        if (!line) continue;
+        const clean = line.replace(/\u0000/g, '').replace(/\{"cursor":[^}]*\}/g, '').trim();
+        const m = /^(add|addDir|unlink|unlinkDir|change):(.+)$/.exec(clean);
+        if (!m) continue;
+        const e = m[1] === 'addDir' ? 'add' : m[1] === 'unlinkDir' ? 'unlink' : m[1];
+        handleJsonObject({ e, p: m[2] });
       }
     };
     socket.onclose = (ev) => {
       console.log('[watcher] ws close', ev?.code);
-      // 正常关闭 (1000/1005) = 主动停或被杀 → 不重连; 异常断开 (1006) → 重试
-      if (!watcherStopped && ev?.code !== 1000 && ev?.code !== 1005) scheduleWatcherRetry();
+      // 只要不是我们主动停 (stopFsWatcher 先置 watcherStopped=true), 一律重试.
+      // 注: 服务端 pty 进程崩溃时 ws 也会以 1000/1005 关闭 (opencode 清理), 不能当"主动停"跳过 —
+      // 否则 watcher 一次崩溃就永久失效 (2026-09-01 实测: fs.watch EMFILE 崩溃后 close 1000, 同步全断).
+      if (!watcherStopped) scheduleWatcherRetry();
     };
     socket.onerror = (e) => {
       console.warn('[watcher] ws error', e);
