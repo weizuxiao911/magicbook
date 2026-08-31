@@ -141,15 +141,23 @@ export async function runAnnotAction(action: AnnotAction, handlers: AnnotHandler
  *   本次先注册 demo (生成动画演示), 后续按需加新 type.
  */
 
-/** 单个交互能力: comment = 悬停显示批注文本; prompt = 悬停显示"AI讲解"按钮; demo = 动画演示产物; code = 代码示例 */
+/** 单个交互能力: AI 辅助学习工具集 (≥10 种)
+ *  执行类: demo=动画演示; code=代码示例
+ *  展示类 (text, modal 重看): explain=AI讲解; translate=翻译; summary=总结摘要; analysis=考点分析
+ *  文件类 (filePath, 打开): note=学习笔记; exercise=练习题; mindmap=思维导图; flashcard=记忆闪卡; ppt=PPT大纲
+ *  comment/prompt = v1 遗留 (读盘保留, UI 不渲染) */
 export interface SidecarInteraction {
-  type: 'comment' | 'prompt' | 'demo' | 'code';
+  type: 'comment' | 'prompt' | 'demo' | 'code' | 'explain' | 'note' | 'exercise'
+    | 'translate' | 'summary' | 'analysis' | 'mindmap' | 'flashcard' | 'ppt';
   text?: string;
   /** demo: 生成的 html IDE 相对路径 */
   htmlPath?: string;
-  /** code: 生成的代码文件 IDE 相对路径 + 运行器 */
+  /** code: 生成的代码文件 IDE 相对路径 + 运行器 + 环境安装指令 */
   codePath?: string;
   runner?: string;
+  install?: string;
+  /** note/exercise: 生成的 markdown 文件 IDE 相对路径 */
+  filePath?: string;
   /** 生成时间 */
   createdAt?: string;
 }
@@ -222,7 +230,22 @@ export function parseSidecarAnnot(raw: any): SidecarAnnot | null {
         if (typeof it.codePath !== 'string' || !it.codePath) continue;
         if (seen.has('code')) continue;
         seen.add('code');
-        list.push({ type: 'code', codePath: it.codePath, runner: String(it.runner || 'python3'), createdAt: String(it.createdAt || '') });
+        list.push({ type: 'code', codePath: it.codePath, runner: String(it.runner || 'python3'), install: String(it.install || ''), createdAt: String(it.createdAt || '') });
+      } else if (it.type === 'explain') {
+        if (typeof it.text !== 'string' || !it.text) continue;
+        if (seen.has('explain')) continue;
+        seen.add('explain');
+        list.push({ type: 'explain', text: it.text, createdAt: String(it.createdAt || '') });
+      } else if (it.type === 'translate' || it.type === 'summary' || it.type === 'analysis') {
+        if (typeof it.text !== 'string' || !it.text) continue;
+        if (seen.has(it.type)) continue;
+        seen.add(it.type);
+        list.push({ type: it.type, text: it.text, createdAt: String(it.createdAt || '') });
+      } else if (it.type === 'note' || it.type === 'exercise' || it.type === 'mindmap' || it.type === 'flashcard' || it.type === 'ppt') {
+        if (typeof it.filePath !== 'string' || !it.filePath) continue;
+        if (seen.has(it.type)) continue;
+        seen.add(it.type);
+        list.push({ type: it.type, filePath: it.filePath, createdAt: String(it.createdAt || '') });
       }
     }
     if (list.length > 0) interactions = list;
