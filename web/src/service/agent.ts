@@ -103,6 +103,19 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
       defaultShell: defaultShell || '/bin/bash',
       healthy,
     };
+    // 2.4 hostCwd 兜底场景 (无 APP_CWD): WORKSPACE_ROOT (constant.js patch) 模块加载时可能还是
+    //    /workspace (initRuntime 异步注入晚于模块求值) — 首次探测到 hostCwd 后写 sessionStorage
+    //    标记并 reload 一次, 让 codeblitz 用真实 cwd 重建 (BrowserFS 挂载/URI 全链路).
+    //    写 sessionStorage 而非 localStorage: APP_CWD 语义是用户选择, hostCwd 只是兜底;
+    //    reload 后该标记仍在 → constant.js 读到真实路径 → 二次 initRuntime 不再 reload.
+    if (hostCwd && cwd !== hostCwd && sessionStorage.getItem('APP_CWD_FALLBACK') !== hostCwd) {
+      try {
+        sessionStorage.setItem('APP_CWD_FALLBACK', hostCwd);
+        console.log('[agent] hostCwd 注入 (无 APP_CWD), reload 重建 codeblitz 根:', hostCwd);
+        window.location.reload();
+        return;
+      } catch { /* 存储不可用: 保持 /workspace 虚拟根 */ }
+    }
     // 2.5 APP_CWD 校验: 用户选的目录可能被删/移走, 留着会导致后续 file/pty 全 500
     //    走 SDK client.file.list 校验 (跟 AGENTS.md 铁律: 走 SDK, 不直 fetch)
     //    SDK throwOnError=true → 错误抛, 用 try/catch 抓

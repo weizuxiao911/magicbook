@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node node_modules/webpack-cli/bin/cli.js serve --config webpack.config.js",
     "build": "cross-env NODE_ENV=production node node_modules/webpack-cli/bin/cli.js --config webpack.config.js",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "postinstall": "node scripts/patch-codeblitz-constant.js"
   },
   "dependencies": {
     "@codeblitzjs/ide-core": "2.4.6",

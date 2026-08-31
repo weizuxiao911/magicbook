@@ -178,6 +178,7 @@
 | **dev.js 依赖版本判断** | ensureInstalled 只查 bin 存在性, package.json 增依赖不触发重装; watchexec 也是新前置没自检 | depsReady 对比 package.json+lock hash 与 `node_modules/.numas-deps-hash` (老环境无 marker 自动补写不重装); ensureInstalled 加 afterInstall 回调; watchexec 进 ensureInstalled 按平台自装 (brew/apt/winget) | `dev.js` (2026-09-01) |
 | **宿主机删目录 explorer 残留 (hash 对比吞事件)** | readPathHash 读目录失败返回 null 与"已删除"无法区分, 目录创建/删除 hash 一致 → skip 吞事件 | 目录返回 `'dir'` 存在性标记 (DIR_HASH), 不与 null 混淆 | `web/src/service/fs.ts#readPathHash` (2026-09-01) |
 | **打开方式/配置默认编辑器失效** | OpenSumi file-tree 实现 3 个 bug: ①availableOpenTypes 取 currentEditorGroup (当前资源, 未打开文件时是 welcome → 列表混入欢迎且缺文本编辑器) ②二次弹窗被焦点丢失立即关 (blur→onFocusLost→hide) ③preferenceService.set 在 codeblitz 静默挂起 (providers 未就绪) | numas 重写命令: 按右键文件 resolveEditorComponent (文本编辑器兜底+过滤 welcome), 二次弹窗 hide+defer 修焦点, 默认编辑器 preference 超时降级 localStorage (resolver 高权重应用) | `web/src/extensions/opentype/` (2026-09-01) |
+| **WORKSPACE_ROOT 真实路径化** | codeblitz 硬编码 `WORKSPACE_ROOT='/workspace'` (虚拟根, file:///workspace/x); 包内相对路径互引 alias 不生效 | postinstall 脚本就地改 node_modules (constant.js 运行时取 cwd: APP_CWD → sessionStorage APP_CWD_FALLBACK → __APP_CONFIG__.cwd → /workspace; 幂等自动重放, npm install 不变回去); hostCwd 兜底场景 initRuntime 注入后 reload 一次 | `web/scripts/patch-codeblitz-constant.js` + `web/package.json:postinstall` + `web/src/service/agent.ts` (2026-09-01) |
 
 ## 踩坑速查
 
