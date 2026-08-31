@@ -33,7 +33,7 @@ export class PdfReaderContribution implements BrowserEditorContribution {
             {
               componentId: PDF_COMPONENT_ID,
               type: 'component',
-              title: 'PDF Reader',
+              title: 'PDF 阅读器',
               weight: 1000,
             },
           ]);

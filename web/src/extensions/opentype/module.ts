@@ -173,18 +173,16 @@ export class OpenTypeContribution implements BrowserEditorContribution, CommandC
     );
   }
 
-  /** 按右键文件算打开方式: resolveEditorComponent (文本编辑器 code + 匹配组件), 兜底 + 过滤 welcome */
+  /** 按右键文件算打开方式: resolveEditorComponent (file-scheme 给文本 code / 内置组件各按文件类型), 过滤 welcome.
+   *  注: 不加"文本编辑器"兜底 — 二进制文件 (如 .pdf 有内置阅读器) 不该出现文本编辑器项
+   *  (点了也打不开, 纯误导; file-scheme resolver 对文本文件自然会返回 code). */
   private async resolveOpenTypes(uri: URI): Promise<IEditorOpenType[]> {
     const resource: IResource = { uri, name: uri.path.base, icon: '' };
     let types: IEditorOpenType[] = [];
     if (this.registry) {
       try {
         types = await this.registry.resolveEditorComponent(resource);
-      } catch { /* 解析失败 → 兜底列表 */ }
-    }
-    if (!types.some((t) => t.type === 'code')) {
-      // 文本编辑器是基础打开方式, 必须存在
-      types = [{ type: 'code', title: '文本编辑器' }, ...types];
+      } catch { /* 解析失败 → 空列表 */ }
     }
     return types.filter((t) => (t as any).componentId !== WELCOME_ID);
   }
@@ -225,10 +223,10 @@ export class OpenTypeContribution implements BrowserEditorContribution, CommandC
   }
 }
 
-/** 已知编辑器组件描述 (VSCode Open With 第二行; 未知组件兜底 componentId) */
+/** 已知编辑器组件描述 (VSCode Open With 第二行; 未知组件兜底 componentId). 内置拓展一律「内置」 */
 const COMPONENT_DESCRIPTIONS: Record<string, string> = {
-  'numas.pdf-reader': 'PDF 阅读器 (pdf.js 流式分页渲染)',
-  'numas.html-viewer': 'HTML 查看器',
+  'numas.pdf-reader': '内置',
+  'numas.html-viewer': '内置',
   'webapp.welcome': '欢迎页',
 };
 
