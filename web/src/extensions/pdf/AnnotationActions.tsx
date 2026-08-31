@@ -10,6 +10,7 @@ import { ITerminalController } from '@opensumi/ide-terminal-next/lib/common';
 import { WorkbenchEditorService } from '@opensumi/ide-editor';
 import { IEditorDocumentModelService } from '@opensumi/ide-editor/lib/browser/doc-model/types';
 import { URI } from '@opensumi/ide-core-common';
+import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 
 interface AnnotModalState {
   title: string;
@@ -98,12 +99,12 @@ export const AnnotationActions: React.FC = () => {
       if (!path) return;
       void (async () => {
         try {
-          // path 是 codeblitz 源路径 (file:///workspace/...) 或 IDE 相对路径 (/docs/a.txt)
+          // path 是 codeblitz 源路径 (file://{WORKSPACE_ROOT}/...) 或 IDE 相对路径 (/docs/a.txt)
           let uri: URI;
           if (path.startsWith('file://')) {
             uri = new URI(path);
           } else {
-            uri = new URI(`file:///workspace${path.startsWith('/') ? path : `/${path}`}`);
+            uri = new URI(`file://${WORKSPACE_ROOT}${path.startsWith('/') ? path : `/${path}`}`);
           }
           await editorService.open(uri, { preview: false, focus: true });
         } catch (err) {
