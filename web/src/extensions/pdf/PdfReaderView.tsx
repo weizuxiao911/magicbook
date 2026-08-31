@@ -168,6 +168,7 @@ async function extractTextInRect(
     const x2 = Math.max(pdfX1, pdfX2);
     const y1 = Math.min(pdfY1, pdfY2);
     const y2 = Math.max(pdfY1, pdfY2);
+    console.log('[pdf-extract] rect:', pageIdx, [pdfX1, pdfY1, pdfX2, pdfY2]);
     const lines: string[] = [];
     for (const it of (content.items || []) as any[]) {
       if (!it?.transform || typeof it.str !== 'string') continue;
@@ -185,8 +186,10 @@ async function extractTextInRect(
         lines.push(it.str);
       }
     }
+    console.log('[pdf-extract] items:', content.items.length, 'matched:', lines.length);
     return lines.join(' ').replace(/\s+/g, ' ').trim().slice(0, 2000);
-  } catch {
+  } catch (e) {
+    console.warn('[pdf-extract] fail:', e);
     return '';
   }
 }
@@ -964,12 +967,24 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       }
       // 需求 1/3: 提取 rect 内选中文本 (异步)
       const selectedText = await extractTextInRect(pdf, pageIdx, pdfX1, pdfY1, pdfX2, pdfY2);
+      // rect 即标记: 圈定后立即保存为标注 (默认蓝), popover 是快捷操作条 (动画演示/颜色/删除)
+      const newAnnot: SidecarAnnot = {
+        id: 'a-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+        page: pageIdx,
+        rect: [pdfX1, pdfY1, pdfX2, pdfY2],
+        selectedText,
+        note: '',
+        color: [55, 148, 255],
+        createdAt: new Date().toISOString(),
+      };
+      handlePopoverSave(newAnnot);
       setPopoverState({
         x: Math.max(e.clientX, startX),
         y: Math.min(startY, e.clientY),
         page: pageIdx,
         rect: [pdfX1, pdfY1, pdfX2, pdfY2],
         selectedText,
+        existing: newAnnot,
       });
       popoverOpenRef.current = true;
     };
@@ -988,8 +1003,31 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     };
   }, [hostPath, numPages]);
 
-  // ---------- popover 保存: 写 sidecar + 触发 rebuild + 清空选择矩形蒙层 ----------
-  const handlePopoverSave = useCallback((annot: SidecarAnnot) => {
+  // ---------- 删除已存在标注 (sidecar) ----------
+  // 从 in-memory ref 移除 + 标记 pushDelete (写盘过滤) + 触发 rebuild.
+  const handleDeleteAnnot = useCallback((id: string) => {
+    // 1. 从 ref 移除
+    const m = sidecarAnnotsRef.current;
+    let removedPage: number | null = null;
+    for (const [page, arr] of m) {
+      const idx = arr.findIndex((a) => a.id === id);
+      if (idx >= 0) {
+        arr.splice(idx, 1);
+        if (arr.length === 0) m.delete(page);
+        removedPage = page;
+      }
+    }
+    // 2. 写盘 (read-merge-write 过滤被删 id)
+    if (sidecarWriterRef.current) {
+      sidecarWriterRef.current.pushDelete(id);
+    }
+    // 3. 触发 rebuild (重建被删标注所在页)
+    if (removedPage !== null) pendingRebuildPageRef.current = removedPage;
+    setSidecarTick((t) => t + 1);
+  }, []);
+
+  // ---------- popover 保存: 写 sidecar + 触发 rebuild + 清空选择矩形蒙层 (keepOpen: 圈定即标记时不关) ----------
+  const handlePopoverSave = useCallback((annot: SidecarAnnot, opts?: { keepOpen?: boolean }) => {
     // 1. 写盘 (debounce 500ms; mergeItems 按 id 幂等, 编辑已有 id 时覆盖)
     if (sidecarWriterRef.current) {
       sidecarWriterRef.current.push([annot]);
@@ -1008,6 +1046,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     pendingRebuildPageRef.current = annot.page;
     setSidecarTick((t) => t + 1);
     setDirty(false);
+    if (opts?.keepOpen) return;
     // 4. 关闭 popover + 移除选择矩形蒙层
     setPopoverState(null);
     popoverOpenRef.current = false;
@@ -1015,12 +1054,23 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     if (old) old.remove();
   }, []);
 
+  /** ✕: 删除刚标记的标注 (rect 即标记, 取消 = 删除) */
   const handlePopoverCancel = useCallback(() => {
+    const ex = popoverState?.existing;
+    if (ex) handleDeleteAnnot(ex.id);
     setPopoverState(null);
     popoverOpenRef.current = false;
     const old = document.querySelector('.ab-pdf-selection-rect[data-active="1"]');
     if (old) old.remove();
-  }, []);
+  }, [popoverState, handleDeleteAnnot]);
+
+  /** 颜色: 实时更新标注颜色 (rect 已标记) */
+  const handleColorChange = useCallback((color: [number, number, number]) => {
+    const ex = popoverState?.existing;
+    if (!ex) return;
+    const updated = { ...ex, color };
+    handlePopoverSave(updated, { keepOpen: true });
+  }, [popoverState, handlePopoverSave]);
 
   // ---------- 生成动画演示 (ask → 保存 html → sidecar demo interaction → 保存标注) ----------
   const handleGenerateDemo = useCallback(async (prompt: string, base: SidecarAnnot) => {
@@ -1062,28 +1112,6 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     handlePopoverSave(annot);
   }, [hostPath, fileService, handlePopoverSave]);
 
-  // ---------- 删除已存在标注 (sidecar) ----------
-  // 从 in-memory ref 移除 + 标记 pushDelete (写盘过滤) + 触发 rebuild.
-  const handleDeleteAnnot = useCallback((id: string) => {
-    // 1. 从 ref 移除
-    const m = sidecarAnnotsRef.current;
-    let removedPage: number | null = null;
-    for (const [page, arr] of m) {
-      const idx = arr.findIndex((a) => a.id === id);
-      if (idx >= 0) {
-        arr.splice(idx, 1);
-        if (arr.length === 0) m.delete(page);
-        removedPage = page;
-      }
-    }
-    // 2. 写盘 (read-merge-write 过滤被删 id)
-    if (sidecarWriterRef.current) {
-      sidecarWriterRef.current.pushDelete(id);
-    }
-    // 3. 触发 rebuild (重建被删标注所在页)
-    if (removedPage !== null) pendingRebuildPageRef.current = removedPage;
-    setSidecarTick((t) => t + 1);
-  }, []);
 
   // ---------- 跳转到指定页 ----------
   const jumpToPage = useCallback((n: number) => {
@@ -1199,7 +1227,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         )}
       </div>
       <AnnotationActions />
-      <AnnotPopover state={popoverState} onCancel={handlePopoverCancel} onGenerate={handleGenerateDemo} />
+      <AnnotPopover state={popoverState} onCancel={handlePopoverCancel} onGenerate={handleGenerateDemo} onColorChange={handleColorChange} />
       {loading && (
         <div className="ab-pdf__loading">
           <div className="ab-pdf__loadingText">
