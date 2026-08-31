@@ -56,16 +56,23 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
   }
 
   /** 精确移除 InMemory 中指定路径 (及其子项): 外部删除时调用, 让 OverlayFS fallback 到 readable.
-   *  注意: 不能 clearCache 全清 (目录树被清空后 OverlayFS 写文件 EBUSY). */
+   *  注意: 不能 clearCache 全清 (目录树被清空后 OverlayFS 写文件 EBUSY).
+   *  实现: 走 super (SyncKeyValueFileSystem) 的 unlink/rmdir — 只动本地 InMemory, 不触发服务器同步;
+   *  不能按路径遍历 store.store (key 是 INode id 不是路径, 老实现永远删不掉, 残留文件
+   *  会让 OverlayFS readdir 合并 writable 又显示出来). */
   removePath(relPath: string): void {
     const key = relPath.startsWith('/') ? relPath : `/${relPath}`;
-    const store = (this as any).store;
-    if (!store?.store) return;
-    for (const p of Object.keys(store.store)) {
-      if (p === key || p.startsWith(key + '/')) {
-        delete store.store[p];
+    try {
+      const st = super.statSync(key, false);
+      if (st.isDirectory()) {
+        for (const c of super.readdirSync(key)) {
+          this.removePath(`${key}/${c}`);
+        }
+        super.rmdirSync(key);
+      } else {
+        super.unlinkSync(key);
       }
-    }
+    } catch { /* 不存在 → 忽略 */ }
   }
 
   static Create(opts: unknown, cb: (err: Error | null, fs?: WriteSyncFS) => void): void {

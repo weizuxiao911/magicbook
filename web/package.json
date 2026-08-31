@@ -12,8 +12,6 @@
     "@codeblitzjs/ide-core": "2.4.6",
     "@opencode-ai/sdk": "^1.18.11",
     "@opensumi/ide-terminal-next": "3.6.5-next-1766394426.0",
-    "@xyflow/react": "^12.3.5",
-    "@dagrejs/dagre": "^1.1.4",
     "marked": "^7.0.5",
     "marked-shiki": "^1.2.1",
     "pdfjs-dist": "^4.10.38",
