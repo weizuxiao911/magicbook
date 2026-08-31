@@ -119,38 +119,6 @@ async function openPdfFromBytes(bytes: Uint8Array): Promise<any> {
 
 /* ===== 动画演示生成 (ask → 保存 html) ===== */
 
-/** ask 请求 opencode 生成 HTML5 动画演示, 返回完整 HTML 文本. 超时/错误 reject. */
-function askDemo(prompt: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    void ask(
-      prompt,
-      (text) => {
-        if (settled) return;
-        settled = true;
-        resolve(text);
-      },
-      {
-        onError: (err) => {
-          if (settled) return;
-          settled = true;
-          reject(err instanceof Error ? err : new Error(String(err)));
-        },
-      },
-    )
-      .then((req) => {
-        // 兜底超时 (ask 内部有 90s 看门狗, 这里再兜一层)
-        setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          try { void req.cancel(); } catch { /* */ }
-          reject(new Error('生成超时, 请重试'));
-        }, 120_000);
-      })
-      .catch(() => { /* request 抛错 → onError 已触发 */ });
-  });
-}
-
 /** 提取 rect (PDF 原坐标, 左下原点) 内文本: pdf.js textContent 按文本项 bbox 与 rect 相交过滤.
  *  用 bbox 相交而非"左下角点在 rect 内": 长句子左下角点常不在圈选区内但文本主体在 (实测踩坑). */
 async function extractTextInRect(
@@ -200,6 +168,22 @@ async function extractTextInRect(
  * @returns IDE 相对路径 (如 /电子图书/数据结构-动画演示-1.html)
  */
 async function saveDemoHtml(hostPath: string, html: string, fileService: IFileServiceClient): Promise<string> {
+  return saveGeneratedFile(hostPath, '动画演示', 'html', html, fileService);
+}
+
+/** 保存 AI 生成的代码文件: {pdfBase}-代码示例-{n}.{ext} */
+async function saveCodeFile(hostPath: string, code: string, ext: string, fileService: IFileServiceClient): Promise<string> {
+  return saveGeneratedFile(hostPath, '代码示例', ext, code, fileService);
+}
+
+/** 通用保存: PDF 同目录, 前缀自增不覆盖. @returns IDE 相对路径 */
+async function saveGeneratedFile(
+  hostPath: string,
+  prefix: string,
+  ext: string,
+  content: string,
+  fileService: IFileServiceClient,
+): Promise<string> {
   const wsRoot = (window as any).__APP_CONFIG__?.workspaceDir || '/workspace';
   let rel = hostPath.startsWith(wsRoot) ? hostPath.slice(wsRoot.length) : hostPath;
   rel = rel.replace(/^\/+/, '');
@@ -213,14 +197,14 @@ async function saveDemoHtml(hostPath: string, html: string, fileService: IFileSe
     const dirUri = `file://${WORKSPACE_ROOT}${dir ? `/${dir}` : ''}`;
     const stat = await fileService.getFileStat(dirUri).catch(() => null);
     const names = (stat?.children || []).map((c) => (c.uri || '').split('/').pop() || '');
-    while (names.includes(`${base}-动画演示-${n}.html`)) n++;
+    while (names.includes(`${base}-${prefix}-${n}.${ext}`)) n++;
   } catch { /* 列目录失败, 从 1 开始 */ }
-  const relPath = `${dir ? `/${dir}` : ''}/${base}-动画演示-${n}.html`;
+  const relPath = `${dir ? `/${dir}` : ''}/${base}-${prefix}-${n}.${ext}`;
   const uri = `file://${WORKSPACE_ROOT}${relPath}`;
   const st = await fileService.getFileStat(uri).catch(() => null);
-  if (st) await fileService.setContent(st, html);
-  else await fileService.createFile(uri, { content: html } as any);
-  console.log('[pdf] demo html 已保存:', relPath);
+  if (st) await fileService.setContent(st, content);
+  else await fileService.createFile(uri, { content } as any);
+  console.log(`[pdf] ${prefix} 已保存:`, relPath);
   return relPath;
 }
 
@@ -558,8 +542,9 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       } else if (opts.withDelete) {
         const delBtn = document.createElement('span');
         // 交互能力: 已注册类型渲染右下角按钮行 (本次: demo → 动画演示). 旧 comment/prompt 数据保留但 UI 不再渲染.
-        const interactions: Array<{ type: string; htmlPath?: string }> = meta.raw?.interactions || [];
+        const interactions: Array<{ type: string; htmlPath?: string; codePath?: string; runner?: string }> = meta.raw?.interactions || [];
         const demo = interactions.find((i) => i.type === 'demo' && i.htmlPath);
+        const code = interactions.find((i) => i.type === 'code' && i.codePath);
         // 按钮行容器: absolute 右下角, flex 一行右对齐
         const btnRow = document.createElement('div');
         btnRow.className = 'ab-pdf-annot__actions';
@@ -568,6 +553,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
           flex-direction: row; gap: 4px; align-items: center;
         `;
         const actionBtns: HTMLButtonElement[] = [];
+        if (code) actionBtns.push(createCodeRunBtn(code.codePath!, code.runner || 'python3'));
         if (demo) actionBtns.push(createDemoOpenBtn(demo.htmlPath!));
         actionBtns.forEach((b) => { b.style.display = 'none'; btnRow.appendChild(b); });
         el.appendChild(btnRow);
@@ -1072,45 +1058,152 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     handlePopoverSave(updated, { keepOpen: true });
   }, [popoverState, handlePopoverSave]);
 
-  // ---------- 生成动画演示 (ask → 保存 html → sidecar demo interaction → 保存标注) ----------
-  const handleGenerateDemo = useCallback(async (prompt: string, base: SidecarAnnot) => {
-    // 1. ask 生成 HTML (prompt 强化: 要求直接输出 HTML, 不建文件)
-    const finalPrompt =
-      `${prompt}\n\n` +
-      '要求: 直接输出完整的 HTML5 代码 (以 <!DOCTYPE html 开头, 内联 CSS/JS, 无外部依赖, 双击可直接打开)。' +
-      '不要创建文件, 不要输出任何解释文字。';
-    const reply = await askDemo(finalPrompt);
-    if (!reply || !reply.trim()) throw new Error('AI 未返回内容');
-    // 2. 兜底: 模型可能用工具创建了 html 文件并返回说明文字 (如 "已生成 `/path.html`") → 读回该文件内容
-    let content = reply;
-    const genMatch = reply.match(/已生成\s*[`'"]?(\/[^\s`'"]+\.html)/i);
-    if (!/<!DOCTYPE|<!doctype|<html/i.test(reply) && genMatch) {
-      try {
-        const p = genMatch[1].replace(/^\/+/, '');
-        const uri = `file://${WORKSPACE_ROOT}/${p}`;
-        const stat = await fileService.getFileStat(uri).catch(() => null);
-        if (stat) {
-          const { content: c } = await fileService.readFile(uri);
-          const text: string = typeof (c as any)?.toString === 'function' ? (c as any).toString('utf8') : String(c);
-          if (/<!DOCTYPE|<!doctype|<html/i.test(text)) {
-            content = text;
-            console.log('[pdf] demo: 读回 AI 生成的文件', p);
+  // ---------- 生成中状态 (动画/代码) + 取消 ----------
+  const [generating, setGenerating] = useState(false);
+  const generateReqRef = useRef<{ cancel: () => Promise<void> } | null>(null);
+
+  /** 取消当前生成 (ask cancel) */
+  const handleCancelGenerate = useCallback(() => {
+    const req = generateReqRef.current;
+    generateReqRef.current = null;
+    if (req) void req.cancel().catch(() => {});
+  }, []);
+
+  /** 标注信息 → 提示词 (文件名/页码/rect/选中文本) */
+  const annotPrompt = useCallback((base: SidecarAnnot): string => {
+    const pdfName = hostPath.split('/').pop() || '';
+    return [
+      `PDF 圈选内容:`,
+      `- 源文件: ${pdfName}`,
+      `- 页码: ${base.page}`,
+      `- 圈选区域 (PDF 坐标): [${base.rect.map((n) => n.toFixed(1)).join(', ')}]`,
+      `- 圈选内容:`,
+      base.selectedText ? base.selectedText.slice(0, 1500) : '(未提取到文本, 按圈选区域上下文生成)',
+    ].join('\n');
+  }, [hostPath]);
+
+  /** ask 包装: 返回 promise + 记录 handle 供取消; 失败抛错 (宿主 notification 提示) */
+  const askWithCancel = useCallback((prompt: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      void ask(prompt, (text) => {
+        if (settled) return;
+        settled = true;
+        generateReqRef.current = null;
+        resolve(text);
+      }, {
+        onError: (err) => {
+          if (settled) return;
+          settled = true;
+          generateReqRef.current = null;
+          reject(err instanceof Error ? err : new Error(String(err)));
+        },
+      })
+        .then((req) => {
+          generateReqRef.current = req;
+          // 兜底超时 (ask 内部有 90s 看门狗, 这里再兜一层)
+          setTimeout(() => {
+            if (settled || generateReqRef.current !== req) return;
+            settled = true;
+            generateReqRef.current = null;
+            try { void req.cancel(); } catch { /* */ }
+            reject(new Error('生成超时, 请重试'));
+          }, 120_000);
+        })
+        .catch(() => { /* request 抛错 → onError 已触发 */ });
+    });
+  }, []);
+
+  /** 生成动画: ask → 保存 html → sidecar demo → rebuild (失败 notification, 成功关 popover) */
+  const handleGenerateDemo = useCallback(async (base: SidecarAnnot) => {
+    setGenerating(true);
+    setPopoverState((s) => (s ? { ...s } : s));
+    try {
+      const finalPrompt =
+        `${annotPrompt(base)}\n\n` +
+        '请根据以上 PDF 圈选内容生成一个完整的 HTML5 动画演示:\n' +
+        '要求: 输出单个完整 HTML5 代码 (以 <!DOCTYPE html 开头, 内联 CSS/JS, 无外部依赖, 双击可直接打开), 紧扣圈选内容。' +
+        '不要创建文件, 不要输出任何解释文字。';
+      const reply = await askWithCancel(finalPrompt);
+      if (!reply || !reply.trim()) throw new Error('AI 未返回内容');
+      // 剥离 markdown 代码围栏 (```html ... ```)
+      let content = reply;
+      const fence = reply.match(/```(?:html)?\s*\n([\s\S]*?)```/i);
+      if (fence) content = fence[1];
+      // 兜底: 模型可能用工具创建了 html 文件并返回说明文字 (如 "已生成 `/path.html`") → 读回该文件内容
+      const genMatch = reply.match(/已生成\s*[`'"]?(\/[^\s`'"]+\.html)/i);
+      if (!/<!DOCTYPE|<!doctype|<html/i.test(content) && genMatch) {
+        try {
+          const p = genMatch[1].replace(/^\/+/, '');
+          const uri = `file://${WORKSPACE_ROOT}/${p}`;
+          const stat = await fileService.getFileStat(uri).catch(() => null);
+          if (stat) {
+            const { content: c } = await fileService.readFile(uri);
+            const text: string = typeof (c as any)?.toString === 'function' ? (c as any).toString('utf8') : String(c);
+            if (/<!DOCTYPE|<!doctype|<html/i.test(text)) {
+              content = text;
+              console.log('[pdf] demo: 读回 AI 生成的文件', p);
+            }
           }
-        }
-      } catch { /* 读回失败 → 保留 reply */ }
+        } catch { /* 读回失败 → 保留 reply */ }
+      }
+      // 保存 html (PDF 同目录, 自增)
+      const htmlPath = await saveDemoHtml(hostPath, content, fileService);
+      // 更新 annot interactions (demo, 同 type 覆盖) → 保存 + 关 popover
+      const annot: SidecarAnnot = {
+        ...base,
+        interactions: [
+          ...(base.interactions || []).filter((i) => i.type !== 'demo'),
+          { type: 'demo', htmlPath, createdAt: new Date().toISOString() },
+        ],
+      };
+      handlePopoverSave(annot);
+    } catch (e: any) {
+      notification.error({ message: `生成动画失败: ${e?.message || e}`, type: 'error', duration: 5 });
+    } finally {
+      setGenerating(false);
     }
-    // 3. 保存 html (PDF 同目录, 自增)
-    const htmlPath = await saveDemoHtml(hostPath, content, fileService);
-    // 4. 更新 annot interactions (demo, 同 type 覆盖)
-    const annot: SidecarAnnot = {
-      ...base,
-      interactions: [
-        ...(base.interactions || []).filter((i) => i.type !== 'demo'),
-        { type: 'demo', htmlPath, createdAt: new Date().toISOString() },
-      ],
-    };
-    handlePopoverSave(annot);
-  }, [hostPath, fileService, handlePopoverSave]);
+  }, [annotPrompt, askWithCancel, hostPath, fileService, handlePopoverSave]);
+
+  /** 代码示例: ask → 生成可运行代码 → 保存文件 → 终端执行 */
+  const handleGenerateCode = useCallback(async (base: SidecarAnnot) => {
+    setGenerating(true);
+    try {
+      const finalPrompt =
+        `${annotPrompt(base)}\n\n` +
+        '请根据以上 PDF 圈选内容生成一个可运行的代码示例:\n' +
+        '要求: 输出单个完整可运行代码文件 (首行标注语言, 如 `#!/usr/bin/env python3` 或 `// node` 或 `#!/usr/bin/env bash`), ' +
+        '完整无省略, 依赖仅标准库。不要创建文件, 不要输出任何解释文字。';
+      const reply = await askWithCancel(finalPrompt);
+      if (!reply || !reply.trim()) throw new Error('AI 未返回内容');
+      // 判断语言 + 提取代码 (代码块剥离)
+      let code = reply;
+      const fence = reply.match(/```[a-zA-Z]*\n([\s\S]*?)```/);
+      if (fence) code = fence[1];
+      const lower = reply.slice(0, 200).toLowerCase();
+      const ext = /python|py\b/.test(lower) ? 'py' : /node|javascript|\.js\b/.test(lower) ? 'js' : 'sh';
+      const runner = ext === 'py' ? 'python3' : ext === 'js' ? 'node' : 'bash';
+      // 保存代码文件 (PDF 同目录, 自增)
+      const codePath = await saveCodeFile(hostPath, code, ext, fileService);
+      // 更新 annot interactions (code) → 保存 + 关 popover
+      const annot: SidecarAnnot = {
+        ...base,
+        interactions: [
+          ...(base.interactions || []).filter((i) => i.type !== 'code'),
+          { type: 'code', codePath, runner, createdAt: new Date().toISOString() },
+        ],
+      };
+      handlePopoverSave(annot);
+      // 终端执行
+      window.dispatchEvent(new CustomEvent('animbook:pdf-annot-terminal', {
+        detail: { command: `${runner} ${codePath.replace(/^\//, '')}`.replace(/^\//, ''), source: hostPath },
+      }));
+    } catch (e: any) {
+      notification.error({ message: `代码示例生成失败: ${e?.message || e}`, type: 'error', duration: 5 });
+    } finally {
+      setGenerating(false);
+    }
+  }, [annotPrompt, askWithCancel, hostPath, fileService, handlePopoverSave]);
 
 
   // ---------- 跳转到指定页 ----------
@@ -1227,7 +1320,15 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         )}
       </div>
       <AnnotationActions />
-      <AnnotPopover state={popoverState} onCancel={handlePopoverCancel} onGenerate={handleGenerateDemo} onColorChange={handleColorChange} />
+      <AnnotPopover
+        state={popoverState}
+        onCancel={handlePopoverCancel}
+        onGenerateDemo={handleGenerateDemo}
+        onGenerateCode={handleGenerateCode}
+        onCancelGenerate={handleCancelGenerate}
+        generating={generating}
+        onColorChange={handleColorChange}
+      />
       {loading && (
         <div className="ab-pdf__loading">
           <div className="ab-pdf__loadingText">
@@ -1426,12 +1527,12 @@ function hideAnnotTip() {
 
 /* ========== AI讲解 按钮 (右下角按钮行, hover 显示) ========== */
 /** 创建"AI讲解"按钮 (放按钮行容器内, flex 一行排列). 显示由 hover 控制. */
-/* ========== 动画演示按钮 (rect 右下角, hover 显示) ==========
+/* ========== 播放动画按钮 (rect 右下角, hover 显示) ==========
  * 点击派发 animbook:pdf-annot-openfile → AnnotationActions → editorService.open (tab 打开 html). */
 function createDemoOpenBtn(htmlPath: string): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.className = 'ab-pdf-demo-open';
-  btn.textContent = '动画演示';
+  btn.textContent = '播放动画';
   btn.style.cssText = `
     display: none;
     font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
@@ -1446,6 +1547,34 @@ function createDemoOpenBtn(htmlPath: string): HTMLButtonElement {
     ev.preventDefault();
     window.dispatchEvent(new CustomEvent('animbook:pdf-annot-openfile', {
       detail: { name: '动画演示', path: `file://${WORKSPACE_ROOT}${htmlPath}` },
+    }));
+  };
+  return btn;
+}
+
+/* ========== 运行代码按钮 (rect 右下角, hover 显示) ==========
+ * 点击派发 animbook:pdf-annot-terminal → 终端执行. */
+function createCodeRunBtn(codePath: string, runner: string): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.className = 'ab-pdf-code-run';
+  btn.textContent = '运行代码';
+  btn.style.cssText = `
+    display: none;
+    font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
+    color: #fff; background: #3794ff; border: none; border-radius: 6px;
+    padding: 5px 10px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    pointer-events: auto; white-space: nowrap;
+  `;
+  btn.addEventListener('mouseenter', () => { btn.style.filter = 'brightness(1.1)'; });
+  btn.addEventListener('mouseleave', () => { btn.style.filter = 'none'; });
+  btn.onclick = (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    const rel = codePath.replace(/^\/+/, '');
+    const cwd = (window as any).__APP_CONFIG__?.cwd || '';
+    const cmd = `cd "${cwd}" && ${runner} "${rel}"`;
+    window.dispatchEvent(new CustomEvent('animbook:pdf-annot-terminal', {
+      detail: { command: cmd, source: '' },
     }));
   };
   return btn;
