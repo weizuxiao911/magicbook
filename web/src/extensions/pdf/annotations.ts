@@ -141,13 +141,16 @@ export async function runAnnotAction(action: AnnotAction, handlers: AnnotHandler
  *   本次先注册 demo (生成动画演示), 后续按需加新 type.
  */
 
-/** 单个交互能力: comment = 悬停显示批注文本; prompt = 悬停显示"AI讲解"按钮; demo = 动画演示产物 */
+/** 单个交互能力: comment = 悬停显示批注文本; prompt = 悬停显示"AI讲解"按钮; demo = 动画演示产物; code = 代码示例 */
 export interface SidecarInteraction {
-  type: 'comment' | 'prompt' | 'demo';
+  type: 'comment' | 'prompt' | 'demo' | 'code';
   text?: string;
   /** demo: 生成的 html IDE 相对路径 */
   htmlPath?: string;
-  /** demo: 生成时间 */
+  /** code: 生成的代码文件 IDE 相对路径 + 运行器 */
+  codePath?: string;
+  runner?: string;
+  /** 生成时间 */
   createdAt?: string;
 }
 
@@ -215,6 +218,11 @@ export function parseSidecarAnnot(raw: any): SidecarAnnot | null {
         if (seen.has('demo')) continue;
         seen.add('demo');
         list.push({ type: 'demo', htmlPath: it.htmlPath, createdAt: String(it.createdAt || '') });
+      } else if (it.type === 'code') {
+        if (typeof it.codePath !== 'string' || !it.codePath) continue;
+        if (seen.has('code')) continue;
+        seen.add('code');
+        list.push({ type: 'code', codePath: it.codePath, runner: String(it.runner || 'python3'), createdAt: String(it.createdAt || '') });
       }
     }
     if (list.length > 0) interactions = list;
