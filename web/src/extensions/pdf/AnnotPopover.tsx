@@ -28,21 +28,38 @@ export interface PopoverState {
   existing?: SidecarAnnot;
 }
 
+/** 交互能力工具 id */
+export type AnnotToolId = 'demo' | 'code' | 'explain' | 'translate' | 'summary' | 'analysis'
+  | 'note' | 'exercise' | 'mindmap' | 'flashcard' | 'ppt';
+
 export interface AnnotPopoverProps {
   state: PopoverState | null;
   /** ✕: 删除标注 + 关闭 */
   onCancel: () => void;
-  /** 生成动画 (直接动作, 宿主执行 ask → html → sidecar demo) */
-  onGenerateDemo: (base: SidecarAnnot) => Promise<void>;
-  /** 代码示例 (宿主执行 ask → 代码文件 → 终端运行) */
-  onGenerateCode: (base: SidecarAnnot) => Promise<void>;
+  /** 执行交互能力工具 (直接动作, 宿主执行 ask → 产物 → sidecar) */
+  onTool: (tool: AnnotToolId, base: SidecarAnnot) => Promise<void>;
   /** 取消当前生成 */
   onCancelGenerate: () => void;
-  /** 生成中 (动画/代码任一进行中) */
+  /** 生成中 (任一工具进行中) */
   generating: boolean;
   /** 更新标注颜色 */
   onColorChange: (color: [number, number, number]) => void;
 }
+
+/** 工具注册表 (可扩展): 工具栏按钮顺序即此数组顺序 (AI 辅助学习工具集) */
+const TOOLS: Array<{ id: AnnotToolId; label: string }> = [
+  { id: 'demo', label: '动画演示' },
+  { id: 'code', label: '代码示例' },
+  { id: 'explain', label: 'AI讲解' },
+  { id: 'translate', label: '翻译' },
+  { id: 'summary', label: '总结摘要' },
+  { id: 'analysis', label: '考点分析' },
+  { id: 'note', label: '生成笔记' },
+  { id: 'exercise', label: '生成练习' },
+  { id: 'mindmap', label: '思维导图' },
+  { id: 'flashcard', label: '记忆闪卡' },
+  { id: 'ppt', label: 'PPT大纲' },
+];
 
 const COLORS: Array<{ name: string; rgb: [number, number, number] }> = [
   { name: '蓝', rgb: [55, 148, 255] },
@@ -61,8 +78,7 @@ type Panel = 'main' | 'color';
 export const AnnotPopover: React.FC<AnnotPopoverProps> = ({
   state,
   onCancel,
-  onGenerateDemo,
-  onGenerateCode,
+  onTool,
   onCancelGenerate,
   generating,
   onColorChange,
@@ -97,7 +113,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({
   }, [state, generating, panel, onCancel]);
 
   // 定位: 紧贴标注位置 (锚点 = 标注右上角 state.x/y), 按可视区上下左右 4 向自适应.
-  const W = 280;
+  const W = 300;
   const PAD = 8;
   const vw = typeof window !== 'undefined' ? window.innerWidth : 1024;
   const vh = typeof window !== 'undefined' ? window.innerHeight : 768;
@@ -166,14 +182,11 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({
                 取消生成
               </button>
             ) : (
-              <>
-                <button type="button" className="ab-annot-popover__tbtn" onClick={() => { void onGenerateDemo(baseAnnot()); }}>
-                  生成动画
+              TOOLS.map((t) => (
+                <button key={t.id} type="button" className="ab-annot-popover__tbtn" onClick={() => { void onTool(t.id, baseAnnot()); }}>
+                  {t.label}
                 </button>
-                <button type="button" className="ab-annot-popover__tbtn" onClick={() => { void onGenerateCode(baseAnnot()); }}>
-                  代码示例
-                </button>
-              </>
+              ))
             )}
             <button
               type="button"
@@ -255,6 +268,7 @@ const POPOVER_STYLES = `
 .ab-annot-popover__toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 2px;
   background: rgba(128,128,128,0.08);

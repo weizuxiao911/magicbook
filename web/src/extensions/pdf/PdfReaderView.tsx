@@ -21,7 +21,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 
 import { toAnnotMeta, runAnnotAction, sidecarToAnnotMeta, type PdfAnnotMeta, type AnnotHandlers } from './annotations';
 import { AnnotationActions } from './AnnotationActions';
-import { AnnotPopover, type PopoverState } from './AnnotPopover';
+import { AnnotPopover, type PopoverState, type AnnotToolId } from './AnnotPopover';
 import { readSidecar, SidecarWriter, contentHash } from './sidecar';
 import type { SidecarAnnot } from './annotations';
 import { getChatPanelApi } from '../chat/commands/chatApi';
@@ -542,18 +542,26 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       } else if (opts.withDelete) {
         const delBtn = document.createElement('span');
         // 交互能力: 已注册类型渲染右下角按钮行 (本次: demo → 动画演示). 旧 comment/prompt 数据保留但 UI 不再渲染.
-        const interactions: Array<{ type: string; htmlPath?: string; codePath?: string; runner?: string }> = meta.raw?.interactions || [];
+        const interactions: Array<{ type: string; htmlPath?: string; codePath?: string; runner?: string; install?: string; text?: string; filePath?: string }> = meta.raw?.interactions || [];
+        // 交互按钮注册表: 展示类 (modal) / 文件类 (打开) / 特殊 (播放动画/运行代码)
+        const TEXT_LABELS: Record<string, string> = { explain: '讲解', translate: '译文', summary: '摘要', analysis: '考点' };
+        const FILE_LABELS: Record<string, string> = { note: '笔记', exercise: '练习', mindmap: '导图', flashcard: '闪卡', ppt: '大纲' };
         const demo = interactions.find((i) => i.type === 'demo' && i.htmlPath);
         const code = interactions.find((i) => i.type === 'code' && i.codePath);
-        // 按钮行容器: absolute 右下角, flex 一行右对齐
+        // 按钮行容器: absolute 右下角, flex 一行右对齐 (flex-wrap 防溢出)
         const btnRow = document.createElement('div');
         btnRow.className = 'ab-pdf-annot__actions';
         btnRow.style.cssText = `
           position: absolute; right: 4px; bottom: 4px; z-index: 5; display: flex;
-          flex-direction: row; gap: 4px; align-items: center;
+          flex-direction: row; flex-wrap: wrap; justify-content: flex-end; gap: 4px; align-items: center;
+          max-width: calc(100% - 8px);
         `;
         const actionBtns: HTMLButtonElement[] = [];
-        if (code) actionBtns.push(createCodeRunBtn(code.codePath!, code.runner || 'python3'));
+        for (const it of interactions) {
+          if (TEXT_LABELS[it.type] && it.text) actionBtns.push(createTextModalBtn(TEXT_LABELS[it.type], it.text));
+          else if (FILE_LABELS[it.type] && it.filePath) actionBtns.push(createOpenFileBtn(FILE_LABELS[it.type], it.filePath));
+        }
+        if (code) actionBtns.push(createCodeRunBtn(code.codePath!, code.runner || 'python3', code.install || ''));
         if (demo) actionBtns.push(createDemoOpenBtn(demo.htmlPath!));
         actionBtns.forEach((b) => { b.style.display = 'none'; btnRow.appendChild(b); });
         el.appendChild(btnRow);
@@ -1121,8 +1129,12 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     try {
       const finalPrompt =
         `${annotPrompt(base)}\n\n` +
-        '请根据以上 PDF 圈选内容生成一个完整的 HTML5 动画演示:\n' +
-        '要求: 输出单个完整 HTML5 代码 (以 <!DOCTYPE html 开头, 内联 CSS/JS, 无外部依赖, 双击可直接打开), 紧扣圈选内容。' +
+        '请根据以上 PDF 圈选内容生成一个**可交互**的 HTML5 算法/知识动画演示:\n' +
+        '要求:\n' +
+        '1. 页面顶部提供**数据输入框** (如逗号分隔的数字, 用户可输入任意数据/文本);\n' +
+        '2. 点击「开始演示」后用动画逐步演示过程 (如排序: 每一步比较/交换/插入高亮标注);\n' +
+        '3. 控制按钮: 输入数据 / 开始 / 暂停 / 重置;\n' +
+        '4. 输出单个完整 HTML5 代码 (以 <!DOCTYPE html 开头, 内联 CSS/JS, 无外部依赖, 双击可直接打开), 紧扣圈选内容。' +
         '不要创建文件, 不要输出任何解释文字。';
       const reply = await askWithCancel(finalPrompt);
       if (!reply || !reply.trim()) throw new Error('AI 未返回内容');
@@ -1165,38 +1177,57 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     }
   }, [annotPrompt, askWithCancel, hostPath, fileService, handlePopoverSave]);
 
-  /** 代码示例: ask → 生成可运行代码 → 保存文件 → 终端执行 */
+  /** 代码示例: ask → 识别课程语言 → 同语言可运行代码 + 环境安装指令 → 保存 → 终端执行 */
   const handleGenerateCode = useCallback(async (base: SidecarAnnot) => {
     setGenerating(true);
     try {
       const finalPrompt =
         `${annotPrompt(base)}\n\n` +
         '请根据以上 PDF 圈选内容生成一个可运行的代码示例:\n' +
-        '要求: 输出单个完整可运行代码文件 (首行标注语言, 如 `#!/usr/bin/env python3` 或 `// node` 或 `#!/usr/bin/env bash`), ' +
-        '完整无省略, 依赖仅标准库。不要创建文件, 不要输出任何解释文字。';
+        '要求:\n' +
+        '1. **识别圈选内容涉及的编程语言, 代码必须用同一种语言编写** (如课程讲 C 就用 C, 讲 Python 就用 Python);\n' +
+        '2. 输出分两部分, 第一部分以 `#INSTALL#` 开头: 环境准备命令 (一行, 如 `pip install numpy` / `npm install lodash` / `apt-get install gcc`; 无需安装则写 `#INSTALL# none`);\n' +
+        '3. 第二部分为完整可运行代码 (首行标注语言, 如 `#!/usr/bin/env python3` 或 `#include <stdio.h>` 或 `// node`), 完整无省略, 依赖仅必要库。\n' +
+        '不要创建文件, 不要输出任何解释文字。';
       const reply = await askWithCancel(finalPrompt);
       if (!reply || !reply.trim()) throw new Error('AI 未返回内容');
-      // 判断语言 + 提取代码 (代码块剥离)
-      let code = reply;
-      const fence = reply.match(/```[a-zA-Z]*\n([\s\S]*?)```/);
+      // 解析环境安装指令 (#INSTALL# xxx)
+      let install = '';
+      const installMatch = reply.match(/#INSTALL#\s*([^\n]+)/i);
+      if (installMatch && installMatch[1].trim().toLowerCase() !== 'none') install = installMatch[1].trim();
+      // 提取代码 (剥离 install 段 + markdown 围栏)
+      let code = reply.replace(/#INSTALL#[^\n]*\n?/i, '');
+      const fence = code.match(/```[a-zA-Z]*\n([\s\S]*?)```/);
       if (fence) code = fence[1];
-      const lower = reply.slice(0, 200).toLowerCase();
-      const ext = /python|py\b/.test(lower) ? 'py' : /node|javascript|\.js\b/.test(lower) ? 'js' : 'sh';
-      const runner = ext === 'py' ? 'python3' : ext === 'js' ? 'node' : 'bash';
+      if (!code.trim()) throw new Error('AI 未返回代码');
+      // 语言判断 (基于圈选内容/代码首行)
+      const head = (code.slice(0, 300) + '\n' + reply.slice(0, 300)).toLowerCase();
+      const ext = /#include|\.c\b|\bc语言/.test(head) ? 'c'
+        : /python|\.py\b|def |print\(/.test(head) ? 'py'
+        : /node|javascript|\.js\b|const |function /.test(head) ? 'js'
+        : /java\b|public class/.test(head) ? 'java'
+        : 'py';
+      const runner = ext === 'py' ? 'python3' : ext === 'js' ? 'node' : ext === 'c' ? 'gcc' : ext === 'java' ? 'java' : 'python3';
       // 保存代码文件 (PDF 同目录, 自增)
       const codePath = await saveCodeFile(hostPath, code, ext, fileService);
-      // 更新 annot interactions (code) → 保存 + 关 popover
+      // 更新 annot interactions (code, 记录 runner + install) → 保存 + 关 popover
       const annot: SidecarAnnot = {
         ...base,
         interactions: [
           ...(base.interactions || []).filter((i) => i.type !== 'code'),
-          { type: 'code', codePath, runner, createdAt: new Date().toISOString() },
+          { type: 'code', codePath, runner, install, createdAt: new Date().toISOString() },
         ],
       };
       handlePopoverSave(annot);
-      // 终端执行
+      // 终端执行: 先环境安装, 再运行代码
+      const cwd = (window as any).__APP_CONFIG__?.cwd || '';
+      const rel = codePath.replace(/^\/+/, '');
+      const runCmd = ext === 'c'
+        ? `gcc "${rel}" -o "${rel}.out" && "${rel}.out"`
+        : `${runner} "${rel}"`;
+      const cmd = `cd "${cwd}"${install ? ` && ${install}` : ''} && ${runCmd}`;
       window.dispatchEvent(new CustomEvent('animbook:pdf-annot-terminal', {
-        detail: { command: `${runner} ${codePath.replace(/^\//, '')}`.replace(/^\//, ''), source: hostPath },
+        detail: { command: cmd, source: hostPath },
       }));
     } catch (e: any) {
       notification.error({ message: `代码示例生成失败: ${e?.message || e}`, type: 'error', duration: 5 });
@@ -1204,6 +1235,80 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       setGenerating(false);
     }
   }, [annotPrompt, askWithCancel, hostPath, fileService, handlePopoverSave]);
+
+  /** AI 讲解/翻译/总结/考点: ask → 文本 → interaction → modal 展示 */
+  const handleTextTool = useCallback(async (base: SidecarAnnot, tool: 'explain' | 'translate' | 'summary' | 'analysis') => {
+    setGenerating(true);
+    const labels: Record<string, string> = { explain: 'AI 讲解', translate: '翻译', summary: '总结摘要', analysis: '考点分析' };
+    const prompts: Record<string, string> = {
+      explain: '请用通俗易懂的语言讲解这段内容 (面向初学者, 分点说明, 配合例子)。直接输出讲解文本。',
+      translate: '将这段内容翻译成目标语言: 原文是中文则译为简洁英文, 原文是英文则译为中文。直接输出译文。',
+      summary: '为这段内容生成要点总结 (5-8 条, 每条一句话, 结构清晰)。直接输出总结。',
+      analysis: '分析这段内容涉及的考试考点与易错点 (面向考试复习, 分点列出考点+易错点+提示)。直接输出分析。',
+    };
+    try {
+      const finalPrompt = `${annotPrompt(base)}\n\n${prompts[tool]}不要创建文件, 不要其他解释。`;
+      const text = await askWithCancel(finalPrompt);
+      if (!text || !text.trim()) throw new Error('AI 未返回内容');
+      const annot: SidecarAnnot = {
+        ...base,
+        interactions: [
+          ...(base.interactions || []).filter((i) => i.type !== tool),
+          { type: tool, text, createdAt: new Date().toISOString() },
+        ],
+      };
+      handlePopoverSave(annot);
+      window.dispatchEvent(new CustomEvent('animbook:pdf-annot-modal', {
+        detail: { title: labels[tool], content: text, source: hostPath },
+      }));
+    } catch (e: any) {
+      notification.error({ message: `${labels[tool]}失败: ${e?.message || e}`, type: 'error', duration: 5 });
+    } finally {
+      setGenerating(false);
+    }
+  }, [annotPrompt, askWithCancel, hostPath, handlePopoverSave]);
+
+  /** 生成笔记/练习/导图/闪卡/PPT: ask → markdown → 保存 .md → interaction → 打开 */
+  const handleMdTool = useCallback(async (base: SidecarAnnot, tool: 'note' | 'exercise' | 'mindmap' | 'flashcard' | 'ppt') => {
+    setGenerating(true);
+    const labels: Record<string, string> = { note: '学习笔记', exercise: '练习题', mindmap: '思维导图', flashcard: '记忆闪卡', ppt: 'PPT大纲' };
+    const prompts: Record<string, string> = {
+      note: '请根据圈选内容生成学习笔记 (markdown, 分节清晰, 含要点与例子, 紧扣内容)。直接输出 markdown。',
+      exercise: '请根据圈选内容生成练习题 (markdown, 含 5 道选择题 + 3 道简答题, 附答案与解析)。直接输出 markdown。',
+      mindmap: '请根据圈选内容生成思维导图 (markdown 大纲, 用 - 缩进层级表达树状结构, 主题明确)。直接输出 markdown。',
+      flashcard: '请根据圈选内容生成记忆闪卡 (markdown, 每张卡格式: **问题** + 换行 + 答案, 共 10 张, 覆盖核心概念)。直接输出 markdown。',
+      ppt: '请根据圈选内容生成 PPT 演示大纲 (markdown, 每页: ## 页标题 + 要点列表, 5-8 页, 逻辑递进)。直接输出 markdown。',
+    };
+    try {
+      const finalPrompt = `${annotPrompt(base)}\n\n${prompts[tool]}不要创建文件, 不要其他解释。`;
+      const md = await askWithCancel(finalPrompt);
+      if (!md || !md.trim()) throw new Error('AI 未返回内容');
+      const filePath = await saveGeneratedFile(hostPath, labels[tool], 'md', md, fileService);
+      const annot: SidecarAnnot = {
+        ...base,
+        interactions: [
+          ...(base.interactions || []).filter((i) => i.type !== tool),
+          { type: tool, filePath, createdAt: new Date().toISOString() },
+        ],
+      };
+      handlePopoverSave(annot);
+      window.dispatchEvent(new CustomEvent('animbook:pdf-annot-openfile', {
+        detail: { name: labels[tool], path: `file://${WORKSPACE_ROOT}${filePath}` },
+      }));
+    } catch (e: any) {
+      notification.error({ message: `${labels[tool]}生成失败: ${e?.message || e}`, type: 'error', duration: 5 });
+    } finally {
+      setGenerating(false);
+    }
+  }, [annotPrompt, askWithCancel, hostPath, fileService, handlePopoverSave]);
+
+  /** 统一工具入口 (工具栏按钮 → 对应能力) */
+  const handleRunTool = useCallback(async (tool: AnnotToolId, base: SidecarAnnot) => {
+    if (tool === 'demo') return handleGenerateDemo(base);
+    if (tool === 'code') return handleGenerateCode(base);
+    if (tool === 'explain' || tool === 'translate' || tool === 'summary' || tool === 'analysis') return handleTextTool(base, tool);
+    if (tool === 'note' || tool === 'exercise' || tool === 'mindmap' || tool === 'flashcard' || tool === 'ppt') return handleMdTool(base, tool);
+  }, [handleGenerateDemo, handleGenerateCode, handleTextTool, handleMdTool]);
 
 
   // ---------- 跳转到指定页 ----------
@@ -1323,8 +1428,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       <AnnotPopover
         state={popoverState}
         onCancel={handlePopoverCancel}
-        onGenerateDemo={handleGenerateDemo}
-        onGenerateCode={handleGenerateCode}
+        onTool={handleRunTool}
         onCancelGenerate={handleCancelGenerate}
         generating={generating}
         onColorChange={handleColorChange}
@@ -1554,7 +1658,7 @@ function createDemoOpenBtn(htmlPath: string): HTMLButtonElement {
 
 /* ========== 运行代码按钮 (rect 右下角, hover 显示) ==========
  * 点击派发 animbook:pdf-annot-terminal → 终端执行. */
-function createCodeRunBtn(codePath: string, runner: string): HTMLButtonElement {
+function createCodeRunBtn(codePath: string, runner: string, install: string): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.className = 'ab-pdf-code-run';
   btn.textContent = '运行代码';
@@ -1572,9 +1676,59 @@ function createCodeRunBtn(codePath: string, runner: string): HTMLButtonElement {
     ev.preventDefault();
     const rel = codePath.replace(/^\/+/, '');
     const cwd = (window as any).__APP_CONFIG__?.cwd || '';
-    const cmd = `cd "${cwd}" && ${runner} "${rel}"`;
+    const runCmd = /\.c$/.test(rel) ? `gcc "${rel}" -o "${rel}.out" && "${rel}.out"` : `${runner} "${rel}"`;
+    const cmd = `cd "${cwd}"${install ? ` && ${install}` : ''} && ${runCmd}`;
     window.dispatchEvent(new CustomEvent('animbook:pdf-annot-terminal', {
       detail: { command: cmd, source: '' },
+    }));
+  };
+  return btn;
+}
+
+/* ========== 文本展示按钮 (讲解/译文/摘要/考点, rect 右下角, hover 显示) ==========
+ * 点击派发 animbook:pdf-annot-modal → AnnotationActions 渲染 modal 展示文本. */
+function createTextModalBtn(label: string, text: string): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.className = 'ab-pdf-text-open';
+  btn.textContent = label;
+  btn.style.cssText = `
+    display: none;
+    font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
+    color: #fff; background: #8b5cf6; border: none; border-radius: 6px;
+    padding: 5px 10px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    pointer-events: auto; white-space: nowrap;
+  `;
+  btn.addEventListener('mouseenter', () => { btn.style.filter = 'brightness(1.1)'; });
+  btn.addEventListener('mouseleave', () => { btn.style.filter = 'none'; });
+  btn.onclick = (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    window.dispatchEvent(new CustomEvent('animbook:pdf-annot-modal', {
+      detail: { title: label, content: text },
+    }));
+  };
+  return btn;
+}
+
+/* ========== 打开文件按钮 (笔记/练习, rect 右下角, hover 显示) ========== */
+function createOpenFileBtn(label: string, filePath: string): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.className = 'ab-pdf-file-open';
+  btn.textContent = label;
+  btn.style.cssText = `
+    display: none;
+    font: 600 11px/1 -apple-system, "PingFang SC", sans-serif;
+    color: #fff; background: #e67e22; border: none; border-radius: 6px;
+    padding: 5px 10px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    pointer-events: auto; white-space: nowrap;
+  `;
+  btn.addEventListener('mouseenter', () => { btn.style.filter = 'brightness(1.1)'; });
+  btn.addEventListener('mouseleave', () => { btn.style.filter = 'none'; });
+  btn.onclick = (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    window.dispatchEvent(new CustomEvent('animbook:pdf-annot-openfile', {
+      detail: { name: label, path: `file://${WORKSPACE_ROOT}${filePath}` },
     }));
   };
   return btn;
