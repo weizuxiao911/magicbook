@@ -7,25 +7,27 @@
  *
  * 流程:
  *   0. Node 版本检查 (≥ 20, 用户唯一前置)
- *   1. 检查 web deps 完整性 (web/node_modules/.bin/webpack), 没装就 npm install
+ *   1. 检查 web deps 完整性 (web/node_modules/.bin/webpack + 依赖 hash marker), 没装/版本变更才 npm install
  *   2. 检查 opencode (PATH 全局 + web 本地兜底), 没装就 npm i -g opencode-ai
- *   3. 清掉端口残留 zombie (上轮跑剩的), 避免 listen EADDRINUSE
- *   4. 启 opencode (serve 模式, detached, 进程组 pgid=-pid)
- *   5. 注入 env (APP_BASE_URL / OPENCODE_PORT / WEB_PORT) → spawn npm run dev
- *   6. 4s 后自动打开浏览器 7788
- *   7. 父进程 SIGINT/SIGTERM → kill 两组子进程 (opencode + webpack)
+ *   3. 检查 chokidar-cli (PATH 全局, fs watcher PTY 依赖 — FSEvents 在 opencode pty 必炸, 轮询兜底), 没装就 npm i -g
+ *   4. 清掉端口残留 zombie (上轮跑剩的), 避免 listen EADDRINUSE
+ *   5. 启 opencode (serve 模式, detached, 进程组 pgid=-pid)
+ *   6. 注入 env (APP_BASE_URL / OPENCODE_PORT / WEB_PORT) → spawn npm run dev
+ *   7. 4s 后自动打开浏览器 7788
+ *   8. 父进程 SIGINT/SIGTERM → kill 两组子进程 (opencode + webpack)
  *
  * 命令行 flag (覆盖默认端口):
  *   --server-port <n>    opencode 端口 (默认 24096)
  *   --web-port <n>       webpack 端口 (默认 7788)
  *
  * 设计: 单文件入口, 跨平台, 不依赖额外进程编排器.
- *   用户唯一前置 = Node ≥ 20. 其他 (web deps / opencode) dev.js 自检自装.
- *   npx tarball 装 numas, web deps 走 web/ 一次性 install, opencode 走全局 npm i -g.
+ *   用户唯一前置 = Node ≥ 20. 其他 (web deps / opencode / chokidar-cli) dev.js 自检自装.
+ *   npx tarball 装 numas, web deps 走 web/ 一次性 install, opencode + chokidar-cli 走全局 npm i -g.
  *   进程树: dev.js → { opencode, webpack } (两个独立 detached 进程组).
  */
 
 const { spawn, spawnSync } = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -87,6 +89,7 @@ function whichCmd(cmd) {
  *  spdlog 是 deprecated + native 包, Python 3.14 没 distutils 必崩.
  *  opensumi 用 JS fallback logger, 主流程不受影响.
  *  global=true: 全局 install (npm i -g), 不传 cwd, 用于 opencode 这种工具
+ *  afterInstall: 装成功后回调 (写依赖 hash marker 等)
  */
 function ensureInstalled(label, ready, installCmd, installArgs, cwd, opts = {}) {
   if (ready()) {
@@ -115,16 +118,40 @@ function ensureInstalled(label, ready, installCmd, installArgs, cwd, opts = {}) 
     }
     process.exit(1);
   }
+  opts.afterInstall?.();
+}
+
+/** web deps 依赖声明 hash (package.json + package-lock.json) — 对比 node_modules/.numas-deps-hash,
+ *  一致则依赖与上次安装时完全相同, 跳过 install 直接跑 */
+const depsMarker = path.join(WEB, 'node_modules', '.numas-deps-hash');
+function depsHash() {
+  const h = crypto.createHash('sha256');
+  for (const f of ['package.json', 'package-lock.json']) {
+    try { h.update(fs.readFileSync(path.join(WEB, f))); } catch { h.update(f); }
+  }
+  return h.digest('hex');
+}
+function depsReady() {
+  if (!fs.existsSync(webWebpackBin)) return false;
+  if (!fs.existsSync(depsMarker)) {
+    // 老环境 (无 marker, 升级前装的): bin 已就绪 → 补写 marker 视为就绪, 避免升级后首次重复 install
+    try { fs.writeFileSync(depsMarker, depsHash()); } catch { /* */ }
+    return true;
+  }
+  try { return fs.readFileSync(depsMarker, 'utf8').trim() === depsHash(); } catch { return false; }
 }
 
 // 1. web deps (react + codeblitz + webpack)
+//   ready: webpack bin 存在 + 依赖 hash marker 一致 (package.json/lock 变更 → 重装)
 //   --ignore-scripts: 跳过 spdlog 等 native postinstall (Python 3.14 没 distutils 必崩)
+//   afterInstall: 写 marker, 下次同版本跳过 install 直接跑
 ensureInstalled(
   'web',
-  () => fs.existsSync(webWebpackBin),
+  depsReady,
   npmCmd,
   ['install', '--include=dev', '--prefer-offline', '--ignore-scripts'],
   WEB,
+  { afterInstall: () => { try { fs.writeFileSync(depsMarker, depsHash()); } catch { /* */ } } },
 );
 // 2. opencode (opencode-ai 提供二进制, 全局装到 PATH 让 opencode 命令随时可用)
 ensureInstalled(
@@ -140,6 +167,16 @@ if (!opencodeBin) {
   console.error('[numas] opencode 装上但找不到 binary, 检查 PATH 和 web/node_modules');
   process.exit(1);
 }
+// 3. chokidar-cli (全局, fs watcher PTY 依赖 — opencode pty 子进程 FSEvents 必炸 (EMFILE),
+//    watcher 走 chokidar-cli --polling 轮询; --ignore-scripts 跳过 fsevents prebuilt (polling 不需要))
+ensureInstalled(
+  'chokidar-cli',
+  () => whichCmd('chokidar'),
+  npmCmd,
+  ['install', '-g', '--prefer-offline', '--ignore-scripts', 'chokidar-cli'],
+  WEB,
+  { global: true },
+);
 
 // 3. 端口冲突清理 (上轮跑剩的 zombie, 避免 listen EADDRINUSE)
 //    macOS BSD lsof 必须用 `-ti :PORT` (带冒号), Linux 用 `-ti :PORT` 也 OK
