@@ -240,7 +240,7 @@ function openTypeLabel(item: IEditorOpenType): string {
 
 /** 打开方式 detail (第二行描述) */
 function openTypeDetail(item: IEditorOpenType): string {
-  if (item.type === 'code') return '使用内置文本编辑器打开';
+  if (item.type === 'code') return '内置';
   const cid = (item as any).componentId;
   return COMPONENT_DESCRIPTIONS[cid] || (cid ? `拓展组件: ${cid}` : '');
 }
