@@ -4,7 +4,7 @@ import ReactDOM from 'react-dom/client';
 import { App } from './App';
 // 根治: 接管 vsix customEditor (paper) webview 生命周期, 避免 React 18 dev mode StrictEffects 双调用导致
 //       ref 在 useEffect 异步 .then() 跑回来前被 unmount 设 null 导致的挂载跳过
-import { installCustomEditorPatch } from './dev/patch-custom-editor';
+import { installCustomEditorPatch } from './patches/patch-custom-editor';
 import './config/app';
 import './styles/overrides.css';
 import './styles/slots.css';

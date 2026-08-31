@@ -29,6 +29,7 @@ import {
 
 import { appBaseUrl, cwdHeader, effectiveCwd, secureUrl } from './env';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
+import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 
 // ---- shell-ops (合并自 service/shell-ops.ts) ----
 
@@ -260,15 +261,20 @@ export class RemoteTerminalService implements ITerminalNodeService {
   }
 
   /**
-   * 解析终端工作目录: launchConfig.cwd (OpenSumi 传入, codeblitz 虚拟路径 /workspace/xxx) → 宿主机绝对路径.
+   * 解析终端工作目录: launchConfig.cwd (OpenSumi 传入, codeblitz 根 {WORKSPACE_ROOT}/xxx) → 宿主机绝对路径.
    * 无 cwd (普通新建终端) → workspace 根 (getPtyCwd).
-   * 路径映射 (问题 3): codeblitz /workspace/rel ↔ 宿主机 effectiveCwd()/rel ↔ opencode x-opencode-directory (effectiveCwd)
+   * 路径映射 (问题 3): codeblitz {WORKSPACE_ROOT}/rel ↔ 宿主机 effectiveCwd()/rel ↔ opencode x-opencode-directory (effectiveCwd)
    */
   private async resolveLaunchCwd(launchConfig: IShellLaunchConfig): Promise<string> {
     const raw = launchConfig.cwd;
     if (raw) {
       const s = typeof raw === 'string' ? raw : ((raw as any).fsPath || String(raw)) as string;
-      const rel = s.replace(/^\/workspace(?:\/|$)/, '').replace(/^\/+/, '');
+      // strip codeblitz 根前缀 (真实路径模式 WORKSPACE_ROOT = cwd; 兼容旧虚拟 /workspace)
+      let rel = s;
+      if (rel === WORKSPACE_ROOT || rel === '/workspace') rel = '';
+      else if (rel.startsWith(`${WORKSPACE_ROOT}/`)) rel = rel.slice(WORKSPACE_ROOT.length + 1);
+      else if (rel.startsWith('/workspace/')) rel = rel.slice('/workspace/'.length);
+      else rel = rel.replace(/^\/+/, '');
       if (rel) {
         const base = effectiveCwd();
         if (base) return `${base.replace(/\/+$/, '')}/${rel}`;

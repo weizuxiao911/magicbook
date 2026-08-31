@@ -91,13 +91,14 @@ function resolveHostPath(resource: any): string {
     || '';
   if (cwd) {
     const cwdNorm = cwd.replace(/\/+$/, '');
-    // 仅 codeblitz 虚拟路径 (以 /workspace/ 开头, WORKSPACE_ROOT 硬编码) 才拼 cwd
+    // codeblitz 根路径 (WORKSPACE_ROOT 运行时取真实 cwd; 兼容旧虚拟 /workspace) 才拼 cwd
     // 绝对路径 (cbr/...) 直接用
-    if (p.startsWith('/workspace/') || p === '/workspace') {
-      return cwdNorm + p;
+    const wsRoot = (window as any).__APP_CONFIG__?.workspaceDir || '/workspace';
+    if (p === wsRoot || p.startsWith(`${wsRoot}/`)) {
+      return cwdNorm + p.slice(wsRoot.length);
     }
-    if (p.startsWith('file:///workspace/')) {
-      return cwdNorm + p.slice('file:///workspace/'.length - 1);
+    if (p.startsWith(`file://${wsRoot}`)) {
+      return cwdNorm + p.slice(`file://${wsRoot}`.length);
     }
   }
   return p;

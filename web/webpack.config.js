@@ -113,9 +113,11 @@ const config = {
             '@/': path_1.default.resolve(WEB, 'src') + path_1.default.sep,
             // 根治 vsix customEditor (paper) 刷新后激活 tab 不渲染: 用本地 patch 替换 opensumi 原版
             // web/src/patches/customEditors.js 加 useRef 标记, 避免 React 18 dev mode StrictEffects 双调用
-            // 配合 web/src/dev/patch-custom-editor.ts 接管 webview 生命周期
+            // 配合 web/src/patches/patch-custom-editor.ts 接管 webview 生命周期
             '@opensumi/ide-extension/lib/browser/vscode/contributes/customEditors.js': path_1.default.resolve(WEB, 'src/patches/customEditors.js'),
             '@opensumi/ide-extension/lib/browser/vscode/contributes/customEditors': path_1.default.resolve(WEB, 'src/patches/customEditors.js'),
+            // 注: WORKSPACE_ROOT patch 不走 alias (codeblitz 包内相对路径互引 alias 不生效),
+            //     由 postinstall 脚本就地改 node_modules (scripts/patch-codeblitz-constant.js)
         },
         fallback: {
             // 构建期 fallback: 供第三方库（opensumi/codeblitz）浏览器兼容, src 本身零 node 依赖
