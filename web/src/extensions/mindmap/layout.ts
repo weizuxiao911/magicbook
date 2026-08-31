@@ -26,13 +26,13 @@ const DEFAULT_SIZE: NodeSize = { width: 120, height: 32 };
 const KIND_SIZE: Record<MindmapNodeData['kind'], NodeSize> = {
   root: { width: 160, height: 56 },
   branch: { width: 120, height: 36 },
-  leaf: { width: 100, height: 28 },
-  summary: { width: 200, height: 44 },
+  leaf: { width: 200, height: 28 },
+  summary: { width: 220, height: 44 },
 };
 
 const H_GAP = 56; // 父子水平间距
 const V_GAP = 12; // 兄弟垂直间距
-const SUMMARY_GAP = 48; // summary 框与最右节点的间距
+const SUMMARY_GAP = 80; // summary 框与右侧最远子节点的水平距离 (留出 bracket 空间)
 const ROOT_GAP = 96; // 根到一级分支的水平距离
 
 export interface LaidOutNode {

@@ -58,6 +58,7 @@ import {
   type MindmapNodeData,
   type MindmapNodeKind,
 } from './nodes';
+import { BracketOverlay, type BracketSpec } from './BracketOverlay';
 import './MindmapView.css';
 
 export interface MindmapViewProps {
@@ -69,13 +70,15 @@ interface MindmapState {
   doc: MindmapDoc;
   /** 节点 id → 手动覆盖的位置 (拖动后); 缺省 = null = 走自动布局 */
   positions: Record<string, { x: number; y: number }>;
+  /** summary bracket 数据 */
+  brackets: { summaryId: string; color: MindmapColor; coveredIds: string[] }[];
 }
 
 const MindmapViewInner: React.FC<MindmapViewProps> = ({ resource }) => {
   const fileService = useInjectable<IFileServiceClient>(IFileServiceClient);
   const [state, setState] = useState<MindmapState>(() => {
     const initialDoc: MindmapDoc = { root: { id: 'n_initial', name: '加载中…', children: [] } };
-    return { doc: initialDoc, positions: {} };
+    return { doc: initialDoc, positions: {}, brackets: [] };
   });
   const [loaded, setLoaded] = useState(false);
   const [rfNodes, setRfNodes] = useState<Node<MindmapNodeData>[]>([]);
@@ -111,7 +114,7 @@ const MindmapViewInner: React.FC<MindmapViewProps> = ({ resource }) => {
           ? (content as any).toString('utf8')
           : String(content || '');
         initialContentRef.current = text;
-        setState({ doc: parseMindmapMarkdown(text), positions: {} });
+        setState({ doc: parseMindmapMarkdown(text), positions: {}, brackets: [] });
         setLoaded(true);
       } catch (e: any) {
         setError(`加载失败: ${e?.message || e}`);
@@ -169,8 +172,8 @@ const MindmapViewInner: React.FC<MindmapViewProps> = ({ resource }) => {
       switch (kind) {
         case 'root': return { width: 160, height: 56 };
         case 'branch': return { width: 120, height: 36 };
-        case 'leaf': return { width: 100, height: 28 };
-        case 'summary': return { width: 200, height: 44 };
+        case 'leaf': return { width: 200, height: 28 };
+        case 'summary': return { width: 220, height: 44 };
       }
     };
     let laid = layoutMindmap(input, getSize);
@@ -192,22 +195,35 @@ const MindmapViewInner: React.FC<MindmapViewProps> = ({ resource }) => {
       draggable: true,
       selectable: true,
     }));
-    const rfEdges: Edge[] = laid.edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      type: 'mindmapEdge',
-      data: e.data,
-      selectable: false,
+    // summary 节点的连接由 BracketOverlay 渲染 (SVG), 不用 react-flow edge
+    // 过滤掉 layout 中产生的 e_sum_xxx 边
+    const rfEdges: Edge[] = laid.edges
+      .filter((e) => !e.id.startsWith('e_sum_'))
+      .map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        type: 'mindmapEdge',
+        data: e.data,
+        selectable: false,
+      }));
+
+    // 2.7 bracket specs (由 BracketOverlay 消费)
+    const bracketSpecs = allSummaries.map((s) => ({
+      summaryId: s.id,
+      color: s.color as MindmapColor,
+      coveredIds: s.childIds,
     }));
-    return { rfNodes, rfEdges };
+
+    return { rfNodes, rfEdges, bracketSpecs };
   }, []);
 
   // 3) doc/positions 变化时重建
   useEffect(() => {
-    const { rfNodes: n, rfEdges: e } = buildRf(state.doc, state.positions);
+    const { rfNodes: n, rfEdges: e, bracketSpecs: b } = buildRf(state.doc, state.positions);
     setRfNodes(n);
     setRfEdges(e);
+    setState((s) => s.brackets === b ? s : { ...s, brackets: b });
     // 自动 fitView (仅首次)
     requestAnimationFrame(() => {
       try {
@@ -386,7 +402,7 @@ const MindmapViewInner: React.FC<MindmapViewProps> = ({ resource }) => {
 
   const addChild = (parentId: string) => {
     setState((s) => {
-      const next = { doc: { root: cloneNode(s.doc.root) }, positions: { ...s.positions } };
+      const next = { ...s, doc: { root: cloneNode(s.doc.root) } };
       const p = findById(next.doc.root, parentId);
       if (!p) return s;
       const newNode: MindmapNode = { id: newId(), name: '新节点', children: [], color: p.color };
@@ -399,7 +415,7 @@ const MindmapViewInner: React.FC<MindmapViewProps> = ({ resource }) => {
   const addSibling = (nodeId: string) => {
     if (nodeId === state.doc.root.id) return;
     setState((s) => {
-      const next = { doc: { root: cloneNode(s.doc.root) }, positions: { ...s.positions } };
+      const next = { ...s, doc: { root: cloneNode(s.doc.root) } };
       const p = findParent(next.doc.root, nodeId);
       if (!p) return s;
       const idx = p.children.findIndex((c) => c.id === nodeId);
@@ -414,7 +430,7 @@ const MindmapViewInner: React.FC<MindmapViewProps> = ({ resource }) => {
   const deleteNode = (nodeId: string) => {
     if (nodeId === state.doc.root.id) return;
     setState((s) => {
-      const next = { doc: { root: cloneNode(s.doc.root) }, positions: { ...s.positions } };
+      const next = { ...s, doc: { root: cloneNode(s.doc.root) } };
       const p = findParent(next.doc.root, nodeId);
       if (!p) return s;
       p.children = p.children.filter((c) => c.id !== nodeId);
@@ -426,7 +442,7 @@ const MindmapViewInner: React.FC<MindmapViewProps> = ({ resource }) => {
   const saveEdit = () => {
     if (!editing) return;
     setState((s) => {
-      const next = { doc: { root: cloneNode(s.doc.root) }, positions: { ...s.positions } };
+      const next = { ...s, doc: { root: cloneNode(s.doc.root) } };
       // 找节点 (可能在 root 或 summary)
       const n = findById(next.doc.root, editing.nodeId);
       if (n) {
@@ -444,7 +460,7 @@ const MindmapViewInner: React.FC<MindmapViewProps> = ({ resource }) => {
 
   const setNodeColor = (nodeId: string, color: MindmapColor) => {
     setState((s) => {
-      const next = { doc: { root: cloneNode(s.doc.root) }, positions: { ...s.positions } };
+      const next = { ...s, doc: { root: cloneNode(s.doc.root) } };
       const n = findById(next.doc.root, nodeId);
       if (n) n.color = color;
       return next;
@@ -486,7 +502,7 @@ const MindmapViewInner: React.FC<MindmapViewProps> = ({ resource }) => {
   // 12) 导入
   const onImport = () => {
     const doc = parseMindmapMarkdown(importText);
-    setState({ doc, positions: {} });
+    setState({ doc, positions: {}, brackets: [] });
     setImportOpen(false);
     setImportText('');
   };
@@ -541,6 +557,7 @@ const MindmapViewInner: React.FC<MindmapViewProps> = ({ resource }) => {
       >
         <Background gap={20} color="#334155" />
         <Controls showInteractive={false} />
+        <BracketOverlay brackets={state.brackets} />
       </ReactFlow>
 
       {/* 顶部工具栏 */}

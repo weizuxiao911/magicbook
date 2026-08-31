@@ -101,12 +101,16 @@ export const LeafNode: React.FC<NodeProps> = ({ data, selected }) => {
         fontSize: 12,
         fontWeight: 400,
         minWidth: 40,
+        maxWidth: 200,
         whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
         textAlign: 'left',
       }}
+      title={d.label}
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0, pointerEvents: 'none' }} />
-      {d.label}
+      <span style={{ display: 'inline-block', verticalAlign: 'middle' }}>{d.label}</span>
       {d.count != null && (
         <span
           style={{
@@ -153,17 +157,19 @@ export const SummaryNode: React.FC<NodeProps> = ({ data, selected }) => {
   return (
     <div
       style={{
-        padding: '8px 14px',
+        padding: '8px 12px',
         background: '#0f172a',
         color: '#cbd5e1',
         borderRadius: 6,
         fontSize: 12,
         fontWeight: 400,
         border: selected ? `2px solid ${color}` : `1px solid #475569`,
-        maxWidth: 180,
-        lineHeight: 1.4,
+        maxWidth: 220,
+        lineHeight: 1.5,
         textAlign: 'left',
         boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+        whiteSpace: 'normal',
+        wordBreak: 'break-word',
       }}
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0, pointerEvents: 'none' }} />
