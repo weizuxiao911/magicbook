@@ -13,6 +13,7 @@ import { WorkspaceModule } from '../extensions/workspace';
 import { FilePickerModule } from '../extensions/filepicker';
 import { PdfReaderModule } from '../extensions/pdf';
 import { HtmlModule } from '../extensions/html';
+import { MindmapModule } from '../extensions/mindmap';
 import { AgentModule } from '../service/agent';
 import { RegistryModule } from '../service/registry';
 import { FileSystemModule } from '../service/fs';
@@ -35,5 +36,6 @@ export function getBuiltinModules(_opts?: { vsixMetadata?: any[] }): any[] {
     FilePickerModule,
     PdfReaderModule,
     HtmlModule,
+    MindmapModule,
   ];
 }
