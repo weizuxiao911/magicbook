@@ -175,6 +175,7 @@
 | **macOS killPort 失效** | BSD lsof `-ti <port>` 必须带冒号 `-ti :port`, 老代码不带冒号在 macOS 无效 | lsof args 改 `lsof -ti :PORT` | `dev.js#killPort` line 142-150 |
 | **explorer 删除不同步宿主机** | codeblitz OverlayFS 对 readable-only 路径只写墓碑日志, 不走 writable.unlinkSync | `_syncSync` 拦截 `/.browserfs_deletedFiles.log`, 解析 `d<path>` 逐条 syncRm 宿主机 | `web/src/config/runtime.ts` (2026-09-01) |
 | **watcher 全灭 (FSEvents EMFILE)** | opencode bun-pty spawn 子进程 FSEvents 必炸 (fs.watch/chokidar 默认全废), 轮询可用 | watcher 改全局 `chokidar-cli --polling`; onclose 一律重试 | `web/src/service/fs.ts`; 部署前置 `npm i -g chokidar-cli` (2026-09-01) |
+| **dev.js 依赖版本判断** | ensureInstalled 只查 bin 存在性, package.json 增依赖不触发重装; chokidar-cli 也是新前置没自检 | depsReady 对比 package.json+lock hash 与 `node_modules/.numas-deps-hash` (老环境无 marker 自动补写不重装); ensureInstalled 加 afterInstall 回调; chokidar-cli 进 ensureInstalled 自装 | `dev.js` (2026-09-01) |
 
 ## 踩坑速查
 
