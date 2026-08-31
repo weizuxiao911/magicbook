@@ -177,6 +177,7 @@
 | **watcher 全灭 (FSEvents EMFILE)** | opencode bun-pty spawn 子进程 FSEvents 必炸 (fs.watch/chokidar 默认全废), chokidar --polling 有盲区 (空目录删除无事件) | watcher 改 **watchexec --only-emit-events** (Rust FSEvents 直连, pty 里全事件正常); onclose 一律重试 | `web/src/service/fs.ts`; 部署前置 watchexec (dev.js 按平台自装) (2026-09-01) |
 | **dev.js 依赖版本判断** | ensureInstalled 只查 bin 存在性, package.json 增依赖不触发重装; watchexec 也是新前置没自检 | depsReady 对比 package.json+lock hash 与 `node_modules/.numas-deps-hash` (老环境无 marker 自动补写不重装); ensureInstalled 加 afterInstall 回调; watchexec 进 ensureInstalled 按平台自装 (brew/apt/winget) | `dev.js` (2026-09-01) |
 | **宿主机删目录 explorer 残留 (hash 对比吞事件)** | readPathHash 读目录失败返回 null 与"已删除"无法区分, 目录创建/删除 hash 一致 → skip 吞事件 | 目录返回 `'dir'` 存在性标记 (DIR_HASH), 不与 null 混淆 | `web/src/service/fs.ts#readPathHash` (2026-09-01) |
+| **打开方式/配置默认编辑器失效** | OpenSumi file-tree 实现 3 个 bug: ①availableOpenTypes 取 currentEditorGroup (当前资源, 未打开文件时是 welcome → 列表混入欢迎且缺文本编辑器) ②二次弹窗被焦点丢失立即关 (blur→onFocusLost→hide) ③preferenceService.set 在 codeblitz 静默挂起 (providers 未就绪) | numas 重写命令: 按右键文件 resolveEditorComponent (文本编辑器兜底+过滤 welcome), 二次弹窗 hide+defer 修焦点, 默认编辑器 preference 超时降级 localStorage (resolver 高权重应用) | `web/src/extensions/opentype/` (2026-09-01) |
 
 ## 踩坑速查
 
