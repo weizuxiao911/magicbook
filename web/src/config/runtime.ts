@@ -38,6 +38,10 @@ function workspaceRel(path: string): string {
  *  日志本身还会被 syncWrite 同步到宿主机 (残留隐藏文件). */
 const OVERLAY_DELETION_LOG = '/.browserfs_deletedFiles.log';
 
+/** OverlayFS rename 桥日志 (postinstall patch OverlayFS.renameSync 写入):
+ *  readable-only 文件移动 → 行格式 `m<oldPath>><newPath>` → _syncSync 拦截 syncMove 宿主机原子 mv. */
+const OVERLAY_MOVE_LOG = '/.browserfs_moves.log';
+
 // ---- WriteSyncFS: InMemory 存储 + 写操作同步服务器 ----
 
 export class WriteSyncFS extends SyncKeyValueFileSystem {
@@ -102,6 +106,19 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
         const t = line.trim();
         if (!t.startsWith('d') || t.length < 2) continue;
         void this.syncRm(workspaceRel(t.slice(1)));
+      }
+      return;
+    }
+    if (rel === OVERLAY_MOVE_LOG) {
+      // OverlayFS rename 桥 (postinstall patch): readable-only 文件移动 → 宿主机原子 mv.
+      // 解析每行 `m<old>><new>` → 逐个 syncMove (FsPty mv, 不走 copy, 大文件不损坏).
+      // 只进 InMemory, 不写宿主机.
+      const log = data.toString('utf8');
+      for (const line of log.split('\n')) {
+        const t = line.trim();
+        const m = /^m(.+)>(.+)$/.exec(t);
+        if (!m || m[1] === m[2]) continue;
+        void this.syncMove(workspaceRel(m[1]), workspaceRel(m[2]));
       }
       return;
     }

@@ -115,10 +115,9 @@ export async function runAnnotAction(action: AnnotAction, handlers: AnnotHandler
  * 位置: PDF 同目录, IDE 相对路径 = `/.{basename}.annotation` (前导 dot 隐藏, 仍可读)
  * 路径转换: sidecarPath() in PdfReaderView.tsx
  *
- * 用途: 用户在 PDF 上画矩形圈选区域, 弹出 popover 设置颜色 + 交互能力, 持久化到 sidecar.
- *       跟内嵌 annotation 合并显示, 交互执行方式 (modal/tab/terminal) 暂搁置.
+ * 用途: 用户在 PDF 上画矩形圈选区域, 弹出 popover (AI ask 风格) 选择交互能力, 持久化到 sidecar.
  *
- * Schema v1 (2026-08-30 清理: 删 type 字段, 标注不再区分"高亮/便签", 全部统一为高亮矩形):
+ * Schema (version 1, 2026-09-01 扩展 interactions 加 demo 类型, 版本号不升):
  *   {
  *     "version": 1,
  *     "items": [
@@ -126,43 +125,33 @@ export async function runAnnotAction(action: AnnotAction, handlers: AnnotHandler
  *         "id": "uuid-xxx",             // 客户端生成, 幂等写
  *         "page": 1,                    // 1-based
  *         "rect": [x1, y1, x2, y2],     // PDF 原坐标 (左下原点)
- *         "selectedText": "...",        // 圈选文本快照 (后续用于备注默认填充)
- *         "note": "用户备注",            // 通用备注 (可空)
+ *         "selectedText": "...",        // 圈选文本 (rect 内 pdf.js textContent 提取)
  *         "color": [55, 148, 255],      // rgb 0-255, 默认蓝
  *         "createdAt": "2026-08-29T..." // ISO
- *         "interactions": [             // 交互能力 (可多选, 至少有 1 个才允许保存)
- *           { "type": "comment", "text": "..." },  // 批注 (hover 显示文本)
- *           { "type": "prompt",  "text": "..." }   // AI讲解 (hover 显示"AI讲解"按钮)
- *         ],
- *         "file": { "name": "...", "path": "..." } // 关联文件 (hover 显示"打开"按钮)
+ *         "interactions": [             // 交互能力列表 (可扩展, 每 type 最多 1 个)
+ *           { "type": "comment", "text": "..." },       // v1 遗留: 批注 (读盘保留, UI 暂不渲染)
+ *           { "type": "prompt",  "text": "..." },       // v1 遗留: AI讲解
+ *           { "type": "demo", "htmlPath": "...", "createdAt": "..." }  // v2: 动画演示产物
+ *         ]
  *       }
  *     ]
  *   }
  *
- * ===== 概念辨析 (重要) =====
- * "交互能力" (interactions/file 字段) = 标注**能做什么**: 批注 / AI讲解 / 打开文件.
- *   - 一期已实现: 批注(comment) / AI讲解(prompt) / 打开文件(file).
- *   - 这是用户**后续会拓展**的维度 (按需加新交互能力).
- *
- * "交互执行方式" (PdfAnnotMeta.action) = 点击标注时**怎么执行**行为: modal / tab / terminal.
- *   - 仅 PDF 内嵌 annotation 用, 通过 contents `[modal:title] 内容` 约定.
- *   - sidecar 一期暂不绑定执行方式, 仅记录"能力", hover 显示按钮.
- *
- * 历史: 早期 AI POC 时定义了 `type: highlight | note` 作为"标注类型", 实际只是视觉分类 (高亮 vs 便签图标),
- *   跟"交互能力"是不同维度但被混淆, 导致 popover 让用户选"高亮/便签" — 用户明确这是 AI 自作主张.
- *   2026-08-30 清理: 删 type 字段, 全部统一为高亮矩形 (color 决定颜色), 视觉不再分"高亮型/便签型".
- *
- * 兼容策略: 读盘时 strip `type` 字段 (忽略不入 in-memory), 写盘时不带 type 字段.
- *   现有 sidecar.json 里的 type 字段会在下次重写时自动消失 (无需迁移脚本).
+ * 概念: interactions 是"标注能做什么"的可扩展列表, 每种 type 有注册表 (交互渲染/动作),
+ *   本次先注册 demo (生成动画演示), 后续按需加新 type.
  */
 
-/** 单个交互能力: comment = 悬停显示批注文本; prompt = 悬停显示"AI讲解"按钮 */
+/** 单个交互能力: comment = 悬停显示批注文本; prompt = 悬停显示"AI讲解"按钮; demo = 动画演示产物 */
 export interface SidecarInteraction {
-  type: 'comment' | 'prompt';
-  text: string;
+  type: 'comment' | 'prompt' | 'demo';
+  text?: string;
+  /** demo: 生成的 html IDE 相对路径 */
+  htmlPath?: string;
+  /** demo: 生成时间 */
+  createdAt?: string;
 }
 
-/** 文件交互: 标注关联一个 workspace 文件, 悬停显示"打开{文件名}"按钮 */
+/** 文件交互 (v1 遗留: 读盘兼容保留, UI 暂不渲染) */
 export interface SidecarFileRef {
   /** 文件名 (显示用) */
   name: string;
@@ -209,19 +198,23 @@ export function parseSidecarAnnot(raw: any): SidecarAnnot | null {
     Number(rect[2]) || 0,
     Number(rect[3]) || 0,
   ];
-  // interactions: [{type:'comment'|'prompt', text}] (多选, 但每 type 最多 1 个 — 读盘归一化去重)
+  // interactions: [{type:'comment'|'prompt'|'demo', ...}] (每 type 最多 1 个 — 读盘归一化去重)
   let interactions: SidecarInteraction[] | undefined;
   if (Array.isArray(raw.interactions)) {
     const list: SidecarInteraction[] = [];
     const seen = new Set<string>();
     for (const it of raw.interactions) {
-      if (it && typeof it === 'object' &&
-          (it.type === 'comment' || it.type === 'prompt') &&
-          typeof it.text === 'string') {
-        // 每 type 最多 1 个: 脏数据 (多次生成残留) 按 type 去重, 优先保留第一个
+      if (!it || typeof it !== 'object') continue;
+      if (it.type === 'comment' || it.type === 'prompt') {
+        if (typeof it.text !== 'string') continue;
         if (seen.has(it.type)) continue;
         seen.add(it.type);
         list.push({ type: it.type, text: it.text });
+      } else if (it.type === 'demo') {
+        if (typeof it.htmlPath !== 'string' || !it.htmlPath) continue;
+        if (seen.has('demo')) continue;
+        seen.add('demo');
+        list.push({ type: 'demo', htmlPath: it.htmlPath, createdAt: String(it.createdAt || '') });
       }
     }
     if (list.length > 0) interactions = list;
