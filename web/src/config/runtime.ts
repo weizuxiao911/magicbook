@@ -6,7 +6,10 @@
  *   - 写: WriteSyncFS 继承 SyncKeyValueFileSystem (InMemory 存储, 完整目录树/stat/读语义),
  *         覆写 sync 版写方法: 本地落盘后 fire-and-forget 推服务器 (service/fs → opencode).
  *         所有 BrowserFS 写操作 (编辑器保存/PDF setContent/explorer 新建删除) 最终都汇聚到
- *         _syncSync / mkdirSync / unlinkSync / rmdirSync / renameSync → 天然全覆盖, 无需事件钩子
+ *         _syncSync / mkdirSync / unlinkSync / rmdirSync / renameSync.
+ *         注: unlink/rmdir/rename 源 有一半不走 unlinkSync — OverlayFS 对"只存在于 readable
+ *         (宿主机)"的路径只写墓碑到 /.browserfs_deletedFiles.log, 不调 writable.unlinkSync.
+ *         故 _syncSync 里拦截墓碑日志: 解析 d<path> 行同步删宿主机 (见下), 才算真正全覆盖.
  *   - 读优先 writable (InMemory 本地改过), 未改 fallback readable (DynamicRequest → 服务器)
  *
  * 为什么继承 InMemory 语义而不是纯透传: OverlayFS.createParentDirectoriesAsync 会 stat writable
@@ -28,6 +31,12 @@ function workspaceRel(path: string): string {
   const p = path.startsWith(WORKSPACE_ROOT) ? path.slice(WORKSPACE_ROOT.length) : path;
   return p || '/';
 }
+
+/** codeblitz OverlayFS 内部墓碑日志 (writable 根下, OverlayFS.js deletionLogPath):
+ *  删除"只存在于 readable(宿主机)"的文件时, OverlayFS 不调 writable.unlinkSync,
+ *  只追加一行 `d<bfsPath>` (deletePath → updateLog). 必须拦截: 否则宿主机文件不删,
+ *  日志本身还会被 syncWrite 同步到宿主机 (残留隐藏文件). */
+const OVERLAY_DELETION_LOG = '/.browserfs_deletedFiles.log';
 
 // ---- WriteSyncFS: InMemory 存储 + 写操作同步服务器 ----
 
@@ -76,7 +85,20 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
   /** 写文件 (最终汇聚点: open+write+close / writeFile / appendFile 都到这) */
   override _syncSync(p: string, data: Buffer, stats: Stats): void {
     super._syncSync(p, data, stats);
-    void this.syncWrite(workspaceRel(p), data);
+    const rel = workspaceRel(p);
+    if (rel === OVERLAY_DELETION_LOG) {
+      // OverlayFS 墓碑日志: 只进 InMemory (保留浏览器内墓碑语义), 不写宿主机.
+      // 解析每行 `d<path>` → 逐个同步删宿主机 (fs.rmSync recursive+force, 幂等).
+      // 覆盖: 文件删除 / 目录删除 / 重命名源文件 三类 readable-only 路径.
+      const log = data.toString('utf8');
+      for (const line of log.split('\n')) {
+        const t = line.trim();
+        if (!t.startsWith('d') || t.length < 2) continue;
+        void this.syncRm(workspaceRel(t.slice(1)));
+      }
+      return;
+    }
+    void this.syncWrite(rel, data);
   }
 
   override mkdirSync(p: string, mode: number): void {

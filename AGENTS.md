@@ -173,6 +173,8 @@
 | **Node 版本支持** | 用户唯一前置条件 = Node ≥ 20 | 启动顶部 `checkNodeVersion()`, < 20 报错退出给安装链接 | `dev.js` line 38-47 |
 | **opencode 装全局** | 用户要求 `npm i -g opencode-ai` | `ensureInstalled` 加 `global=true` 选项, npm i -g 安装 + PATH 全局优先解析 | `dev.js` line 87-133 |
 | **macOS killPort 失效** | BSD lsof `-ti <port>` 必须带冒号 `-ti :port`, 老代码不带冒号在 macOS 无效 | lsof args 改 `lsof -ti :PORT` | `dev.js#killPort` line 142-150 |
+| **explorer 删除不同步宿主机** | codeblitz OverlayFS 对 readable-only 路径只写墓碑日志, 不走 writable.unlinkSync | `_syncSync` 拦截 `/.browserfs_deletedFiles.log`, 解析 `d<path>` 逐条 syncRm 宿主机 | `web/src/config/runtime.ts` (2026-09-01) |
+| **watcher 全灭 (FSEvents EMFILE)** | opencode bun-pty spawn 子进程 FSEvents 必炸 (fs.watch/chokidar 默认全废), 轮询可用 | watcher 改全局 `chokidar-cli --polling`; onclose 一律重试 | `web/src/service/fs.ts`; 部署前置 `npm i -g chokidar-cli` (2026-09-01) |
 
 ## 踩坑速查
 
@@ -218,6 +220,8 @@
 | readFile 报 Buffer.from undefined | globalThis.Buffer 不存在 | `import { Buffer } from 'buffer'` |
 | explorer「无打开的文件夹」 | 挂载时 fsUrl 未就绪 | workspaceDir='/' + RemoteFS 根目录 stat 兜底 |
 | stat 输出 `directory\|11808\|...` | 早期 stat 走错路径返回 | 重构后 meta 走 FsPty 跑平台 stat |
+| **explorer 删除宿主机文件不删 + 宿主机多出 `.browserfs_deletedFiles.log`** | codeblitz OverlayFS 对"只存在于 readable(宿主机)"的路径**不调 writable.unlinkSync**, 只写墓碑到 `/.browserfs_deletedFiles.log`; WriteSyncFS 的 unlinkSync 漏斗收不到, 而墓碑日志却被 syncWrite 同步到宿主机 | `WriteSyncFS._syncSync` 拦截墓碑日志: 解析 `d<path>` 行逐个 syncRm 宿主机, 日志只进 InMemory 不写宿主机 (runtime.ts, 2026-09-01) |
+| **宿主机建文件不实时同步 explorer (watcher 死)** | opencode (bun-pty 0.4.8) spawn 的子进程里 FSEvents 全废: `fs.watch` (recursive/非递归) 必异步 EMFILE, chokidar 默认 fsevents 静默死; **usePolling / fs.watchFile / 手写 readdir 轮询正常** (2026-09-01 全矩阵实测); 且旧 onclose 把 close 1000 当"主动停"不重试 | watcher 改全局 **chokidar-cli --polling** (`npm i -g chokidar-cli` 是部署前置, 不依赖 web/ 本地依赖); onclose 非 watcherStopped 一律重试; chokidar-cli 事件 `event:path` 行解析 (勿加 --silent, 会连事件一起关) |
 
 ### registry / vsix (:7790, HTTPS, kt-ext)
 
@@ -242,6 +246,7 @@ git clone https://github.com/weizuxiao911/numas
 cd numas && npm install
 cd cli && npm install && cd ..
 cd client && npm install && cd ..
+npm i -g chokidar-cli               # 部署前置: watcher PTY 依赖 (FSEvents 在 opencode pty 必炸, 轮询兜底)
 npm run dev
 
 # 验证
