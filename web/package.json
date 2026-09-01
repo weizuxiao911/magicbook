@@ -1,5 +1,5 @@
 {
-  "name": "numas-web",
+  "name": "web",
   "version": "0.1.0",
   "private": true,
   "description": "Numas web — opensumi/codeblitz 交互层（纯浏览器）",

@@ -58,7 +58,7 @@ const handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {
 
   const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
   if (urlPath === '/' || urlPath === '/health') {
-    send(res, 200, 'numas-registry ok\n');
+    send(res, 200, 'registry ok\n');
     return;
   }
 
