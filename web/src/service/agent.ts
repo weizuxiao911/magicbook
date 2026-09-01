@@ -103,12 +103,14 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
       defaultShell: defaultShell || '/bin/bash',
       healthy,
     };
-    // 2.4 hostCwd 兜底场景 (无 APP_CWD): WORKSPACE_ROOT (constant.js patch) 模块加载时可能还是
-    //    /workspace (initRuntime 异步注入晚于模块求值) — 首次探测到 hostCwd 后写 sessionStorage
-    //    标记并 reload 一次, 让 codeblitz 用真实 cwd 重建 (BrowserFS 挂载/URI 全链路).
+    // 2.4 hostCwd 兜底场景 (仅在没设 APP_CWD 时): WORKSPACE_ROOT (constant.js patch) 模块加载时
+    //    可能还是 /workspace (initRuntime 异步注入晚于模块求值) — 首次探测到 hostCwd 后写
+    //    sessionStorage 标记并 reload 一次, 让 codeblitz 用真实 cwd 重建 (BrowserFS 挂载/URI 全链路).
     //    写 sessionStorage 而非 localStorage: APP_CWD 语义是用户选择, hostCwd 只是兜底;
     //    reload 后该标记仍在 → constant.js 读到真实路径 → 二次 initRuntime 不再 reload.
-    if (hostCwd && cwd !== hostCwd && sessionStorage.getItem('APP_CWD_FALLBACK') !== hostCwd) {
+    // 关键: 已在 setCwd 写过 APP_CWD 后, 不要因为 cwd (新值) 跟 hostCwd 不同而再 reload — 那是用户主动选择,
+    //       二次 reload 表现为 "切换工作目录闪 2 次".
+    if (!cwd && hostCwd && sessionStorage.getItem('APP_CWD_FALLBACK') !== hostCwd) {
       try {
         sessionStorage.setItem('APP_CWD_FALLBACK', hostCwd);
         console.log('[agent] hostCwd 注入 (无 APP_CWD), reload 重建 codeblitz 根:', hostCwd);
