@@ -21,7 +21,7 @@ import {
   isAiReady,
 } from '@/extensions/chat/commands/api';
 import { modelPrefs } from '@/extensions/chat/commands/modelPrefs';
-import { getCwd, subscribeCwd, requestShowPicker } from '@/service/env';
+import { getCwd, subscribeCwd } from '@/service/env';
 import { secureUrl } from '@/service/env';
 import { PartRenderer } from './parts/PartRenderer';
 import { PermissionModal } from './parts/PermissionModal';
@@ -183,8 +183,8 @@ export const Chat: React.FC = () => {
     return rt ? { userId: rt.userId, tenantId: rt.tenantId, deployEnv: rt.deployEnv } : null;
   }, []);
 
-  // chat 输入框底部的工作目录选择器按钮 (全局唯一切换入口, 顶栏 + explorer 都已去掉)
-  // 点击直接派 workspace:request-show → WorkspacePicker 居中模态 (与 model/agent picker 风格一致)
+  // 工作目录状态 (供上传附件按钮 + @提及等使用, 切入口已上移到顶栏 logo 旁的全局按钮,
+  // 通过 service/env.requestShowPicker() 派 workspace:request-show → WorkspacePicker 居中模态)
   const [wsCwd, setWsCwd] = useState<string>(() => getCwd());
   useEffect(() => {
     const refresh = () => setWsCwd(getCwd());
@@ -198,10 +198,6 @@ export const Chat: React.FC = () => {
       window.removeEventListener('runtime-ready', refresh);
     };
   }, []);
-  const wsName = useMemo(() => {
-    if (!wsCwd) return '选择工作目录';
-    return wsCwd.split('/').filter(Boolean).pop() || wsCwd;
-  }, [wsCwd]);
 
   // chat 可用性: 只看 opencode SDK 是否已初始化 (agent runtime 派发 runtime-ready 后
   // 把 client 挂到 window.__APP_OPENCODE__). 不依赖 APP_CWD —— 选了工作目录只是影响
@@ -1696,20 +1692,6 @@ export const Chat: React.FC = () => {
                   </svg>
                 </button>
               )}
-
-              {/* 2. 工作目录选择器: 全局唯一切换入口, 点击直接开居中模态 (workspace:request-show → WorkspacePicker) */}
-              <button
-                type="button"
-                className="chat__bar-btn chat__bar-text"
-                title={wsCwd || '未选择工作目录'}
-                onClick={() => requestShowPicker()}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                </svg>
-                <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{wsName}</span>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
 
               {/* 3. Model 选择器 (居中模态, 跟 ModelPicker 风格) — 保持原位 */}
 
