@@ -136,13 +136,80 @@ export const AnnotationActions: React.FC = () => {
           <button className="ab-annot-modal__close" onClick={() => setModal(null)}>×</button>
         </div>
         <div className="ab-annot-modal__body">
-          <pre className="ab-annot-modal__content">{modal.content}</pre>
+          <div className="ab-annot-modal__content ab-annot-modal__content--md"
+            dangerouslySetInnerHTML={{ __html: renderLightMarkdown(modal.content) }} />
           {modal.source && <div className="ab-annot-modal__source">{modal.source}</div>}
         </div>
       </div>
     </div>
   );
 };
+
+/**
+ * 轻量 markdown 渲染 (避免依赖 marked — 其全局实例被 chat 的 shiki 插件改成 async).
+ * 支持: 标题 / 粗体 / 列表 / 代码块 / 引用 / 换行. 输入先 HTML 转义, 防注入.
+ */
+function renderLightMarkdown(text: string): string {
+  const esc = (s: string) => s
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const inline = (s: string) => esc(s)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+  const lines = (text || '').split('\n');
+  const out: string[] = [];
+  let i = 0;
+  const closeList = (list: string[] | null) => { if (list) { out.push(`</${list[0]}>`); } };
+  let curList: string[] | null = null;
+  while (i < lines.length) {
+    const line = lines[i];
+    const codeMatch = line.match(/^```(\w*)\s*$/);
+    if (codeMatch) {
+      closeList(curList); curList = null;
+      const buf: string[] = [];
+      i++;
+      while (i < lines.length && !/^```\s*$/.test(lines[i])) { buf.push(esc(lines[i])); i++; }
+      out.push(`<pre><code>${buf.join('\n')}</code></pre>`);
+      i++;
+      continue;
+    }
+    const h = line.match(/^(#{1,4})\s+(.*)$/);
+    if (h) {
+      closeList(curList); curList = null;
+      const lv = Math.min(h[1].length, 4);
+      out.push(`<h${lv}>${inline(h[2])}</h${lv}>`);
+      i++;
+      continue;
+    }
+    const quote = line.match(/^>\s?(.*)$/);
+    if (quote) {
+      closeList(curList); curList = null;
+      out.push(`<blockquote>${inline(quote[1])}</blockquote>`);
+      i++;
+      continue;
+    }
+    const li = line.match(/^[-*]\s+(.*)$/);
+    if (li) {
+      if (!curList) { curList = ['ul']; out.push('<ul>'); }
+      out.push(`<li>${inline(li[1])}</li>`);
+      i++;
+      continue;
+    }
+    const li2 = line.match(/^\d+\.\s+(.*)$/);
+    if (li2) {
+      if (!curList) { curList = ['ol']; out.push('<ol>'); }
+      out.push(`<li>${inline(li2[1])}</li>`);
+      i++;
+      continue;
+    }
+    if (line.trim() === '') { closeList(curList); curList = null; i++; continue; }
+    closeList(curList); curList = null;
+    out.push(`<p>${inline(line)}</p>`);
+    i++;
+  }
+  closeList(curList);
+  return out.join('');
+}
 
 const MODAL_STYLES = `
 .ab-annot-modal-overlay {
@@ -184,11 +251,56 @@ const MODAL_STYLES = `
 }
 .ab-annot-modal__content {
   margin: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px; line-height: 1.6;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  font-size: 13px; line-height: 1.7;
   color: #e5e7eb;
-  white-space: pre-wrap; word-break: break-word;
+  word-break: break-word;
 }
+.ab-annot-modal__content--md h1, .ab-annot-modal__content--md h2, .ab-annot-modal__content--md h3 {
+  color: #f3f4f6;
+  margin: 12px 0 6px;
+  line-height: 1.35;
+}
+.ab-annot-modal__content--md h1 { font-size: 16px; }
+.ab-annot-modal__content--md h2 { font-size: 15px; }
+.ab-annot-modal__content--md h3 { font-size: 14px; }
+.ab-annot-modal__content--md p { margin: 6px 0; }
+.ab-annot-modal__content--md ul, .ab-annot-modal__content--md ol {
+  margin: 6px 0; padding-left: 22px;
+}
+.ab-annot-modal__content--md li { margin: 3px 0; }
+.ab-annot-modal__content--md strong { color: #f3f4f6; }
+.ab-annot-modal__content--md code {
+  background: rgba(128,128,128,0.18);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.ab-annot-modal__content--md pre {
+  background: rgba(0,0,0,0.35);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.ab-annot-modal__content--md pre code { background: transparent; padding: 0; }
+.ab-annot-modal__content--md blockquote {
+  border-left: 3px solid rgba(55,148,255,0.5);
+  margin: 8px 0;
+  padding: 4px 12px;
+  color: #b6bcc6;
+  background: rgba(55,148,255,0.06);
+  border-radius: 0 6px 6px 0;
+}
+.ab-annot-modal__content--md table {
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+.ab-annot-modal__content--md th, .ab-annot-modal__content--md td {
+  border: 1px solid rgba(128,128,128,0.3);
+  padding: 4px 10px;
+}
+.ab-annot-modal__content--md th { background: rgba(128,128,128,0.15); }
 .ab-annot-modal__source {
   margin-top: 12px;
   font-size: 11px; color: #6b7280;

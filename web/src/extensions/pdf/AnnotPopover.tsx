@@ -34,8 +34,10 @@ export type AnnotToolId = 'demo' | 'code' | 'explain' | 'translate' | 'summary' 
 
 export interface AnnotPopoverProps {
   state: PopoverState | null;
-  /** ✕: 删除标注 + 关闭 */
+  /** ✕: 非生成中删除标注 + 关闭; 生成中仅关闭 (标注保留, 生成后台继续) */
   onCancel: () => void;
+  /** 轻量关闭: 关闭工具栏不删标注 (点击外部 / Esc / 生成中 ✕) */
+  onClose: () => void;
   /** 执行交互能力工具 (直接动作, 宿主执行 ask → 产物 → sidecar) */
   onTool: (tool: AnnotToolId, base: SidecarAnnot) => Promise<void>;
   /** 取消当前生成 */
@@ -78,6 +80,7 @@ type Panel = 'main' | 'color';
 export const AnnotPopover: React.FC<AnnotPopoverProps> = ({
   state,
   onCancel,
+  onClose,
   onTool,
   onCancelGenerate,
   generating,
@@ -97,20 +100,32 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({
     }
   }, [state]);
 
-  // Esc: 颜色面板返回工具栏; 工具栏取消整个 (生成中不响应)
+  // Esc: 颜色面板返回工具栏; 工具栏轻量关闭 (标注保留)
   useEffect(() => {
     if (!state) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !generating) {
+      if (e.key === 'Escape') {
         e.stopPropagation();
         e.preventDefault();
         if (panel !== 'main') setPanel('main');
-        else onCancel();
+        else onClose();
       }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [state, generating, panel, onCancel]);
+  }, [state, panel, onClose]);
+
+  // 点击外部: 轻量关闭 (标注保留), 生成中也可关 (生成后台继续, 完成有通知)
+  useEffect(() => {
+    if (!state) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.closest('.ab-annot-popover') || t.closest('.ab-pdf-annot')) return;
+      onClose();
+    };
+    document.addEventListener('mousedown', onDocMouseDown, true);
+    return () => document.removeEventListener('mousedown', onDocMouseDown, true);
+  }, [state, onClose]);
 
   // 定位: 紧贴标注位置 (锚点 = 标注右上角 state.x/y), 按可视区上下左右 4 向自适应.
   const W = 300;
@@ -197,7 +212,7 @@ export const AnnotPopover: React.FC<AnnotPopoverProps> = ({
               颜色
             </button>
             <span className="ab-annot-popover__tbtn-sep" />
-            <button type="button" className="ab-annot-popover__tbtn ab-annot-popover__tbtn--cancel" onClick={onCancel} disabled={generating}>
+            <button type="button" className="ab-annot-popover__tbtn ab-annot-popover__tbtn--cancel" onClick={generating ? onClose : onCancel} title={generating ? '关闭 (生成继续)' : '删除标注'}>
               ✕
             </button>
           </div>
@@ -248,85 +263,92 @@ const POPOVER_STYLES = `
 .ab-annot-popover {
   position: fixed;
   z-index: 10001;
-  background: var(--editorWidget-background, var(--vscode-editorWidget-background, #2d2d30));
-  border: 1px solid var(--panel-border, var(--vscode-panel-border, rgba(128,128,128,0.25)));
-  border-radius: 10px;
+  background: var(--editorWidget-background, var(--vscode-editorWidget-background, rgba(30,30,36,0.96)));
+  border: 1px solid var(--panel-border, var(--vscode-panel-border, rgba(128,128,128,0.28)));
+  border-radius: 12px;
   box-shadow:
-    0 1px 2px rgba(0,0,0,0.06),
-    0 4px 12px rgba(0,0,0,0.12),
-    0 16px 40px rgba(0,0,0,0.20);
-  padding: 8px;
+    0 2px 6px rgba(0,0,0,0.10),
+    0 8px 24px rgba(0,0,0,0.18),
+    0 24px 64px rgba(0,0,0,0.28);
+  padding: 6px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
   font-size: 12px;
   color: var(--editor-foreground, var(--vscode-editor-foreground, #e5e7eb));
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  gap: 5px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 .ab-annot-popover__toolbar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
-  padding: 2px;
-  background: rgba(128,128,128,0.08);
-  border-radius: 8px;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(128,128,128,0.10);
+  border-radius: 9px;
 }
 .ab-annot-popover__tbtn {
-  height: 26px;
-  padding: 0 10px;
+  height: 28px;
+  padding: 0 11px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
-  color: inherit;
+  color: var(--editor-foreground, var(--vscode-editor-foreground, #d8dbe0));
   cursor: pointer;
-  transition: background 0.12s, filter 0.12s;
+  transition: background 0.14s, color 0.14s, transform 0.08s;
   font-size: 12px;
   white-space: nowrap;
 }
 .ab-annot-popover__tbtn:hover:not(:disabled) {
-  background: rgba(128,128,128,0.25);
+  background: rgba(255,255,255,0.14);
+  color: #fff;
+}
+.ab-annot-popover__tbtn:active:not(:disabled) {
+  transform: scale(0.96);
 }
 .ab-annot-popover__tbtn:disabled {
-  opacity: 0.5;
+  opacity: 0.55;
   cursor: not-allowed;
 }
 .ab-annot-popover__tbtn--cancel:hover:not(:disabled) {
-  background: rgba(220,60,60,0.25);
-  color: #f87171;
+  background: rgba(220,60,60,0.22);
+  color: #ff8f8f;
 }
 .ab-annot-popover__tbtn--busy {
-  background: rgba(220,60,60,0.2);
-  color: #f87171;
+  background: rgba(55,148,255,0.18);
+  color: #7db8ff;
+  font-weight: 600;
 }
 .ab-annot-popover__tbtn--busy:hover {
-  background: rgba(220,60,60,0.35);
+  background: rgba(55,148,255,0.28);
 }
 .ab-annot-popover__tbtn-sep {
   width: 1px;
-  height: 16px;
-  background: rgba(128,128,128,0.3);
-  margin: 0 2px;
+  height: 18px;
+  background: rgba(128,128,128,0.35);
+  margin: 0 3px;
 }
 .ab-annot-popover__busy {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   font-size: 11px;
   color: var(--descriptionForeground, var(--vscode-descriptionForeground, #9ca3af));
+  padding: 2px 4px;
 }
 .ab-annot-popover__spinner {
-  width: 11px;
-  height: 11px;
-  border: 2px solid rgba(128,128,128,0.3);
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(128,128,128,0.25);
   border-top-color: var(--textLink-foreground, var(--vscode-textLink-foreground, #3794ff));
   border-radius: 50%;
-  animation: ab-annot-spin 0.8s linear infinite;
+  animation: ab-annot-spin 0.7s linear infinite;
+  flex-shrink: 0;
 }
 @keyframes ab-annot-spin {
   to { transform: rotate(360deg); }

@@ -589,6 +589,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
           }
           if (!annot) return;
           const r = el.getBoundingClientRect();
+          currentAnnotIdRef.current = annot.id;
+          setGenerating(false);
           setPopoverState({
             x: r.right,
             y: r.top,
@@ -972,6 +974,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         createdAt: new Date().toISOString(),
       };
       handlePopoverSave(newAnnot);
+      currentAnnotIdRef.current = newAnnot.id;
+      setGenerating(false);  // 新标注复位 busy (旧生成后台继续, 完成有通知)
       setPopoverState({
         x: Math.max(e.clientX, startX),
         y: Math.min(startY, e.clientY),
@@ -1041,7 +1045,17 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     setSidecarTick((t) => t + 1);
     setDirty(false);
     if (opts?.keepOpen) return;
-    // 4. 关闭 popover + 移除选择矩形蒙层
+    // 4. 仅当 popover 是当前标注 (用户未切到新标注) 才关闭; 后台完成的旧生成不打扰新标注
+    if (currentAnnotIdRef.current === annot.id) {
+      setPopoverState(null);
+      popoverOpenRef.current = false;
+      const old = document.querySelector('.ab-pdf-selection-rect[data-active="1"]');
+      if (old) old.remove();
+    }
+  }, []);
+
+  /** 轻量关闭: 关工具栏不删标注 (点击外部/Esc/生成中✕); 生成后台继续, 完成有通知 */
+  const handlePopoverClose = useCallback(() => {
     setPopoverState(null);
     popoverOpenRef.current = false;
     const old = document.querySelector('.ab-pdf-selection-rect[data-active="1"]');
@@ -1069,6 +1083,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
   // ---------- 生成中状态 (动画/代码) + 取消 ----------
   const [generating, setGenerating] = useState(false);
   const generateReqRef = useRef<{ cancel: () => Promise<void> } | null>(null);
+  /** 当前 popover 对应的标注 id (生成完成只关自己的 popover, 不影响新标注) */
+  const currentAnnotIdRef = useRef<string>('');
 
   /** 取消当前生成 (ask cancel) */
   const handleCancelGenerate = useCallback(() => {
@@ -1170,6 +1186,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         ],
       };
       handlePopoverSave(annot);
+      notification.info({ message: `动画演示已生成: ${htmlPath.split('/').pop()}`, type: 'info', duration: 4 });
     } catch (e: any) {
       notification.error({ message: `生成动画失败: ${e?.message || e}`, type: 'error', duration: 5 });
     } finally {
@@ -1219,6 +1236,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         ],
       };
       handlePopoverSave(annot);
+      notification.info({ message: `代码示例已生成并在终端执行: ${codePath.split('/').pop()}`, type: 'info', duration: 4 });
       // 终端执行: 先环境安装, 再运行代码
       const cwd = (window as any).__APP_CONFIG__?.cwd || '';
       const rel = codePath.replace(/^\/+/, '');
@@ -1258,6 +1276,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         ],
       };
       handlePopoverSave(annot);
+      notification.info({ message: `${labels[tool]}已生成`, type: 'info', duration: 4 });
       window.dispatchEvent(new CustomEvent('animbook:pdf-annot-modal', {
         detail: { title: labels[tool], content: text, source: hostPath },
       }));
@@ -1292,6 +1311,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
         ],
       };
       handlePopoverSave(annot);
+      notification.info({ message: `${labels[tool]}已生成: ${filePath.split('/').pop()}`, type: 'info', duration: 4 });
       window.dispatchEvent(new CustomEvent('animbook:pdf-annot-openfile', {
         detail: { name: labels[tool], path: `file://${WORKSPACE_ROOT}${filePath}` },
       }));
@@ -1428,6 +1448,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       <AnnotPopover
         state={popoverState}
         onCancel={handlePopoverCancel}
+        onClose={handlePopoverClose}
         onTool={handleRunTool}
         onCancelGenerate={handleCancelGenerate}
         generating={generating}
