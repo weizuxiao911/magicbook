@@ -51,7 +51,7 @@ const handler = (req, res) => {
     }
     const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
     if (urlPath === '/' || urlPath === '/health') {
-        send(res, 200, 'numas-registry ok\n');
+        send(res, 200, 'registry ok\n');
         return;
     }
     const filePath = path.normalize(path.join(DIST_DIR, urlPath));
