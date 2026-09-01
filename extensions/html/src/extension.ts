@@ -9,7 +9,7 @@ export const HTML_VIEW_TYPE = 'htmlViewer'
  *   1. 双击 .html/.htm → 命中 customEditor (viewType=htmlViewer) → resolveCustomTextEditor
  *   2. extension 把 document 文本塞进 webview (通过 postMessage, 不直接拼 webview.html 避免大字符串反复序列化)
  *   3. webview 用 iframe srcDoc 渲染 HTML (无浮动工具栏, 操作走 tab 菜单栏)
- *   4. tab 菜单栏按钮: [编辑] → showTextDocument 切到 vscode 编辑器; [刷新] → 重推内容
+ *   4. tab 菜单栏按钮: [编辑] → editor.opentype code 同 tab 切到 monaco (toggle); [刷新] → 重推内容
  *   5. onDidChangeTextDocument 监听编辑结果, 实时推回 webview 重渲
  *
  * 激活:
@@ -223,16 +223,15 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   )
 
-  // tab 菜单栏命令: 编辑 → 切到 vscode 文本编辑器
+  // tab 菜单栏命令: 编辑 → 同 tab 切到 code 文本编辑器 (opensumi EditorGroup.changeOpenType, 不新开 group)
   context.subscriptions.push(
     vscode.commands.registerCommand('html.edit', async () => {
       const active = getActiveHtmlPanel(panels)
       if (!active) return
       try {
-        await vscode.window.showTextDocument(vscode.Uri.parse(active.uri), {
-          viewColumn: vscode.ViewColumn.Beside,
-          preview: false,
-        })
+        // editor.opentype <id> → changeOpenType: 原地切换当前 tab 的编辑器类型 (不新增 tab/group)
+        // 'code' = monaco 文本编辑器 (opensumi 原生 openType id)
+        await vscode.commands.executeCommand('editor.opentype', 'code')
       } catch (e) {
         console.warn('[html] open editor failed:', e)
       }
