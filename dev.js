@@ -199,18 +199,24 @@ function installWatchexecWindows() {
     return;
   }
   const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
-  const asset = `watchexec-${arch}-pc-windows-msvc.zip`;
-  // PowerShell: 1) GitHub API 查 latest tag → 2) 下载 zip 到 bin 目录 → 3) 解压 → 4) setx PATH
-  //   Invoke-RestMethod 解析 GitHub JSON (tag_name), Invoke-WebRequest 下载, Expand-Archive 解压
+  // 不硬编 asset 文件名 (含版本号, 跟 tag 强相关), 改从 release JSON 直接拿 assets 数组 —
+  // 找含 "arch-pc-windows-msvc.zip" 的 zip, 避免 "tag 升 / 文件名拼错" → 404.
+  // Node 端通过环境变量传 binDir / arch 给 PS 脚本 (避免 PS 字符串里写 $ 的转义陷阱);
+  // PS 单引号 here-string 写 $env:xxx 解析环境变量.
   const script = `
 $ErrorActionPreference = 'Stop'
-$tag = (Invoke-RestMethod -Uri 'https://api.github.com/repos/watchexec/watchexec/releases/latest' -Headers @{ 'User-Agent' = 'numas-dev'; 'Accept' = 'application/vnd.github+json' }).tag_name
+$binDir = $env:NUMAS_BINDIR
+$arch   = $env:NUMAS_ARCH
+$release = Invoke-RestMethod -Uri 'https://api.github.com/repos/watchexec/watchexec/releases/latest' -Headers @{ 'User-Agent' = 'numas-dev'; 'Accept' = 'application/vnd.github+json' }
+$tag = $release.tag_name
 if (-not $tag) { throw 'GitHub API 未返回 tag_name' }
-$url = "https://github.com/watchexec/watchexec/releases/download/$tag/${asset}"
-$binDir = ${JSON.stringify(binDir)}
-$zipPath = Join-Path $binDir "${asset}"
+$assetObj = $release.assets | Where-Object { $_.name -like ("*" + $arch + "-pc-windows-msvc.zip") -and $_.name -notlike "*.sha*" -and $_.name -notlike "*.b3" } | Select-Object -First 1
+if (-not $assetObj) { throw "未找到 " + $arch + " windows asset (tag=$tag, " + @($release.assets).Count + " assets)" }
+$url = $assetObj.browser_download_url
+$asset = $assetObj.name
+$zipPath = Join-Path $binDir $asset
 New-Item -ItemType Directory -Path $binDir -Force | Out-Null
-Write-Host "[numas] watchexec (Windows) 下载 ${asset} ($tag) ..."
+Write-Host "[numas] watchexec (Windows) 下载 $asset ($tag) ..."
 Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
 $extractDir = Join-Path $binDir "_extract_tmp"
 if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
@@ -221,7 +227,7 @@ Copy-Item -Path $src.FullName -Destination (Join-Path $binDir 'watchexec.exe') -
 Remove-Item $zipPath -Force
 Remove-Item $extractDir -Recurse -Force
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-if ($userPath -notlike "*${binDir}*") {
+if ($userPath -notlike ("*" + $binDir + "*")) {
   [Environment]::SetEnvironmentVariable('Path', "$userPath;$binDir", 'User')
   Write-Host '[numas] 已将 bin 目录写入用户 PATH (新开 cmd 生效)'
 } else {
@@ -231,7 +237,10 @@ Write-Host "[numas] watchexec 装到 $binDir\\watchexec.exe"
 `.trim();
   const r = spawnSync('powershell', [
     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script,
-  ], { stdio: 'inherit' });
+  ], {
+    stdio: 'inherit',
+    env: { ...process.env, NUMAS_BINDIR: binDir, NUMAS_ARCH: arch },
+  });
   if (r.status !== 0) {
     throw new Error(`PowerShell 安装失败 (status=${r.status})`);
   }
