@@ -76,14 +76,20 @@ export class OpenTypeContribution implements BrowserEditorContribution, CommandC
       const glob = `*${resource.uri.path.ext}`;
       const compId = assoc[glob];
       if (!compId) return;
-      // 已有关联编辑器 → 强制使用 (resolve 会 break 后续 resolver). 注意区分 type (code) 与组件 id.
+      // 已有关联编辑器 → 默认选中它, 但**不 resolve() break**:
+      // 让 file-scheme 的 code resolver 继续跑, 打开方式列表保持完整 (customEditor + 文本编辑器),
+      // 只通过高权重把 assoc 项排最前作为默认.
+      // (之前 resolve() break 会把列表压到只剩 1 项, e.g. html 配了默认后丢"文本编辑器")
       const hit = results.some((r) => (r as any).componentId === compId);
       if (!hit) {
-        if (compId === 'code') {
-          resolve([{ type: 'code' }]);
-        } else {
-          resolve([{ type: 'component', componentId: compId }]);
-        }
+        const item = compId === 'code'
+          ? { type: 'code' as const, weight: Number.MAX_SAFE_INTEGER }
+          : { type: 'component' as const, componentId: compId, weight: Number.MAX_SAFE_INTEGER };
+        results.push(item);
+      } else {
+        // 已存在 (file-scheme/customEditor 也给了), 只把它的权重提到最高 → 默认选中, 不重复加
+        const existing = results.find((r) => (r as any).componentId === compId);
+        if (existing) (existing as any).weight = Number.MAX_SAFE_INTEGER;
       }
     });
   }

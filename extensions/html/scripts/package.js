@@ -8,7 +8,7 @@
  */
 const fs = require('fs')
 const path = require('path')
-const AdmZip = require('/Users/weizuxiao/Documents/开源项目/workspace-dev/registry/node_modules/adm-zip')
+const AdmZip = require('../../../registry/node_modules/adm-zip')
 
 const ROOT = path.resolve(__dirname, '..')
 const SRC_DIST = path.join(ROOT, 'dist')           // 源 dist
@@ -17,8 +17,8 @@ const STAGE = path.join(ROOT, '.vsix-stage')       // 临时打包目录
 const PKG = JSON.parse(fs.readFileSync(PKG_PATH, 'utf-8'))
 const OUT = path.resolve(
   __dirname,
-  '../../../registry/vsix',  // extensions/html/scripts → extensions/html → extensions → workspace-dev/registry/vsix
-  `${PKG.publisher || 'numas'}.${PKG.name}-${PKG.version}.vsix`,
+  '../../../registry/vsix',  // extensions/html/scripts → extensions/html → extensions → registry/vsix
+  `${PKG.publisher || 'weizuxiao911'}.${PKG.name}-${PKG.version}.vsix`,
 )
 
 console.log('[html] packaging:', OUT)

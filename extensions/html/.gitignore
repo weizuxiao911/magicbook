@@ -1,0 +1,12 @@
+# 依赖
+node_modules/
+
+# 构建产物
+out/
+dist/
+*.vsix
+
+# 临时
+.cache/
+*.log
+.DS_Store

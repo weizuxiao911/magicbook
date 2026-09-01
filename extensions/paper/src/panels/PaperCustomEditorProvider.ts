@@ -39,8 +39,38 @@ export class PaperCustomEditorProvider implements vscode.CustomTextEditorProvide
       await host.updatePaperState(nextPaperState)
     })
 
+    // 外部文件变更 (宿主机/AI 改文件): createFileSystemWatcher 监听 → 自动刷新
+    // (onDidChangeTextDocument 只覆盖编辑器内编辑, 覆盖不了外部改动)
+    let fileWatcher: vscode.FileSystemWatcher | undefined
+    try {
+      const fsPath = document.uri.fsPath
+      const dir = fsPath.replace(/\/[^/]+$/, '')
+      const name = fsPath.split('/').pop()!
+      fileWatcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(vscode.Uri.file(dir), name)
+      )
+      const onFileChange = () => {
+        void vscode.workspace.fs.readFile(document.uri).then((bytes) => {
+          const raw = new TextDecoder('utf-8').decode(bytes)
+          const nextState = resolvePaperFromContent(document.uri.fsPath, raw)
+          void host.updatePaperState(nextState)
+        }).catch(() => {
+          // fs 读失败 (可能刚删/移动): 兜底用 document
+          const nextState = resolvePaperFromContent(document.uri.fsPath, document.getText())
+          void host.updatePaperState(nextState)
+        })
+      }
+      fileWatcher.onDidChange(onFileChange)
+      fileWatcher.onDidCreate(onFileChange)
+    } catch (e) {
+      console.warn('[paper] createFileSystemWatcher failed:', e)
+    }
+
     webviewPanel.onDidDispose(() => {
       changeDisposable.dispose()
+      if (fileWatcher) {
+        try { fileWatcher.dispose() } catch { /* ignore */ }
+      }
       host.dispose()
     })
   }
