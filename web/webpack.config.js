@@ -64,8 +64,7 @@ const config = {
     watchOptions: {
         // 排除输出/缓存/运行期数据目录, 避免删除/重建目录时 watcher ENOENT 风暴杀掉 webpack
         ignored: [
-            // dev trace: 临时把 customEditors.js 从排除中拿掉, 让我们改 node_modules 也能热重载
-            '**/node_modules/(?!@opensumi/ide-extension/lib/browser/vscode/contributes/customEditors.js)',
+            '**/node_modules/**',
             '**/.webpack-cache/**',
             '**/dist/**',
             '**/.playwright-screenshots/**',
@@ -111,11 +110,9 @@ const config = {
         alias: {
             '@': path_1.default.resolve(WEB, 'src'),
             '@/': path_1.default.resolve(WEB, 'src') + path_1.default.sep,
-            // 根治 vsix customEditor (paper) 刷新后激活 tab 不渲染: 用本地 patch 替换 opensumi 原版
-            // web/src/patches/customEditors.js 加 useRef 标记, 避免 React 18 dev mode StrictEffects 双调用
-            // 配合 web/src/patches/patch-custom-editor.ts 接管 webview 生命周期
-            '@opensumi/ide-extension/lib/browser/vscode/contributes/customEditors.js': path_1.default.resolve(WEB, 'src/patches/customEditors.js'),
-            '@opensumi/ide-extension/lib/browser/vscode/contributes/customEditors': path_1.default.resolve(WEB, 'src/patches/customEditors.js'),
+            // 注: customEditors.js (customEditor webview 挂载) 由 postinstall 就地改 node_modules
+            //     (scripts/patch-opensumi-customeditors.js), 不走 alias
+            //     (opensumi 包内相对路径互引, alias 匹配不上)
             // 注: WORKSPACE_ROOT patch 不走 alias (codeblitz 包内相对路径互引 alias 不生效),
             //     由 postinstall 脚本就地改 node_modules (scripts/patch-codeblitz-constant.js)
         },

@@ -1,17 +1,17 @@
 {
   "name": "paper",
   "displayName": "Paper",
-  "description": "试卷/题目预览 (customEditor + 简单 HTML webview 渲染 .paper, 刷新可重载)",
-  "version": "0.1.0",
+  "description": "试卷/题目预览 (customEditor + vite webview 渲染 .paper, 支持题库/试卷库)",
+  "version": "0.2.0",
   "publisher": "weizuxiao911",
   "engines": {
-    "vscode": "^1.75.0"
+    "vscode": "^1.95.0",
+    "opensumi": "^3.0.0"
   },
   "categories": [
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
     "onCustomEditor:paperEditor",
     "onCommand:paper.saveToLibrary"
   ],
@@ -43,12 +43,19 @@
   },
   "scripts": {
     "clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\"",
+    "compile": "tsc -p .",
     "compile:bundle": "node esbuild.config.mjs",
-    "build": "npm run clean && npm run compile:bundle"
+    "build:webview": "npm --prefix webview run build",
+    "build": "npm run clean && npm run build:webview && npm run compile:bundle",
+    "package": "npm run build && node scripts/package.js"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.0"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.10.1",
-    "@types/vscode": "^1.75.0",
+    "@types/vscode": "^1.95.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.1",
     "typescript": "^5.7.2"

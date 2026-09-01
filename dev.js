@@ -353,18 +353,27 @@ process.on('exit',    () => {
 
 // 8. 自动打开浏览器 (sleep 4s 等 webpack-dev-server ready, 跨平台调用)
 //    失败仅 warn, 不阻塞进程 (headless server / 无桌面环境也兼容)
-const browserUrl = `http://localhost:${WEB_PORT}`;
-console.log(`[numas] 4s 后自动打开浏览器 ${browserUrl}`);
-setTimeout(() => {
-  let opener, args;
-  if (process.platform === 'darwin') { opener = 'open'; args = [browserUrl]; }
-  else if (process.platform === 'win32') { opener = 'cmd'; args = ['/c', 'start', '', browserUrl]; }
-  else { opener = 'xdg-open'; args = [browserUrl]; }
-  try {
-    const r = spawn(opener, args, { detached: true, stdio: 'ignore', shell: false });
-    r.on('error', (e) => console.warn(`[numas] 自动打开浏览器失败 (${e.message}), 请手动访问 ${browserUrl}`));
-    r.unref();
-  } catch (e) {
-    console.warn(`[numas] 自动打开浏览器失败 (${e.message}), 请手动访问 ${browserUrl}`);
-  }
-}, 4000);
+ const browserUrl = `http://localhost:${WEB_PORT}`;
+ console.log(`[numas] 4s 后自动打开浏览器 ${browserUrl}`);
+ setTimeout(() => {
+   // 已有浏览器连到 WEB_PORT 则跳过 (不重复开 tab)
+   try {
+     const { execSync } = require('node:child_process');
+     const conn = execSync(`lsof -ti :${WEB_PORT} -sTCP:ESTABLISHED`, { stdio: 'pipe' }).toString().trim();
+     if (conn) {
+       console.log('[numas] 检测到浏览器已连接, 跳过自动打开');
+       return;
+     }
+   } catch { /* 无连接, 继续 open */ }
+   let opener, args;
+   if (process.platform === 'darwin') { opener = 'open'; args = [browserUrl]; }
+   else if (process.platform === 'win32') { opener = 'cmd'; args = ['/c', 'start', '', browserUrl]; }
+   else { opener = 'xdg-open'; args = [browserUrl]; }
+   try {
+     const r = spawn(opener, args, { detached: true, stdio: 'ignore', shell: false });
+     r.on('error', (e) => console.warn(`[numas] 自动打开浏览器失败 (${e.message}), 请手动访问 ${browserUrl}`));
+     r.unref();
+   } catch (e) {
+     console.warn(`[numas] 自动打开浏览器失败 (${e.message}), 请手动访问 ${browserUrl}`);
+   }
+ }, 4000);

@@ -1,15 +1,6 @@
+import * as vscode from 'vscode'
+import { uriBasename, uriBasenameWithoutExt } from '../utils/path-helper'
 import type { PaperDetail, PaperQuestionBase, PaperViewState } from '../state/types'
-
-/** 浏览器兼容 basename / 去扩展名 (代替 node:path) */
-function baseName(p: string): string {
-  const parts = p.split(/[\\/]/).filter(Boolean)
-  return parts[parts.length - 1] || p
-}
-
-function stripExt(name: string): string {
-  const idx = name.lastIndexOf('.')
-  return idx > 0 ? name.slice(0, idx) : name
-}
 
 /**
  * 从原始文本解析试卷内容并构建页面状态。
@@ -21,8 +12,8 @@ function stripExt(name: string): string {
  * - 非法 JSON 返回 error 状态
  */
 export function resolvePaperFromContent(filePath: string, raw: string): PaperViewState {
-  const tabTitle = baseName(filePath)
-  const displayTitle = stripExt(tabTitle)
+  const tabTitle = uriBasename(filePath)
+  const displayTitle = uriBasenameWithoutExt(filePath)
   const trimmed = raw.trim()
 
   if (!trimmed) {
@@ -90,4 +81,10 @@ export function resolvePaperFromContent(filePath: string, raw: string): PaperVie
     title: tabTitle,
     paper
   }
+}
+
+export async function resolvePaperFromFile(uri: vscode.Uri): Promise<PaperViewState> {
+  const buffer = await vscode.workspace.fs.readFile(uri)
+  const raw = new TextDecoder('utf-8').decode(buffer)
+  return resolvePaperFromContent(uri.path, raw)
 }

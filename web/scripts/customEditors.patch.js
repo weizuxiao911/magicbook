@@ -1,17 +1,19 @@
 /**
- * vsix customEditor 根治 patch — web/src/patches/customEditors.js
+ * customEditor webview 挂载 patch — web/scripts/customEditors.patch.js
  *
  * 根因: opensumi 的 createCustomEditorComponent 在 React 18 dev mode 的
  *       StrictEffects 双调用行为 (mount→unmount→mount) 下, useEffect 异步 .then()
  *       跑回来时 React ref 已被设 null, 挂载跳过, webview 永远不挂。
  *
  * 根治: 用 useRef 标记, useEffect 只跑一次, 避免双调用误触。
- *       webview 生命周期交给 main thread (web/src/dev/patch-custom-editor.ts)。
+ *       webview 生命周期交给 main thread (web/src/patches/patch-custom-editor.ts)。
  *
- * 同步: webpack.config.js 的 resolve.alias 指向本文件代替 opensumi 原版。
- *       下次 npm install 后仍然有效, 不被 node_modules 改动覆盖。
+ * 落地: 由 scripts/patch-opensumi-customeditors.js (postinstall) copy 到
+ *       node_modules/@opensumi/ide-extension/.../customEditors.js (就地替换原版)。
+ *       opensumi 内部用相对路径 require 该文件, webpack alias 匹配不上, 只能改文件本体。
  *
  * 对应 opensumi 源文件: web/node_modules/@opensumi/ide-extension/lib/browser/vscode/contributes/customEditors.js
+ * marker: __numasCustomEditorUseRef
  */
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -147,12 +149,15 @@ function createCustomEditorComponent(viewType, openTypeId, getOptions) {
             const disposer = new ide_core_common_1.Disposable();
             __disposerRef.current = disposer;
             __tokenRef.current = cancellationTokenSource;
+            console.log('[ce-ui] useEffect fire onCustomEditor', viewType);
             Promise.all([
                 activationEventService.fireEvent('onCustomEditor', viewType),
                 extensionService.eagerExtensionsActivated.promise,
             ]).then(() => {
+                console.log('[ce-ui] .then() reached', viewType, 'cancelled=', cancellationTokenSource.token.isCancellationRequested);
                 if (cancellationTokenSource.token.isCancellationRequested) return;
                 const webview = webviewService.createWebview(getOptions().webviewOptions);
+                console.log('[ce-ui] createWebview=', !!webview);
                 if (!webview) return;
                 // 只 fire event, mount/cleanup 由 main thread (web/src/dev/patch-custom-editor.ts) 接管
                 disposer.addDispose({

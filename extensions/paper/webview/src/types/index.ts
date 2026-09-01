@@ -1,4 +1,4 @@
-export interface PaperQuestionBase {
+export interface PaperQuestion {
   id?: string
   type: string
   score?: number
@@ -7,7 +7,7 @@ export interface PaperQuestionBase {
 
 export interface PaperDetail {
   title: string
-  questions: PaperQuestionBase[]
+  questions: PaperQuestion[]
   // 扩展侧读取 JSON 后统计得到的总分与题目数
   totalScore: number
   questionCount: number
@@ -34,14 +34,31 @@ export interface ErrorPaperState {
 
 export type PaperViewState = ReadyPaperState | EmptyPaperState | ErrorPaperState
 
-export interface RpcRequestMessage {
+export interface CcmFrameSession {
+  sessionKey: string
+  title: string
+  url: string
+  payload: Record<string, unknown>
+}
+
+export interface HostRpcRequest {
   type: 'rpc-request'
   requestId: string
   action: 'join-question-bank' | 'save-paper' | 'open-community-page' | 'close-panel' | 'search-labs' | 'update-lab-code'
   payload: unknown
 }
 
-export interface RpcResponseMessage {
+export interface LabItem {
+  code: string
+  name: string
+}
+
+export interface SearchLabsResult {
+  rows: LabItem[]
+  hasNext: boolean
+}
+
+export interface HostRpcResponse {
   type: 'rpc-response'
   requestId: string
   success: boolean

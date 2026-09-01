@@ -1,0 +1,251 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f5f7fb;
+  color: #1A1A2E;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: #f5f7fb;
+  color: #1A1A2E;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.paper-page {
+  padding: 24px 12px;
+  background: radial-gradient(circle 500px at 0% 0%, rgba(224, 235, 255, 0.90) 0%, rgba(224, 235, 255, 0.00) 100%);
+  background-repeat: no-repeat;
+}
+
+.paper-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.paper-meta,
+.modal-label {
+  color: #6B6B8A;
+  font-size: 13px;
+}
+
+.paper-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.ques-com-elements {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.ques-com-element {
+  display: flex;
+}
+
+.paperui-primary-text {
+  color: #1677ff;
+}
+
+.paper-title {
+  font-size: 22px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  max-width: 380px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paper-list {
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.60);
+  border-radius: 16px;
+  box-shadow: 0px 8px 32px 0px rgba(107, 138, 255, 0.06);
+  overflow: hidden;
+}
+
+.paper-list > *:not(:last-child)::after {
+  content: '';
+  display: block;
+  height: 1px;
+  margin: 12px 0 0 50px;
+  background: #EBEDF5;
+}
+
+.paper-state-card {
+  min-height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.paper-state-description {
+  color: #666666;
+}
+
+.paper-error-card {
+  width: 100%;
+  max-width: 480px;
+  text-align: center;
+}
+
+.paper-error-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #fff2f0;
+  color: #ff4d4f;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.paper-error-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.paper-error-desc {
+  font-size: 13px;
+  color: #999;
+  line-height: 1.6;
+}
+
+.paper-error-hint {
+  margin-top: 16px;
+  color: #aaa;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ques-com {
+  position: relative;
+  border-color: transparent !important;
+  border-radius: 0 !important;
+  padding: 0 16px !important;
+}
+
+.ques-com-content {
+  margin-right: 10px !important;
+}
+
+.ques-com-content-header {
+  max-width: calc(100% - 150px) !important;
+}
+
+.ques-com-content-title {
+  margin-bottom: 6px !important;
+}
+
+.ques-com-control {
+  position: absolute;
+  right: 10px;
+}
+
+.ques-scoreinput {
+  color: #6B6B8A !important;
+  font-size: 12px !important;
+}
+
+.ques-scoreinput .ant-input-outlined[disabled] {
+  margin-left: 12px;
+  border-color: transparent;
+  background: #F5F7FC;
+  border-radius: 6px;
+  color: #1A1A2E;
+  font-weight: 600;
+  text-align: center;
+  width: 45px !important;
+}
+
+.ques-scoreinput-red {
+  display: none;
+}
+
+.ques-radio-item, .ques-checkbox-item {
+  color: #3A3A4E !important;
+}
+
+.quesright {
+  font-size: 11px !important;
+  /* color: #ffffff !important;
+  background: #0FBA82 !important; */
+ }
+
+.paperui-blue-btn {
+  color: #1677ff !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+.paperui-blue-btn:hover {
+  color: #1677ff !important;
+  background: rgba(22, 119, 255, 0.1);
+}
+
+.paperui-blue-btn-disabled,
+.paperui-blue-btn-disabled:hover {
+  color: rgba(0, 0, 0, 0.25) !important;
+  background: transparent;
+  cursor: not-allowed;
+}
+
+.paperui-blue-btn:focus-visible {
+  outline: 1px solid rgba(22, 119, 255, 0.45);
+  outline-offset: 2px;
+}
+
+.tooltip-white .ant-tooltip-inner {
+  color: #666666;
+}
+
+.paperui-title-modal .ant-modal-content {
+  padding: 30px 50px;
+  border-radius: 12px;
+}
+
+.paperui-title-modal .ant-modal-footer {
+  margin-top: 40px;
+}
+
+.modal-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+}

@@ -86,6 +86,9 @@ export function installCustomEditorPatch(): void {
     this: any,
     e: any,
   ) {
+    const mapKeys = this.customEditors ? Array.from(this.customEditors.keys()) : [];
+    // eslint-disable-next-line no-console
+    console.log(TAG, '[dbg] DisplayEvent', { viewType: e?.payload?.viewType, mapKeys, editorExists: !!this.customEditors?.get(e?.payload?.viewType) });
     const editor = this.customEditors.get(e.payload.viewType);
     if (!editor) return;
 
@@ -102,6 +105,8 @@ export function installCustomEditorPatch(): void {
 
     // 拿 webview (React useEffect 可能已经 create 了, 优先复用)
     let webview = webviewPanelId ? this.webviewService.getWebview(webviewPanelId) : null;
+    // eslint-disable-next-line no-console
+    console.log(TAG, '[dbg] getWebview', { webviewPanelId, got: !!webview });
     if (!webview) {
       try {
         webview = this.webviewService.createWebview(editor.options.webviewOptions || {});
@@ -110,6 +115,8 @@ export function installCustomEditorPatch(): void {
         console.warn(TAG, 'createWebview failed', err);
         return;
       }
+      // eslint-disable-next-line no-console
+      console.log(TAG, '[dbg] createWebview in patch', { created: !!webview });
     }
     if (!webview) return;
 
@@ -137,28 +144,45 @@ export function installCustomEditorPatch(): void {
       // 否则 paper 切走再切回就找不到 info 了 (sync 看不到 → 永不恢复)
       // 检测激活 tab 走 DOM (workbenchEditorService.currentResource.uri 对 customEditor
       // 返回 undefined, 不可用)
-      const sync = () => {
-        const activeTab = document.querySelector(
-          '.kt_editor_tab___LLmhN.kt_editor_tab_current___A2OZc',
-        ) as HTMLElement | null;
-        const activeUri = activeTab?.getAttribute('data-uri') || '';
-        const all = new Map<string, PendingMount>([
-          ...state.mountedMap.entries(),
-          ...state.pendingMounts.entries(),
-        ]);
-        for (const [key, info] of Array.from(all.entries())) {
-          if (activeUri === info.uri.toString()) {
-            // 当前就是 paper, 确保挂载/恢复显示
-            (this as any).__paperTryMount(key);
-          } else {
-            // 切走了, 隐藏 (切回时复用)
-            (this as any).__paperHide(key);
-          }
-        }
-      };
-      this.addDispose(this.eventBus.on(EditorGroupChangeEvent, sync));
-      this.addDispose(this.eventBus.on(EditorActiveResourceStateChangedEvent, sync));
-    }
+       const sync = () => {
+         const activeTab = document.querySelector(
+           '.kt_editor_tab___LLmhN.kt_editor_tab_current___A2OZc',
+         ) as HTMLElement | null;
+         const activeUri = activeTab?.getAttribute('data-uri') || '';
+         const all = new Map<string, PendingMount>([
+           ...state.mountedMap.entries(),
+           ...state.pendingMounts.entries(),
+         ]);
+         for (const [key, info] of Array.from(all.entries())) {
+           if (activeUri === info.uri.toString()) {
+             // 当前就是 paper, 确保挂载/恢复显示
+             (this as any).__paperTryMount(key);
+           } else {
+             // 检查 paper tab 是否还在 DOM (用户可能关闭了 tab, 不止切走)
+             // main slot 只有 paper 一个 tab 时关闭, 整个 group 销毁, activeTab 为 null
+             const escapedUri = info.uri.toString().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+             const tabStillExists = !!document.querySelector(
+               `[data-uri="${escapedUri}"]`,
+             );
+             if (tabStillExists) {
+               // 切走了, 隐藏 (切回时复用)
+               (this as any).__paperHide(key);
+             } else {
+               // tab 关闭了, 彻底卸载 (避免孤儿 webview 残留)
+               (this as any).__paperUnmount(key);
+             }
+           }
+         }
+       };
+       this.addDispose(this.eventBus.on(EditorGroupChangeEvent, sync));
+       this.addDispose(this.eventBus.on(EditorActiveResourceStateChangedEvent, sync));
+
+       // 兜底: DOM MutationObserver 监听 paper tab 关闭 (避免孤儿 webview)
+       // 监听 document.body 子树: 一旦 paper uri 的 tab 从 DOM 消失, sync() 检测到
+       // tabStillExists=false → 调 __paperUnmount 清 webview
+       const observer = new MutationObserver(() => sync());
+       observer.observe(document.body, { childList: true, subtree: true });
+     }
 
     // 立即尝试挂载
     (this as any).__paperTryMountAllPending();
