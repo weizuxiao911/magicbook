@@ -30,6 +30,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 
 const ROOT = path.resolve(__dirname);
 const WEB = path.join(ROOT, 'web');
@@ -169,12 +170,84 @@ if (!opencodeBin) {
 }
 // 3. watchexec (fs watcher PTY 依赖 — opencode pty 子进程里 node FSEvents 必炸 (EMFILE),
 //    watchexec Rust 实现实测正常且覆盖轮询盲区; 按平台安装)
+//
+//    macOS: brew (标准)
+//    Linux: apt-get (Debian/Ubuntu); root 时不加 sudo, 非 root 加 sudo
+//    Windows: PowerShell 一条龙 — Invoke-RestMethod 查 GitHub API → Invoke-WebRequest 下 zip →
+//      Expand-Archive → 复制到 %LOCALAPPDATA%\numas\bin\watchexec.exe → setx 写用户 PATH
+//      (winget --id watchexec.watchexec 在很多环境查不到 — 仓库 ID 改名 / winget 源未同步;
+//       改用直下更可控, 且 PowerShell 是 Windows 内置, 零额外依赖)
 function installWatchexecCmd() {
   if (process.platform === 'darwin') return ['brew', ['install', 'watchexec']];
-  if (process.platform === 'win32') return ['winget', ['install', '--id', 'watchexec.watchexec', '--accept-source-agreements', '--accept-package-agreements']];
+  if (process.platform === 'win32') {
+    // Windows 走 PowerShell 一条龙 (内含 GitHub API 查询+下载+解压+setx), 同步阻塞
+    installWatchexecWindows();
+    return ['cmd', ['/c', 'echo', 'watchexec installed']];
+  }
   // linux: 优先 apt (Debian/Ubuntu), 兜底 cargo
   return ['apt-get', ['install', '-y', 'watchexec']];
 }
+
+/** Windows: PowerShell 一条龙装 watchexec (GitHub release → 直下 zip → 解压 → setx PATH)
+ *  失败抛错, 由 ensureInstalled 的 status=1 兜底提示 */
+function installWatchexecWindows() {
+  const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+  const binDir = path.join(localAppData, 'numas', 'bin');
+  const exePath = path.join(binDir, 'watchexec.exe');
+  if (fs.existsSync(exePath)) {
+    console.log(`[numas] watchexec 已存在 (复用) → ${exePath}`);
+    return;
+  }
+  const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
+  const asset = `watchexec-${arch}-pc-windows-msvc.zip`;
+  // PowerShell: 1) GitHub API 查 latest tag → 2) 下载 zip 到 bin 目录 → 3) 解压 → 4) setx PATH
+  //   Invoke-RestMethod 解析 GitHub JSON (tag_name), Invoke-WebRequest 下载, Expand-Archive 解压
+  const script = `
+$ErrorActionPreference = 'Stop'
+$tag = (Invoke-RestMethod -Uri 'https://api.github.com/repos/watchexec/watchexec/releases/latest' -Headers @{ 'User-Agent' = 'numas-dev'; 'Accept' = 'application/vnd.github+json' }).tag_name
+if (-not $tag) { throw 'GitHub API 未返回 tag_name' }
+$url = "https://github.com/watchexec/watchexec/releases/download/$tag/${asset}"
+$binDir = ${JSON.stringify(binDir)}
+$zipPath = Join-Path $binDir "${asset}"
+New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+Write-Host "[numas] watchexec (Windows) 下载 ${asset} ($tag) ..."
+Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+$extractDir = Join-Path $binDir "_extract_tmp"
+if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
+$src = Get-ChildItem -Path $extractDir -Recurse -Filter 'watchexec.exe' | Select-Object -First 1
+if (-not $src) { throw '解压后未找到 watchexec.exe' }
+Copy-Item -Path $src.FullName -Destination (Join-Path $binDir 'watchexec.exe') -Force
+Remove-Item $zipPath -Force
+Remove-Item $extractDir -Recurse -Force
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($userPath -notlike "*${binDir}*") {
+  [Environment]::SetEnvironmentVariable('Path', "$userPath;$binDir", 'User')
+  Write-Host '[numas] 已将 bin 目录写入用户 PATH (新开 cmd 生效)'
+} else {
+  Write-Host '[numas] 用户 PATH 已包含 bin 目录 (复用)'
+}
+Write-Host "[numas] watchexec 装到 $binDir\\watchexec.exe"
+`.trim();
+  const r = spawnSync('powershell', [
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script,
+  ], { stdio: 'inherit' });
+  if (r.status !== 0) {
+    throw new Error(`PowerShell 安装失败 (status=${r.status})`);
+  }
+}
+
+/** Windows: 把 %LOCALAPPDATA%\numas\bin 注入到 process.env.PATH 前部 (本进程 + 子进程继承) */
+function prependWindowsBinToPath() {
+  if (process.platform !== 'win32') return;
+  const binDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'numas', 'bin');
+  if (!fs.existsSync(path.join(binDir, 'watchexec.exe'))) return;
+  const sep = path.delimiter; // Windows ;
+  if (!(process.env.PATH || '').split(sep).some((p) => p.toLowerCase() === binDir.toLowerCase())) {
+    process.env.PATH = `${binDir}${sep}${process.env.PATH || ''}`;
+  }
+}
+
 ensureInstalled(
   'watchexec',
   () => whichCmd('watchexec'),
@@ -186,6 +259,9 @@ ensureInstalled(
   WEB,
   { global: true },
 );
+
+// 3.1 Windows: 把刚装好的 watchexec.exe 注入 PATH (让 whichCmd / 子进程能找到)
+prependWindowsBinToPath();
 
 // 3. 端口冲突清理 (上轮跑剩的 zombie, 避免 listen EADDRINUSE)
 //    macOS BSD lsof 必须用 `-ti :PORT` (带冒号), Linux 用 `-ti :PORT` 也 OK
