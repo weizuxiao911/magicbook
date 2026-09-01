@@ -199,16 +199,20 @@ function installWatchexecWindows() {
     return;
   }
   const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
-  const asset = `watchexec-${arch}-pc-windows-msvc.zip`;
+  // 资产名带版本号: watchexec-<ver>-<arch>-pc-windows-msvc.zip (ver = tag 去掉 'v' 前缀).
+  // 旧代码拼成 watchexec-<arch>-...zip 漏了版本号, GitHub release 无此文件 → 404 Not Found.
   // PowerShell: 1) GitHub API 查 latest tag → 2) 下载 zip 到 bin 目录 → 3) 解压 → 4) setx PATH
   //   Invoke-RestMethod 解析 GitHub JSON (tag_name), Invoke-WebRequest 下载, Expand-Archive 解压
   const script = `
 $ErrorActionPreference = 'Stop'
 $tag = (Invoke-RestMethod -Uri 'https://api.github.com/repos/watchexec/watchexec/releases/latest' -Headers @{ 'User-Agent' = 'numas-dev'; 'Accept' = 'application/vnd.github+json' }).tag_name
 if (-not $tag) { throw 'GitHub API 未返回 tag_name' }
-$url = "https://github.com/watchexec/watchexec/releases/download/$tag/${asset}"
+$ver = $tag.TrimStart('v')
+$arch = ${JSON.stringify(arch)}
+$asset = "watchexec-$ver-$arch-pc-windows-msvc.zip"
+$url = "https://github.com/watchexec/watchexec/releases/download/$tag/$asset"
 $binDir = ${JSON.stringify(binDir)}
-$zipPath = Join-Path $binDir "${asset}"
+$zipPath = Join-Path $binDir $asset
 New-Item -ItemType Directory -Path $binDir -Force | Out-Null
 Write-Host "[numas] watchexec (Windows) 下载 ${asset} ($tag) ..."
 Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
