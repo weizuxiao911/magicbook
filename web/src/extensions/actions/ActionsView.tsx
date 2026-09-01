@@ -5,7 +5,7 @@ import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 import { PreferenceService } from '@opensumi/ide-core-browser/lib/preferences';
 import { PreferenceScope } from '@opensumi/ide-core-common/lib/preferences/preference-scope';
 
-import { getCwd, subscribeCwd } from '../../service/env';
+import { getCwd, subscribeCwd, requestShowPicker } from '../../service/env';
 
 const THEME_DARK = 'opensumi-design-dark-theme';
 const THEME_LIGHT = 'opensumi-design-light-theme';
@@ -14,13 +14,13 @@ const THEME_KEY = 'general.theme';
 /**
  * ActionsView — 顶栏 (top 槽位)
  *
- * 现在只做 3 件事:
- *  - 品牌展示 (🐮 + name, 静态, 不再承担工作目录选择器)
+ * 现在做 4 件事:
+ *  - 品牌展示 (🐮 + name, 静态)
+ *  - 工作目录选择器 (logo 旁的可点按钮, 全局唯一切换入口 — 派 workspace:request-show)
  *  - 主题切换
  *  - 3 个布局 toggle: 左侧栏 / 底部栏 / 右侧栏
  *
- * 工作目录选择入口已下放到 chat 输入框底部 (chat 拓展的全局唯一入口).
- * 这里只读显示当前 cwd 名字 (静态, 帮助用户定位), 不提供切换.
+ * 工作目录选择原下放在 chat 输入框底部, 现已上移到顶栏 logo 旁 (chat 中保留 cwd 读取但不再有切换按钮).
  */
 
 export const ActionsView: React.FC = () => {
@@ -37,7 +37,8 @@ export const ActionsView: React.FC = () => {
     return cfg?.chatConfig?.brand || { name: 'AI 工作台', logo: '' };
   }, []);
 
-  // 当前工作目录 (read-only 显示, 切换入口在 chat 输入框底部)
+  // 当前工作目录: 显示在 logo 旁, 点击触发 requestShowPicker() 派 workspace:request-show → WorkspacePicker 模态.
+  // 状态跟 service/env 同步 (subscribeCwd + storage 事件, 跨 tab/选目录后均能刷新).
   const [cwd, setCwd] = useState<string>(() => getCwd());
   useEffect(() => {
     const refresh = () => setCwd(getCwd());
@@ -52,6 +53,7 @@ export const ActionsView: React.FC = () => {
     if (!cwd) return '未选择工作目录';
     return cwd.split('/').filter(Boolean).pop() || cwd;
   }, [cwd]);
+  const cwdFull = cwd || '';
 
   useEffect(() => {
     const current = preferenceService.get<string>(THEME_KEY, THEME_DARK);
@@ -205,14 +207,23 @@ export const ActionsView: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', height: '100%', padding: '0 12px', fontSize: 13 }}>
-      <span
+      <button
+        type="button"
+        onClick={() => requestShowPicker()}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 10,
           fontSize: 13, fontWeight: 700, letterSpacing: 0.2,
           color: 'var(--editor-foreground, var(--vscode-editor-foreground, #e5e7eb))',
-          paddingLeft: 4, userSelect: 'none', cursor: 'default',
+          padding: '4px 10px 4px 4px',
+          userSelect: 'none', cursor: 'pointer',
+          background: 'transparent',
+          border: 'none',
+          borderRadius: 8,
+          transition: 'background 0.12s ease',
         }}
-        title={cwd || '尚未选择工作目录'}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--button-hoverBackground, rgba(255,255,255,0.06))'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+        title={cwdFull || '点击选择工作目录'}
       >
         {brand.logo ? (
           <span style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }}>{brand.logo}</span>
@@ -224,7 +235,10 @@ export const ActionsView: React.FC = () => {
         <span style={{
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 240,
         }}>{cwdName}</span>
-      </span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7, flexShrink: 0 }}>
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
       <span style={{ flex: 1 }} />
       <button type="button" title={isDark ? '切换到浅色主题' : '切换到深色主题'} onClick={toggleTheme} style={iconBtnStyle}>
         {isDark ? <SunIcon /> : <MoonIcon />}
