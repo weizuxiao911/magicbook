@@ -49,11 +49,14 @@ const VERSION = await (async () => {
 
 const bot = ["actions-user", "opencode", "opencode-agent[bot]"]
 const teamPath = path.resolve(import.meta.dir, "../../../.github/TEAM_MEMBERS")
+// numas fork: numas 把 .github/ 整目录 gitignore 掉了, 文件可能不存在.
+// 读不到时兜底为空数组, 不影响主流程 (team 只用于 release metadata).
 const team = [
   ...(await Bun.file(teamPath)
     .text()
     .then((x) => x.split(/\r?\n/).map((x) => x.trim()))
-    .then((x) => x.filter((x) => x && !x.startsWith("#")))),
+    .then((x) => x.filter((x) => x && !x.startsWith("#"))))
+    .catch(() => []),
   ...bot,
 ]
 
