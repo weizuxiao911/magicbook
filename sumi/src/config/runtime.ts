@@ -63,11 +63,18 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
    *  注意: 不能 clearCache 全清 (目录树被清空后 OverlayFS 写文件 EBUSY).
    *  实现: 走 super (SyncKeyValueFileSystem) 的 unlink/rmdir — 只动本地 InMemory, 不触发服务器同步;
    *  不能按路径遍历 store.store (key 是 INode id 不是路径, 老实现永远删不掉, 残留文件
-   *  会让 OverlayFS readdir 合并 writable 又显示出来). */
+   *  会让 OverlayFS readdir 合并 writable 又显示出来).
+   *
+   *  Guard: 拒绝删 mount root (path === '/') — 父目录 fireFilesChange 把 cwd 转 rel='/'
+   *  会被 fs.ts:438 uriToRel 当 mount root 传进来, 递归删整个 writable 树; 触发墓碑链 →
+   *  syncRm → __APP_FS__.rm 真删宿主机所有子文件. */
   removePath(relPath: string): void {
     const key = relPath.startsWith('/') ? relPath : `/${relPath}`;
+    if (key === '/' || key === '') return;
+    console.log('[debug] removePath IN', { relPath, key, stack: new Error().stack?.split('\n').slice(2, 6).join(' | ') });
     try {
       const st = super.statSync(key, false);
+      console.log('[debug] removePath stat', { key, type: st?.isDirectory() ? 'dir' : 'file', size: st?.size });
       if (st.isDirectory()) {
         for (const c of super.readdirSync(key)) {
           this.removePath(`${key}/${c}`);
@@ -95,6 +102,7 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
 
   /** 写文件 (最终汇聚点: open+write+close / writeFile / appendFile 都到这) */
   override _syncSync(p: string, data: Buffer, stats: Stats): void {
+    console.log('[debug] _syncSync IN', { p, dataLen: data.length, stack: new Error().stack?.split('\n').slice(2, 5).join(' | ') });
     super._syncSync(p, data, stats);
     const rel = workspaceRel(p);
     // 外部同步抑制: 宿主机文件修改 → 直接 pushEditOperations 更新 monaco model → BrowserFS
@@ -137,17 +145,30 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
     void this.syncMkdir(workspaceRel(p));
   }
 
+  /**
+   * unlinkSync (删除文件) 覆写
+   * 注意: 这里**不**直接调 syncRm, 因为 super (OverlayFS) 内部对 readable-only 路径
+   * 写墓碑 log, 墓碑 _syncSync 解析 d<path> 会统一调 syncRm.  避免双路径重复同步.
+   * 副作用: editor 写 'w' 模式 → BaseFileSystem.openSync TRUNCATE_FILE 调 this.unlinkSync
+   * → 写墓碑 → 墓碑 syncRm 真删磁盘 (已知, 暂不根治).
+   */
   override unlinkSync(p: string): void {
+    if (p === '/' || p === '') { console.warn('[runtime] unlinkSync skip mount root', { p }); return; }
+    console.log('[debug] unlinkSync IN', { p, stack: new Error().stack });
     super.unlinkSync(p);
-    void this.syncRm(workspaceRel(p));
   }
 
+  /**
+   * rmdirSync (删除空目录) 覆写 — 同 unlinkSync, 墓碑 _syncSync 统一处理 syncRm.
+   */
   override rmdirSync(p: string): void {
+    if (p === '/' || p === '') { console.warn('[runtime] rmdirSync skip mount root', { p }); return; }
+    console.log('[debug] rmdirSync IN', { p, stack: new Error().stack });
     super.rmdirSync(p);
-    void this.syncRm(workspaceRel(p));
   }
 
   override renameSync(oldPath: string, newPath: string): void {
+    console.log('[debug] renameSync IN', { oldPath, newPath, stack: new Error().stack?.split('\n').slice(2, 5).join(' | ') });
     super.renameSync(oldPath, newPath);
     void this.syncMove(workspaceRel(oldPath), workspaceRel(newPath));
   }
@@ -179,6 +200,10 @@ export class WriteSyncFS extends SyncKeyValueFileSystem {
   }
 
   private async syncRm(rel: string): Promise<void> {
+    // Guard: 拒绝 mount root rel — 上游 unlinkSync/墓碑链可能传 '/'. 走 __APP_FS__.rm('/') = relForApi('/') = '.' =
+    // opencode 端 cwd root 目录, recursive=true → fs.remove(cwd) → 删宿主所有文件. 灾难级, 必须拦.
+    if (rel === '/' || rel === '') { console.warn('[runtime] syncRm skip mount root', { rel }); return; }
+    console.log('[debug] syncRm IN', { rel, stack: new Error().stack });
     try {
       await getFileSystemService().rm(rel);
       // 记录"自己删过" → watcher 事件 readPathHash 返 null, 对比一致 skip
@@ -214,6 +239,7 @@ export function registerWriteSyncFS(fs: WriteSyncFS | null): void {
 /** 重置 BrowserFS readable (DynamicRequest) 的 FileIndex 缓存:
  *  外部文件变更后调用, 让 stat/readdir 重新从后端拉真实目录 (否则 entriesLoaded 缓存旧列表). */
 export function resetBrowserFSCache(): void {
+  console.log('[debug] resetBrowserFSCache IN', { stack: new Error().stack?.split('\n').slice(2, 6).join(' | ') });
   try {
     const root = (browserNodeFs as any).getRootFS?.();
     // 收集所有可重置的 fs (根 OverlayFS / MountableFileSystem 挂载点的 OverlayFS)
@@ -277,6 +303,7 @@ export function resetBrowserFSCache(): void {
 /** 从 OverlayFS deletionLog 恢复指定路径 (文件真实存在时不能标记"已删"):
  *  历史残留/误删标记会让 OverlayFS 一直认为文件不存在, 挡住 explorer/编辑器, 甚至触发反向删除远程. */
 export function restoreFromDeletionLog(relPath: string): void {
+  console.log('[debug] restoreFromDeletionLog IN', { relPath, stack: new Error().stack?.split('\n').slice(2, 6).join(' | ') });
   try {
     const key = relPath.startsWith('/') ? relPath : `/${relPath}`;
     const root = (browserNodeFs as any).getRootFS?.();

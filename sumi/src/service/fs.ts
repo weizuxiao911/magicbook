@@ -96,7 +96,29 @@ interface FsStatResult {
 
 /** stat (真实宿主磁盘): 存在 → 结果; 不存在/错误 → null */
 async function fsStat(idePath: string): Promise<FsStatResult | null> {
-  return fsApiGet<FsStatResult>(`/api/fs/stat?path=${encodeURIComponent(relForApi(idePath))}`).catch(() => null);
+  const url = `/api/fs/stat?path=${encodeURIComponent(relForApi(idePath))}`;
+  const r = await fsApiGet<FsStatResult>(url).catch((e) => { console.log('[fsStat] ERR', { idePath, err: e?.message }); return null; });
+  console.log('[fsStat]', { idePath, result: r });
+  return r;
+}
+
+/** 读文件内容 (真实宿主磁盘, 不走 BrowserFS InMemory 缓存): 存在 → Uint8Array; 404 → null.
+ *  注意: 不能用 BrowserFS read — 它的 _writable 是 InMemory, 跟磁盘可能不一致 (例如外部 truncate 后
+ *  monaco 推 _syncSync 写 _writable = 空, 但磁盘已变成 3 字节"中文", 后续 read 走 InMemory 永远空).
+ *  opencode 端 /api/fs/read 404 = 文件不存在 (DELETED), 200 + body length 0 = 文件存在但 0 字节. */
+async function fsReadRaw(idePath: string): Promise<Uint8Array | null> {
+  const url = `/api/fs/read/${encodeURIComponent(relForApi(idePath))}`;
+  try {
+    const resp = await fetch(`${appBaseUrl()}${url}`, { headers: cwdHeader() });
+    console.log('[fsReadRaw]', { idePath, status: resp.status, contentLen: resp.status === 200 ? (await resp.clone().arrayBuffer()).byteLength : 0 });
+    if (resp.status === 404) return null;
+    if (!resp.ok) return null;
+    const buf = await resp.arrayBuffer();
+    return new Uint8Array(buf);
+  } catch (e) {
+    console.log('[fsReadRaw] ERR', { idePath, err: (e as any)?.message });
+    return null;
+  }
 }
 
 /** 两种 URI 格式都支持:
@@ -199,23 +221,14 @@ let watcherRetryCount = 0;
 let watcherStopped = false;
 let watcherCwd = '';
 let watcherFireFn: ((changes: Array<{ uri: string; type: FileChangeType }>) => void) | null = null;
-/** 已同步路径 → 内容 hash (fs.watch 事件对比: 一致 = 自己写/无变化, 跳过不 fire; 不一致 = 外部改, fire) */
-const watcherSyncedHashes = new Map<string, string | null>();
+// 之前: watcherSyncedHashes Map + recordSyncedHash 写自己 hash 给 watcher 对比 skip 断循环.
+// 现状: 不走 hash 路线. 断循环靠 (1) fs.write '内容一致不写' (fs.ts:881) (2) 防抖 100ms
+// (3) __APP_FS_EXTERNAL_SYNC__ 抑制 BrowserFS _syncSync 回写 (runtime.ts:103). recordSyncedHash
+// 保留为 no-op 兼容旧调用点 (runtime.ts 等).
 
-/** 记录"自己写的"内容 hash — WriteSyncFS 写服务器成功后调用.
- *  断循环: 编辑器保存 → 写服务器 → fs.watch 事件 → hash 对比一致 → skip 不 fire;
- *  外部修改 (vim/Finder) 无记录 → hash 不同 → fire 通知 codeblitz.
- *  @param content 内容 (string/Uint8Array); null 表示"已删除" (watcher 读不到文件时对比 null)
- *  @returns Promise: 调用方 (WriteSyncFS.syncWrite) await 保证 hash 先于 watcher 对比写入 */
-export function recordSyncedHash(relPath: string, content: string | Uint8Array | null): Promise<void> {
-  if (content === null) {
-    watcherSyncedHashes.set(relPath, null);
-    return Promise.resolve();
-  }
-  const bytes = typeof content === 'string' ? new TextEncoder().encode(content) : content;
-  return contentHash(bytes).then((h) => {
-    watcherSyncedHashes.set(relPath, h);
-  });
+/** @deprecated 之前用于 watcher hash 对比, 现 no-op. 保留签名兼容 runtime.ts 调用. */
+export function recordSyncedHash(_relPath: string, _content: string | Uint8Array | null): Promise<void> {
+  return Promise.resolve();
 }
 
 // ---- 真实 stat (FsPty node worker 'stat' op) ----
@@ -226,6 +239,8 @@ const statCache = new Map<string, { size: number; mtimeMs: number }>();
 /** 清 stat 缓存 (写入/外部修改后, 保证下次 stat 拿到新值) */
 function invalidateStat(idePath: string): void {
   const norm = !idePath || idePath === '/' ? '/' : idePath.replace(/\/+$/, '');
+  const had = statCache.has(norm);
+  if (had) console.log('[cache] invalidateStat', { norm, hadValue: statCache.get(norm) });
   statCache.delete(norm);
 }
 
@@ -248,26 +263,24 @@ async function contentHash(bytes: Uint8Array): Promise<string> {
 const DIR_HASH = 'dir';
 
 /** 读路径状态 hash: 文件 → 内容 hash; 目录 → 'dir' 标记; 不存在 → null (DELETED).
- *  注: 目录不能走 fs.read (读目录失败返回 null 会被当成"已删除", 创建/删除 hash 一致 → skip 吞事件). */
+ *  注: 目录不能走 fs.read (读目录失败返 null 会被当成"已删除", 创建/删除 hash 一致 → skip 吞事件). */
 async function readPathHash(relPath: string): Promise<string | null> {
   try {
-    const fsApi = (window as any).__APP_FS__;
-    if (!fsApi?.read) return null;
-    // 先确认真实存在性: 用 FsPty stat (真实宿主磁盘, 不走 listCache 缓存).
-    // 删除后 read 可能返回空数组而非抛错, 且 exists() 走 listCache 缓存误报 → 空文件 hash
-    // 跟创建时一致 → skip, 删除事件被吞. stat 真实存在 → null (DELETED).
-    try {
-      const stat = await fsStat(relPath);
-      if (!stat) return null;
-      if (stat.type === 'directory') return DIR_HASH;
-    } catch {
-      return null;
-    }
-    const bytes = await fsApi.read(relPath);
-    if (!bytes || bytes.length === 0) return await contentHash(new Uint8Array(0));
-    return await contentHash(bytes as Uint8Array);
-  } catch {
-    return null;  // 文件不存在 (删除/目录)
+    console.log('[readPathHash] IN', { relPath });
+    // 1. 先 stat 真实宿主磁盘确认存在性 + 区分文件/目录
+    const stat = await fsStat(relPath);
+    if (!stat) { console.log('[readPathHash] stat null → return null', { relPath }); return null; }
+    if (stat.type === 'directory') { console.log('[readPathHash] dir', { relPath }); return DIR_HASH; }
+    // 2. 读真实磁盘内容 (不走 BrowserFS InMemory — 那可能跟磁盘不一致)
+    const bytes = await fsReadRaw(relPath);
+    if (bytes === null) { console.log('[readPathHash] read null → return null', { relPath }); return null; }
+    // bytes 是 Uint8Array(0) 时 = 文件存在但 0 字节, 不应当成"不存在"
+    const h = await contentHash(bytes);
+    console.log('[readPathHash] file hash', { relPath, len: bytes.length, hash: h });
+    return h;
+  } catch (e) {
+    console.log('[readPathHash] EXC', { relPath, err: (e as any)?.message });
+    return null;
   }
 }
 
@@ -285,6 +298,7 @@ const debounceMap = new Map<string, { timer: ReturnType<typeof setTimeout>; even
  * 内部再做 hash 对比 (自己保存/无变化跳过, 断循环).
  */
 function scheduleFsFire(key: string, changeType: FileChangeType): void {
+  console.log('[scheduleFsFire] IN', { key, changeType });
   // 关键: BrowserFS 在 sumi 里的 URI 形如 `file:///<host abs path>` (e.g.
   // `file:///Users/weizuxiao/Documents/2026春季学期实验/4.txt`), 不是 codeblitz 内部的
   // `file://${WORKSPACE_ROOT}${key}` (e.g. `file:///workspace/4.txt`).
@@ -295,23 +309,19 @@ function scheduleFsFire(key: string, changeType: FileChangeType): void {
   const absPath = hostCwd && key.startsWith('/') ? `${hostCwd.replace(/\/$/, '')}${key}` : key;
   const uri = URI.file(absPath).toString();
   const prev = debounceMap.get(key);
-  if (prev) clearTimeout(prev.timer);
+  if (prev) { console.log('[scheduleFsFire] RESET prev timer', { key, prevChange: prev.event }); clearTimeout(prev.timer); }
   const timer = setTimeout(() => {
     debounceMap.delete(key);
     void (async () => {
       const h = await readPathHash(key);
-      const synced = watcherSyncedHashes.get(key);
-      if (h === synced) {
-        // 一致: editor 保存过 / 内容没变 → 跳过 (断循环)
-        console.log('[watcher] skip (hash same)', key, h);
-        return;
-      }
+      // 之前这里: const synced = watcherSyncedHashes.get(key); if (h === synced) skip. 现去掉.
+      // 断循环靠 (1) fs.write '内容一致不写' (2) 防抖 100ms (3) __APP_FS_EXTERNAL_SYNC__ 抑制回写.
       // 按最终状态修正: 文件不存在 → DELETED; 存在 → ADDED/UPDATED
       let finalEvent = changeType;
       if (h === null) {
         finalEvent = FileChangeType.DELETED;
       }
-      console.log('[watcher] → fireFilesChange', uri, finalEvent, { old: synced, now: h });
+      console.log('[watcher] → fireFilesChange', uri, finalEvent, { now: h });
       // 外部修改: 清 stat 缓存, 下次 stat 拿新 mtime/size (编辑器重载后 checkInSync 同值)
       invalidateStat(key);
       if (watcherFireFn) {
@@ -322,10 +332,8 @@ function scheduleFsFire(key: string, changeType: FileChangeType): void {
         : finalEvent === FileChangeType.DELETED ? 'unlink'
         : 'change';
       window.dispatchEvent(new CustomEvent('fs:changed', { detail: { type: typeLabel, path: key } }));
-      // 更新已同步 hash (文件存在 → hash; 不存在 → null)
-      watcherSyncedHashes.set(key, h);
     })();
-  }, 300);
+  }, 100);
   debounceMap.set(key, { timer, event: changeType, uri });
 }
 
@@ -442,6 +450,7 @@ export class FileSystemServiceImpl implements IFileSystem {
     window.addEventListener('beforeunload', () => stopFsWatcher());
     // 把 fireFilesChange 注入到 watcher 模块 (避免循环 import) + 同步打开的编辑器 (外部修改 → reload)
     bindWatcherFireFilesChange(async (changes) => {
+      console.log('[debug] bindWatcherFireFilesChange IN', { changes });
       // 清 BrowserFS readable (DynamicRequest) entriesLoaded → explorer 重新拉真实目录.
       // 注意: 不能 clearCache 全清 (目录树被清空后 OverlayFS 写文件 EBUSY).
       try { (window as any).__RESET_BFS_CACHE__?.(); } catch { /* ignore */ }
@@ -762,6 +771,7 @@ export class FileSystemServiceImpl implements IFileSystem {
   // ---- 相对路径接口（OverlayFS 对接）----
 
   async list(idePath: string): Promise<FsEntry[]> {
+    console.log('[fs.list] IN', { idePath });
     // /api/fs/list 直连: 返回 [{path, type, size?, mtime?}]
     const norm = !idePath || idePath === '/' ? '/' : idePath.replace(/\/+$/, '');
     const queryPath = norm === '/' ? '.' : norm.replace(/^\/+/, '');
@@ -772,10 +782,12 @@ export class FileSystemServiceImpl implements IFileSystem {
         name: e.path.replace(/\/+$/, '').split('/').pop() || '',
         type: e.type === 'directory' ? 'directory' : 'file',
       })) : [];
+      console.log('[fs.list] OUT', { idePath, count: entries.length, names: entries.map(e => e.name) });
       // 回填 stat 缓存 (meta 直接命中, 避免重复 list)
       this.listCache.set(norm, entries);
       return entries;
-    } catch {
+    } catch (e) {
+      console.log('[fs.list] ERR', { idePath, err: (e as any)?.message });
       return [];
     }
   }
@@ -801,18 +813,22 @@ export class FileSystemServiceImpl implements IFileSystem {
     const norm = idePath === '/' ? '/' : idePath.replace(/\/+$/, '');
     const base = norm.includes('/') ? norm.slice(0, norm.lastIndexOf('/')) || '/' : '/';
     const name = norm === '/' ? '' : norm.slice(norm.lastIndexOf('/') + 1);
+    console.log('[fs.meta] IN', { idePath, norm, base, name });
 
     // 缓存命中 (readdir 已经拿过)
     const cached = this.listCache.get(base);
     let entry: FsEntry | undefined;
     if (cached) {
+      console.log('[cache] listCache HIT', { base, size: cached.length, lookFor: name });
       entry = cached.find((e) => e.name === name);
     }
     // 未命中: list 父目录拿 entry (opencode SDK /file 不返 mtime, mtime 由 statCache 真实 stat 补)
     if (!entry) {
+      console.log('[cache] listCache MISS, calling list', { base });
       const entries = await this.list(base);
       this.listCache.set(base, entries);
       entry = entries.find((e) => e.name === name);
+      console.log('[cache] listCache FILLED', { base, size: entries.length, found: !!entry, foundType: entry?.type });
     }
     if (!entry) throw new Error(`stat: not found ${idePath}`);
     // 目录: 不需要 size/mtime (checkInSync 只对文件, setContent 目录会抛 FileIsADirectory)
@@ -821,8 +837,11 @@ export class FileSystemServiceImpl implements IFileSystem {
     }
     // 文件: 真实 size + mtime (FsPty worker 'stat', 缓存)
     let st: { size: number; mtimeMs: number } | null = statCache.get(norm) ?? null;
-    if (!st) {
+    if (st) {
+      console.log('[cache] statCache HIT', { norm, st });
+    } else {
       const stat = await fsStat(idePath);
+      console.log('[cache] statCache MISS, fsStat result', { norm, stat });
       if (stat && typeof stat?.size === 'number') {
         st = { size: stat.size, mtimeMs: stat.mtime || 0 };
         statCache.set(norm, st);
@@ -833,6 +852,7 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   async read(idePath: string): Promise<Uint8Array> {
+    console.log('[fs.read] IN', { idePath, stack: new Error().stack?.split('\n').slice(2, 5).join(' | ') });
     // /api/fs/read 直连: 返回原始字节 (text/binary 统一)
     const relPath = relForApi(idePath);
     const base = appBaseUrl();
@@ -875,18 +895,21 @@ export class FileSystemServiceImpl implements IFileSystem {
     content: string | { base64: string },
     onProgress?: (done: number, total: number) => void,
   ): Promise<boolean> {
+    console.log('[fs.write] IN', { idePath, contentType: typeof content, contentLen: typeof content === 'string' ? content.length : (content as any).base64?.length, stack: new Error().stack?.split('\n').slice(2, 5).join(' | ') });
     const abs = absPath(idePath);
     // 写入前对比远程内容: 文件已存在且内容一样 → 跳过写入 (防重复写 + 防 OverlayFS EBUSY 写路径).
     // 先 stat 确认存在 (SDK read 对不存在返回空数组而非抛错, 直接对比会把"新建空文件"误判为内容一致跳过!)
     if (typeof content === 'string') {
       try {
         const st = await fsStat(idePath);
+        console.log('[fs.write] content-skip-check', { idePath, statType: st?.type });
         if (st && st.type === 'file') {
           const remote = await this.read(idePath);
           const remoteText = new TextDecoder().decode(remote);
+          console.log('[fs.write] content-skip-compare', { idePath, remoteLen: remoteText.length, localLen: content.length, same: remoteText === content });
           if (remoteText === content) {
-            // 内容一致: 不写, 但记录 hash (断循环), 返回成功
-            await recordSyncedHash(idePath, content);
+            // 内容一致: 不写 (避免触发写事件循环 + 触发 opencode 版本号冲突错误).
+            console.log('[fs.write] content-skip-RETURN', { idePath });
             return true;
           }
         }
@@ -894,17 +917,16 @@ export class FileSystemServiceImpl implements IFileSystem {
     }
     const b64 = typeof content === 'string' ? bytesToBase64(content) : content.base64;
     try {
+      console.log('[fs.write] POST /api/fs/write', { idePath, b64Len: b64.length });
       await fsApiPost('/api/fs/write', { path: relForApi(idePath), content: b64 });
+      console.log('[fs.write] POST /api/fs/write OK', { idePath });
     } catch (e) {
       console.error('[fs.write] fail:', idePath, e);
       return false;
     }
     onProgress?.(b64.length, b64.length);
+    console.log('[fs.write] after-POST invalidateParent + restore', { idePath });
     this.invalidateParent(idePath);
-    // 记录自写 hash → pty watch 对比一致 → skip 不 fire (断循环)
-    if (typeof content === 'string') {
-      await recordSyncedHash(idePath, content);
-    }
     // 刚写的文件必然存在 → 从 OverlayFS deletionLog 恢复 (历史残留误删标记会挡 explorer + 触发反向删远程)
     try { (window as any).__RESTORE_DELETION_LOG__?.(idePath); } catch { /* ignore */ }
     return true;
@@ -916,12 +938,18 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   async rm(idePath: string): Promise<boolean> {
+    // Guard: 拒绝 mount root 或 '.' — relForApi('/') === '.', opencode 端 fs.remove('.', recursive=true) = 删整个 cwd.
+    const rel = relForApi(idePath);
+    if (rel === '/' || rel === '' || rel === '.') { console.warn('[fs.rm] skip mount root', { idePath, rel }); return false; }
+    console.log('[fs.rm] IN', { idePath, rel, stack: new Error().stack?.split('\n').slice(2, 5).join(' | ') });
     try {
-      await fsApiPost('/api/fs/remove', { path: relForApi(idePath), recursive: true });
+      console.log('[fs.rm] POST /api/fs/remove', { idePath });
+      await fsApiPost('/api/fs/remove', { path: rel, recursive: true });
+      console.log('[fs.rm] POST OK', { idePath });
       this.invalidateParent(idePath);
-      await recordSyncedHash(idePath, null);  // 自删记录 null → watcher 对比一致 skip
       return true;
-    } catch {
+    } catch (e) {
+      console.log('[fs.rm] ERR', { idePath, err: (e as any)?.message });
       return false;
     }
   }
@@ -937,6 +965,7 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   async mkdirp(idePath: string): Promise<boolean> {
+    console.log('[fs.mkdirp] IN', { idePath, stack: new Error().stack?.split('\n').slice(2, 5).join(' | ') });
     try {
       await fsApiPost('/api/fs/mkdir', { path: relForApi(idePath), recursive: true });
       this.invalidateParent(idePath);
@@ -947,6 +976,7 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   async move(from: string, to: string): Promise<boolean> {
+    console.log('[fs.move] IN', { from, to, stack: new Error().stack?.split('\n').slice(2, 5).join(' | ') });
     try {
       await fsApiPost('/api/fs/rename', { from: relForApi(from), to: relForApi(to) });
       this.invalidateParent(from);
@@ -960,6 +990,7 @@ export class FileSystemServiceImpl implements IFileSystem {
   /** 文件树变化后: 清掉相关缓存 (自身 + 父目录: listCache + statCache) */
   private invalidateParent(idePath: string): void {
     const norm = idePath === '/' ? '/' : idePath.replace(/\/+$/, '');
+    console.log('[cache] invalidateParent', { idePath, norm });
     this.listCache.delete(norm);
     const parent = norm.includes('/') ? norm.slice(0, norm.lastIndexOf('/')) || '/' : '/';
     this.listCache.delete(parent);
