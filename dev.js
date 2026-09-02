@@ -91,11 +91,10 @@ function sumiBuildUpToDate() {
 }
 
 // ============================================================================
-// 0. 清理占用端口 / 残留 opencode 进程
+// 0. 清理占用端口的进程
 //    必须在 build 之前: Windows 上产物 exe 被运行中进程占用时无法删除 (rm 会报 Operation not permitted)
 // ============================================================================
 killPort(PORT);
-killOpenCodeProcesses();
 
 console.log(`[numas] step 1/3: sumi build (cwd=${SUMI})`);
 if (FAST) {
@@ -273,17 +272,7 @@ function killPort(port) {
   } catch { /* ignore */ }
 }
 
-function killOpenCodeProcesses() {
-  try {
-    if (isWin) {
-      const r = spawnSync('taskkill', ['/F', '/IM', 'opencode.exe', '/T']);
-      if (r.status === 0) console.log('[numas] 已清理残留 opencode.exe 进程');
-    } else {
-      const r = spawnSync('pkill', ['-x', 'opencode']);
-      if (r.status === 0) console.log('[numas] 已清理残留 opencode 进程');
-    }
-  } catch { /* ignore */ }
-}
+
 console.log(`[numas] step 3/3: 启 opencode web (hostname=0.0.0.0, port=${PORT}, cors=*, registry=${REGISTRY})`);
 killPort(PORT);
 
