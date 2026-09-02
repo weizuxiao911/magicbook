@@ -370,7 +370,9 @@ function scheduleFsFire(key: string, changeType: FileChangeType): void {
         : 'change';
       window.dispatchEvent(new CustomEvent('fs:changed', { detail: { type: typeLabel, path: key } }));
     })();
-  }, 100);
+    // 防抖 250ms: server @parcel/watcher 自身 200ms 防抖, 100ms 窗口会反复 reset +
+    // 双路径 (PTY + SSE) 双 fire → 250ms 合并 server 双事件, 只 fire 一次
+  }, 250);
   debounceMap.set(key, { timer, event: changeType, uri });
 }
 
@@ -1040,14 +1042,15 @@ export class FileSystemServiceImpl implements IFileSystem {
   async listDir(absPath: string): Promise<FsEntry[]> {
     console.log('[fs.listDir] IN', { absPath });
     try {
+      const norm = normalizeAbs(absPath);
       const data = await fsApiGet<Array<{ path: string; type: 'file' | 'directory' }>>(`/api/fs/list?path=.`, {
-        headers: { 'x-opencode-directory': encodeURI(absPath.replace(/\\/g, '/')) },
+        headers: { 'x-opencode-directory': encodeURI(norm) },
       });
       const entries: FsEntry[] = Array.isArray(data) ? data.map((e) => ({
         name: e.path.replace(/\/+$/, '').split('/').pop() || e.path,
         type: e.type === 'directory' ? 'directory' : 'file',
       })) : [];
-      console.log('[fs.listDir] OUT', { absPath, count: entries.length });
+      console.log('[fs.listDir] OUT', { absPath, norm, count: entries.length });
       return entries;
     } catch (e) {
       console.warn('[fs.listDir] ERR', { absPath, err: (e as any)?.message });
@@ -1061,7 +1064,7 @@ export class FileSystemServiceImpl implements IFileSystem {
    */
   async mkdirAbs(absPath: string): Promise<boolean> {
     console.log('[fs.mkdirAbs] IN', { absPath });
-    const parent = absPath.replace(/\\/g, '/').replace(/\/+$/, '');
+    const parent = normalizeAbs(absPath).replace(/\/+$/, '');
     const name = parent.split('/').pop() || '';
     try {
       await fsApiPost('/api/fs/mkdir', { path: name, recursive: true }, {

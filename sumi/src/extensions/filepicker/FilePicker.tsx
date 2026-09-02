@@ -16,11 +16,11 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 import { notification } from '@opensumi/ide-components/lib/notification';
-
-import { FsToken, type IFileSystem } from '../../commands/fs';
 import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/injectable-hooks';
+
+import { normalizeCwdPath } from '../../service/env';
+import { FsToken, type IFileSystem } from '../../commands/fs';
 
 interface DirEntry { name: string; path: string; type: 'file' | 'directory'; }
 
@@ -36,10 +36,6 @@ export interface FilePickerConfig {
   root?: string;
 }
 
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\"'\"'`)}'`;
-}
-
 async function browseDir(fs: IFileSystem, path: string): Promise<{ path: string; entries: DirEntry[] }> {
   const raw = await fs.listDir(path);
   const list: DirEntry[] = raw.map((e) => ({
@@ -48,32 +44,6 @@ async function browseDir(fs: IFileSystem, path: string): Promise<{ path: string;
     type: e.type,
   }));
   return { path: path.replace(/\/+$/, ''), entries: list };
-}
-
-let _fsClient: any = null;
-let _fsSessionId: string | null = null;
-
-async function getFsClient(): Promise<any> {
-  if (_fsClient) return _fsClient;
-  const base = appBaseUrl();
-  if (!base) throw new Error('app base url not ready');
-  _fsClient = createOpencodeClient({
-    baseUrl: base,
-    headers: cwdHeader(),
-    responseStyle: 'fields',
-    throwOnError: true,
-  });
-  return _fsClient;
-}
-
-async function getFsSession(): Promise<string> {
-  if (_fsSessionId) return _fsSessionId;
-  const client = await getFsClient();
-  const { data, error } = await client.session.create({ title: 'fp-shim' });
-  if (error || !data?.id) throw new Error('fs session create failed');
-  const id = data.id as string;
-  _fsSessionId = id;
-  return id;
 }
 
 async function mkdirDir(fs: IFileSystem, parent: string, name: string): Promise<{ ok: boolean; path: string }> {
@@ -167,9 +137,11 @@ export const FilePicker: React.FC = () => {
       setTimeout(() => {
         inputRef.current?.focus();
         // 初始目录: config.initialPath 优先, 否则当前工作目录 (均在 root 内)
-        const stored = (() => { try { return localStorage.getItem('APP_CWD') || ''; } catch { return ''; } })();
-        const fallback = (window as any).__APP_CONFIG__?.cwd || '';
-        const start = cfg.initialPath || stored || fallback || '/';
+        // 必须 normalizeCwdPath: Windows 历史 APP_CWD 可能是 '/D:/...' 错误形态,
+        // 直接当浏览起点 → listDir header '/D:/...' → server 按 POSIX 根解析 → 500
+        const stored = (() => { try { return normalizeCwdPath(localStorage.getItem('APP_CWD') || ''); } catch { return ''; } })();
+        const fallback = normalizeCwdPath((window as any).__APP_CONFIG__?.cwd || '');
+        const start = normalizeCwdPath(cfg.initialPath || '') || stored || fallback || '/';
         doBrowse(withinRoot(start) ? start : (rootRef.current || start));
       }, 100);
     };
@@ -198,7 +170,7 @@ export const FilePicker: React.FC = () => {
     if (!name || !currentPath) return;
     setLoading(true);
     try {
-      await mkdirDir(currentPath, name);
+      await mkdirDir(fs, currentPath, name);
       setMkMode(false); setMkName('');
       doBrowse(currentPath);
     } catch (e: any) { notifyError(e?.message || '创建失败'); }
