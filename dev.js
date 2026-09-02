@@ -94,6 +94,7 @@ function parseFlagInt(flag, fallback) {
 const PORT = parseFlagInt('--port', parseInt(process.env.NUMAS_PORT || '4096', 10));
 const REGISTRY = parseFlag('--registry', process.env.NUMAS_REGISTRY || 'http://127.0.0.1:7790');
 const FORCE_BUILD = process.argv.includes('--force-build');
+const FAST = process.argv.includes('--fast') || process.env.NUMAS_FAST === '1' || process.env.NUMAS_FAST === 'true';
 
 /** 跨平台 which */
 function whichCmd(cmd) {
@@ -335,7 +336,9 @@ function sumiBuildUpToDate() {
 }
 
 console.log(`[numas] sumi build (cwd=${SUMI}) ...`);
-if (sumiBuildUpToDate()) {
+if (FAST) {
+  console.log('[numas] --fast: 跳过 sumi build (复用 dist)');
+} else if (sumiBuildUpToDate()) {
   console.log('[numas] sumi 源码未变, 跳过 build (复用 dist)');
 } else {
   const t0 = Date.now();
@@ -350,28 +353,75 @@ if (sumiBuildUpToDate()) {
 
 if (!fs.existsSync(path.join(sumiDist, 'index.html'))) {
   console.error(`[numas] sumi build 产物缺 index.html: ${sumiDist}`);
+  console.error('[numas] 提示: 首次启动或 --fast 但没产物, 去掉 --fast 或加 --force-build');
   process.exit(1);
 }
 
 // ----------------------------------------------------------------------------
 // 7. cp sumi/dist → opencode/packages/app/dist (替换官方 UI)
+//    增量 mirror: 比 mtime+size, 只 cp 变化文件; dst 独有文件删 (避免 webpack
+//    旧 hash 文件名残留). 复用场景下 86M 全量 cp → 几乎 0 cp.
 // ----------------------------------------------------------------------------
 console.log(`[numas] 复制 sumi/dist → opencode/packages/app/dist (替换官方 UI)`);
-function copyDir(src, dst) {
+function mirrorDir(src, dst) {
   fs.mkdirSync(dst, { recursive: true });
-  for (const e of fs.readdirSync(src, { withFileTypes: true })) {
-    const s = path.join(src, e.name);
-    const d = path.join(dst, e.name);
-    if (e.isDirectory()) copyDir(s, d);
-    else fs.copyFileSync(s, d);
+  // 收集 src 文件 { rel: { srcPath, mtimeMs, size } }
+  const srcSet = new Map();
+  function collect(dir, rel) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) collect(p, r);
+      else {
+        const st = fs.statSync(p);
+        srcSet.set(r, { srcPath: p, mtimeMs: st.mtimeMs, size: st.size });
+      }
+    }
   }
+  collect(src, '');
+  // 收集 dst 已有文件 (含子目录)
+  const dstSet = new Map();
+  function collectDst(dir, rel) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) collectDst(p, r);
+      else dstSet.set(r, p);
+    }
+  }
+  collectDst(dst, '');
+  // cp 变更文件 (mtime+size 一致跳过)
+  let copied = 0, skipped = 0;
+  for (const [rel, { srcPath, mtimeMs, size }] of srcSet) {
+    const dstPath = path.join(dst, rel);
+    let dstStat = null;
+    try { dstStat = fs.statSync(dstPath); } catch { /* */ }
+    if (dstStat && dstStat.mtimeMs >= mtimeMs && dstStat.size === size) {
+      skipped++;
+      continue;
+    }
+    fs.mkdirSync(path.dirname(dstPath), { recursive: true });
+    fs.copyFileSync(srcPath, dstPath);
+    copied++;
+  }
+  // 删 dst 多余文件 (深层先删, 避免空目录残留)
+  const toDelete = [];
+  for (const [rel, dstPath] of dstSet) {
+    if (!srcSet.has(rel)) toDelete.push(dstPath);
+  }
+  toDelete.sort((a, b) => b.length - a.length);
+  for (const p of toDelete) {
+    try { fs.unlinkSync(p); } catch { /* */ }
+  }
+  console.log(`[numas]   mirror: cp ${copied}, 跳过 ${skipped}, 删 ${toDelete.length} → ${dst}`);
 }
-// 先清空 packages/app/dist (避免老文件残留, 例如 favicon 多版本)
-if (fs.existsSync(OPENCODE_APP_DIST)) {
-  fs.rmSync(OPENCODE_APP_DIST, { recursive: true, force: true });
+if (FAST) {
+  console.log('[numas] --fast: 跳过 cp (opencode binary 内嵌的仍是上次 dist)');
+} else {
+  mirrorDir(sumiDist, OPENCODE_APP_DIST);
 }
-copyDir(sumiDist, OPENCODE_APP_DIST);
-console.log(`[numas]   → ${OPENCODE_APP_DIST}`);
 
 // ----------------------------------------------------------------------------
 // 8. opencode build (hash 增量 + NUMAS_WEB_DIST=.../sumi/dist 嵌入)
@@ -406,7 +456,9 @@ function opencodeBuildUpToDate() {
 }
 
 console.log(`[numas] opencode build (cwd=${OPENCODE_PKG}, NUMAS_WEB_DIST=${sumiDist}) ...`);
-if (opencodeBuildUpToDate()) {
+if (FAST) {
+  console.log('[numas] --fast: 跳过 opencode build (复用二进制)');
+} else if (opencodeBuildUpToDate()) {
   console.log('[numas] opencode 源码 + sumi dist 未变, 跳过 build (复用二进制)');
 } else {
   const t0 = Date.now();
@@ -432,6 +484,7 @@ if (opencodeBuildUpToDate()) {
 const finalBin = fs.existsSync(OPENCODE_BIN) ? OPENCODE_BIN : OPENCODE_BIN_WIN;
 if (!fs.existsSync(finalBin)) {
   console.error(`[numas] 找不到 opencode binary: ${finalBin}`);
+  console.error('[numas] 提示: 首次启动或 --fast 但没产物, 去掉 --fast 或加 --force-build');
   process.exit(1);
 }
 
