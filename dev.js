@@ -1,29 +1,37 @@
 #!/usr/bin/env node
 /**
- * numas dev.js — 根目录 dev 启动入口 (= npx bin 入口)
+ * numas dev.js (集成模式) — 根目录 dev 启动入口 (= npx bin 入口)
  *
  * 仓库根 package.json#bin = "./dev.js", `npx github:user/repo` 调此文件.
- *   启动 dev = 启动整个 numas (web + opencode), 一行命令用户无需关注子项目.
+ *   启动 = 整个 numas IDE (sumi/opencode 二合一), 一行命令.
+ *
+ * 架构 (集成模式):
+ *   sumi/ (webpack 客户端 IDE) + opencode/ (go-style bun 单文件服务)
+ *   dev.js 编排: sumi build → cp 到 opencode/packages/app/dist → rebuild opencode (内嵌 sumi dist) → 启 opencode web.
+ *   浏览器打开 4096 → opencode serve 内嵌的 numas IDE.
  *
  * 流程:
  *   0. Node 版本检查 (≥ 20, 用户唯一前置)
- *   1. 检查 web deps 完整性 (web/node_modules/.bin/webpack + 依赖 hash marker), 没装/版本变更才 npm install
- *   2. 检查 opencode (PATH 全局 + web 本地兜底), 没装就 npm i -g opencode-ai
- *   3. 检查 watchexec (fs watcher PTY 依赖 — node FSEvents 在 opencode pty 必炸, watchexec 实测可用), 没装按平台装
- *   4. 清掉端口残留 zombie (上轮跑剩的), 避免 listen EADDRINUSE
- *   5. 启 opencode (serve 模式, detached, 进程组 pgid=-pid)
- *   6. 注入 env (APP_BASE_URL / OPENCODE_PORT / WEB_PORT) → spawn npm run dev
- *   7. 4s 后自动打开浏览器 7788
- *   8. 父进程 SIGINT/SIGTERM → kill 两组子进程 (opencode + webpack)
+ *   1. sumi deps 完整性 (sumi/node_modules/.bin/webpack + 依赖 hash marker) → npm install
+ *   2. opencode 全局 binary (PATH 全局 npm i -g opencode-ai)
+ *   3. watchexec (fs watcher PTY 依赖) → brew / apt / PowerShell
+ *   4. killPort(4096) 清理 zombie
+ *   5. sumi build (hash 增量) → sumi/dist
+ *   6. cp -r sumi/dist → opencode/packages/app/dist (替换官方 UI)
+ *   7. opencode build (hash 增量 + NUMAS_WEB_DIST=.../sumi/dist) → 嵌入 sumi 的新二进制
+ *   8. 启新 opencode web @ 4096 + --cors * + --registry 7790
+ *   9. 4s 后自动开浏览器 → http://localhost:4096
+ *  10. SIGINT/SIGTERM cleanup (杀整组)
  *
- * 命令行 flag (覆盖默认端口):
- *   --server-port <n>    opencode 端口 (默认 24096)
- *   --web-port <n>       webpack 端口 (默认 7788)
+ * 命令行 flag:
+ *   --port <n>        opencode web 端口 (默认 4096)
+ *   --registry <url>  vsix registry 地址 (默认 http://127.0.0.1:7790)
+ *   --force-build     强制重 build (sumi + opencode), 忽略 hash 缓存
  *
  * 设计: 单文件入口, 跨平台, 不依赖额外进程编排器.
- *   用户唯一前置 = Node ≥ 20. 其他 (web deps / opencode / chokidar-cli) dev.js 自检自装.
- *   npx tarball 装 numas, web deps 走 web/ 一次性 install, opencode + chokidar-cli 走全局 npm i -g.
- *   进程树: dev.js → { opencode, webpack } (两个独立 detached 进程组).
+ *   用户唯一前置 = Node ≥ 20. 其他 (sumi deps / opencode / watchexec) dev.js 自检自装.
+ *   进程树: dev.js → opencode web (独立 detached 进程组, pgid=-pid).
+ *   registry 7790 由用户手动启 (numas/registry/), 集成模式不自动启.
  */
 
 const { spawn, spawnSync } = require('node:child_process');
@@ -33,15 +41,29 @@ const path = require('node:path');
 const os = require('node:os');
 
 const ROOT = path.resolve(__dirname);
-const WEB = path.join(ROOT, 'web');
+const SUMI = path.join(ROOT, 'sumi');
+const OPENCODE = path.join(ROOT, 'opencode');
+const OPENCODE_PKG = path.join(OPENCODE, 'packages', 'opencode');
+const OPENCODE_APP_DIST = path.join(OPENCODE, 'packages', 'app', 'dist');
 
 /** 跨平台 */
 const isWin = process.platform === 'win32';
 const npmCmd = isWin ? 'npm.cmd' : 'npm';
+const bunCmd = isWin ? 'bun.cmd' : 'bun';
 
-/** Node 版本检查 — 用户唯一前置条件是 Node ≥ 20 (LTS).
- *  process.versions.node 形如 '24.15.0' → parseInt('24.15.0') === 24
- */
+/** 平台标识 (opencode binary 输出目录: opencode-<os>-<arch>) */
+function platformTag() {
+  const osMap = { darwin: 'darwin', linux: 'linux', win32: 'windows' };
+  return `${osMap[process.platform] || process.platform}-${process.arch}`;
+}
+const PLATFORM_TAG = platformTag();
+const OPENCODE_BIN_REL = `dist/opencode-${PLATFORM_TAG}/bin/opencode`;
+const OPENCODE_BIN = path.join(OPENCODE_PKG, OPENCODE_BIN_REL);
+const OPENCODE_BIN_WIN = OPENCODE_BIN + '.exe';
+
+// ----------------------------------------------------------------------------
+// 0. Node 版本检查
+// ----------------------------------------------------------------------------
 function checkNodeVersion() {
   const major = parseInt(process.versions.node, 10);
   if (Number.isNaN(major) || major < 20) {
@@ -53,31 +75,25 @@ function checkNodeVersion() {
 }
 checkNodeVersion();
 
-/** 端口 (默认 + 命令行 flag 覆盖; npx 调用时传 --server-port / --web-port) */
-function parsePortFlag(flag, fallback) {
+// ----------------------------------------------------------------------------
+// 命令行 flag
+// ----------------------------------------------------------------------------
+function parseFlag(flag, fallback) {
   const i = process.argv.indexOf(flag);
-  if (i >= 0 && process.argv[i + 1]) {
-    const n = parseInt(process.argv[i + 1], 10);
+  if (i >= 0 && process.argv[i + 1]) return process.argv[i + 1];
+  return fallback;
+}
+function parseFlagInt(flag, fallback) {
+  const v = parseFlag(flag, null);
+  if (v != null) {
+    const n = parseInt(v, 10);
     if (!isNaN(n) && n > 0) return n;
   }
   return fallback;
 }
-const OPENCODE_PORT = parsePortFlag('--server-port', parseInt(process.env.OPENCODE_PORT || '24096', 10));
-const WEB_PORT = parsePortFlag('--web-port', parseInt(process.env.WEB_PORT || '7788', 10));
-
-/** 关键 bin 路径 (opencode 优先 web local → which 全局) */
-const webWebpackBin = path.join(WEB, 'node_modules', '.bin', isWin ? 'webpack.cmd' : 'webpack');
-const webOpencodeBin = path.join(WEB, 'node_modules', '.bin', isWin ? 'opencode.cmd' : 'opencode');
-/** opencode binary 解析: 优先 PATH 全局 (npm i -g 安装), 兜底 web local shim (兼容老环境) */
-function resolveOpencodeBin() {
-  if (whichCmd('opencode')) {
-    const out = isWin ? spawnSync('where', ['opencode']) : spawnSync('which', ['opencode']);
-    const p = String(out.stdout || '').split('\n')[0].trim();
-    if (p) return p;
-  }
-  if (fs.existsSync(webOpencodeBin)) return webOpencodeBin;
-  return null;
-}
+const PORT = parseFlagInt('--port', parseInt(process.env.NUMAS_PORT || '4096', 10));
+const REGISTRY = parseFlag('--registry', process.env.NUMAS_REGISTRY || 'http://127.0.0.1:7790');
+const FORCE_BUILD = process.argv.includes('--force-build');
 
 /** 跨平台 which */
 function whichCmd(cmd) {
@@ -85,16 +101,14 @@ function whichCmd(cmd) {
   return probe.status === 0;
 }
 
-/** 检查 + 自装 (跨平台)
- *  --ignore-scripts: 跳过所有 postinstall (含 spdlog 的 node-gyp rebuild).
- *  spdlog 是 deprecated + native 包, Python 3.14 没 distutils 必崩.
- *  opensumi 用 JS fallback logger, 主流程不受影响.
- *  global=true: 全局 install (npm i -g), 不传 cwd, 用于 opencode 这种工具
- *  afterInstall: 装成功后回调 (写依赖 hash marker 等)
- */
+// ----------------------------------------------------------------------------
+// 1. 通用: 检查 + 自装 (跨平台, --ignore-scripts 跳过 spdlog native postinstall)
+//    global=true: 全局 install (npm i -g)
+//    afterInstall: 装成功后回调 (写 hash marker 等)
+// ----------------------------------------------------------------------------
 function ensureInstalled(label, ready, installCmd, installArgs, cwd, opts = {}) {
   if (ready()) {
-    console.log(`[numas] ${label} deps 已就绪 (复用)`);
+    console.log(`[numas] ${label} 已就绪 (复用)`);
     return;
   }
   console.log(`[numas] 首次运行, 装 ${label}${opts.global ? ' (全局)' : ''} ...`);
@@ -122,74 +136,74 @@ function ensureInstalled(label, ready, installCmd, installArgs, cwd, opts = {}) 
   opts.afterInstall?.();
 }
 
-/** web deps 依赖声明 hash (package.json + package-lock.json) — 对比 node_modules/.numas-deps-hash,
- *  一致则依赖与上次安装时完全相同, 跳过 install 直接跑 */
-const depsMarker = path.join(WEB, 'node_modules', '.numas-deps-hash');
-function depsHash() {
+// ----------------------------------------------------------------------------
+// 2. sumi deps: webpack bin + 依赖 hash marker
+// ----------------------------------------------------------------------------
+const sumiWebpackBin = path.join(SUMI, 'node_modules', '.bin', isWin ? 'webpack.cmd' : 'webpack');
+const sumiDepsMarker = path.join(SUMI, 'node_modules', '.numas-deps-hash');
+function sumiDepsHash() {
   const h = crypto.createHash('sha256');
   for (const f of ['package.json', 'package-lock.json']) {
-    try { h.update(fs.readFileSync(path.join(WEB, f))); } catch { h.update(f); }
+    try { h.update(fs.readFileSync(path.join(SUMI, f))); } catch { h.update(f); }
   }
   return h.digest('hex');
 }
-function depsReady() {
-  if (!fs.existsSync(webWebpackBin)) return false;
-  if (!fs.existsSync(depsMarker)) {
-    // 老环境 (无 marker, 升级前装的): bin 已就绪 → 补写 marker 视为就绪, 避免升级后首次重复 install
-    try { fs.writeFileSync(depsMarker, depsHash()); } catch { /* */ }
+function sumiDepsReady() {
+  if (!fs.existsSync(sumiWebpackBin)) return false;
+  if (!fs.existsSync(sumiDepsMarker)) {
+    try { fs.writeFileSync(sumiDepsMarker, sumiDepsHash()); } catch { /* */ }
     return true;
   }
-  try { return fs.readFileSync(depsMarker, 'utf8').trim() === depsHash(); } catch { return false; }
+  try { return fs.readFileSync(sumiDepsMarker, 'utf8').trim() === sumiDepsHash(); } catch { return false; }
 }
 
-// 1. web deps (react + codeblitz + webpack)
-//   ready: webpack bin 存在 + 依赖 hash marker 一致 (package.json/lock 变更 → 重装)
-//   --ignore-scripts: 跳过 spdlog 等 native postinstall (Python 3.14 没 distutils 必崩)
-//   afterInstall: 写 marker, 下次同版本跳过 install 直接跑
 ensureInstalled(
-  'web',
-  depsReady,
+  'sumi',
+  sumiDepsReady,
   npmCmd,
   ['install', '--include=dev', '--prefer-offline', '--ignore-scripts'],
-  WEB,
-  { afterInstall: () => { try { fs.writeFileSync(depsMarker, depsHash()); } catch { /* */ } } },
+  SUMI,
+  { afterInstall: () => { try { fs.writeFileSync(sumiDepsMarker, sumiDepsHash()); } catch { /* */ } } },
 );
-// 2. opencode (opencode-ai 提供二进制, 全局装到 PATH 让 opencode 命令随时可用)
+
+// ----------------------------------------------------------------------------
+// 3. opencode 全局 binary (opencode-ai)
+// ----------------------------------------------------------------------------
+const webOpencodeBin = path.join(SUMI, 'node_modules', '.bin', isWin ? 'opencode.cmd' : 'opencode');
+function resolveOpencodeBin() {
+  if (whichCmd('opencode')) {
+    const out = isWin ? spawnSync('where', ['opencode']) : spawnSync('which', ['opencode']);
+    const p = String(out.stdout || '').split('\n')[0].trim();
+    if (p) return p;
+  }
+  if (fs.existsSync(webOpencodeBin)) return webOpencodeBin;
+  return null;
+}
+
 ensureInstalled(
   'opencode',
   () => !!resolveOpencodeBin(),
   npmCmd,
   ['install', '-g', '--prefer-offline', '--ignore-scripts', 'opencode-ai'],
-  WEB,
+  SUMI,
   { global: true },
 );
 const opencodeBin = resolveOpencodeBin();
 if (!opencodeBin) {
-  console.error('[numas] opencode 装上但找不到 binary, 检查 PATH 和 web/node_modules');
+  console.error('[numas] opencode 装上但找不到 binary, 检查 PATH 和 sumi/node_modules');
   process.exit(1);
 }
-// 3. watchexec (fs watcher PTY 依赖 — opencode pty 子进程里 node FSEvents 必炸 (EMFILE),
-//    watchexec Rust 实现实测正常且覆盖轮询盲区; 按平台安装)
-//
-//    macOS: brew (标准)
-//    Linux: apt-get (Debian/Ubuntu); root 时不加 sudo, 非 root 加 sudo
-//    Windows: PowerShell 一条龙 — Invoke-RestMethod 查 GitHub API → Invoke-WebRequest 下 zip →
-//      Expand-Archive → 复制到 %LOCALAPPDATA%\numas\bin\watchexec.exe → setx 写用户 PATH
-//      (winget --id watchexec.watchexec 在很多环境查不到 — 仓库 ID 改名 / winget 源未同步;
-//       改用直下更可控, 且 PowerShell 是 Windows 内置, 零额外依赖)
+console.log(`[numas] opencode: ${opencodeBin}`);
+
+// ----------------------------------------------------------------------------
+// 4. watchexec (fs watcher PTY 依赖 — opencode pty 子进程里 node FSEvents 必炸)
+// ----------------------------------------------------------------------------
 function installWatchexecCmd() {
   if (process.platform === 'darwin') return ['brew', ['install', 'watchexec']];
-  if (process.platform === 'win32') {
-    // Windows 走 PowerShell 一条龙 (内含 GitHub API 查询+下载+解压+setx), 同步阻塞
-    installWatchexecWindows();
-    return ['cmd', ['/c', 'echo', 'watchexec installed']];
-  }
-  // linux: 优先 apt (Debian/Ubuntu), 兜底 cargo
+  if (process.platform === 'win32') return ['cmd', ['/c', 'echo', 'watchexec install skipped (Linux/Mac only)']];
   return ['apt-get', ['install', '-y', 'watchexec']];
 }
 
-/** Windows: PowerShell 一条龙装 watchexec (GitHub release → 直下 zip → 解压 → setx PATH)
- *  失败抛错, 由 ensureInstalled 的 status=1 兜底提示 */
 function installWatchexecWindows() {
   const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
   const binDir = path.join(localAppData, 'numas', 'bin');
@@ -198,11 +212,7 @@ function installWatchexecWindows() {
     console.log(`[numas] watchexec 已存在 (复用) → ${exePath}`);
     return;
   }
-  const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
-  // 不硬编 asset 文件名 (含版本号, 跟 tag 强相关), 改从 release JSON 直接拿 assets 数组 —
-  // 找含 "arch-pc-windows-msvc.zip" 的 zip, 避免 "tag 升 / 文件名拼错" → 404.
-  // Node 端通过环境变量传 binDir / arch 给 PS 脚本 (避免 PS 字符串里写 $ 的转义陷阱);
-  // PS 单引号 here-string 写 $env:xxx 解析环境变量.
+  const arch = process.arch === 'arm64' ? 'aarch64' : 'x64';
   const script = `
 $ErrorActionPreference = 'Stop'
 $binDir = $env:NUMAS_BINDIR
@@ -211,7 +221,7 @@ $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/watchexec/watche
 $tag = $release.tag_name
 if (-not $tag) { throw 'GitHub API 未返回 tag_name' }
 $assetObj = $release.assets | Where-Object { $_.name -like ("*" + $arch + "-pc-windows-msvc.zip") -and $_.name -notlike "*.sha*" -and $_.name -notlike "*.b3" } | Select-Object -First 1
-if (-not $assetObj) { throw "未找到 " + $arch + " windows asset (tag=$tag, " + @($release.assets).Count + " assets)" }
+if (-not $assetObj) { throw "未找到 " + $arch + " windows asset" }
 $url = $assetObj.browser_download_url
 $asset = $assetObj.name
 $zipPath = Join-Path $binDir $asset
@@ -229,9 +239,6 @@ Remove-Item $extractDir -Recurse -Force
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($userPath -notlike ("*" + $binDir + "*")) {
   [Environment]::SetEnvironmentVariable('Path', "$userPath;$binDir", 'User')
-  Write-Host '[numas] 已将 bin 目录写入用户 PATH (新开 cmd 生效)'
-} else {
-  Write-Host '[numas] 用户 PATH 已包含 bin 目录 (复用)'
 }
 Write-Host "[numas] watchexec 装到 $binDir\\watchexec.exe"
 `.trim();
@@ -241,39 +248,39 @@ Write-Host "[numas] watchexec 装到 $binDir\\watchexec.exe"
     stdio: 'inherit',
     env: { ...process.env, NUMAS_BINDIR: binDir, NUMAS_ARCH: arch },
   });
-  if (r.status !== 0) {
-    throw new Error(`PowerShell 安装失败 (status=${r.status})`);
-  }
-}
-
-/** Windows: 把 %LOCALAPPDATA%\numas\bin 注入到 process.env.PATH 前部 (本进程 + 子进程继承) */
-function prependWindowsBinToPath() {
-  if (process.platform !== 'win32') return;
-  const binDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'numas', 'bin');
-  if (!fs.existsSync(path.join(binDir, 'watchexec.exe'))) return;
-  const sep = path.delimiter; // Windows ;
-  if (!(process.env.PATH || '').split(sep).some((p) => p.toLowerCase() === binDir.toLowerCase())) {
-    process.env.PATH = `${binDir}${sep}${process.env.PATH || ''}`;
-  }
+  if (r.status !== 0) throw new Error(`PowerShell 安装失败 (status=${r.status})`);
 }
 
 ensureInstalled(
   'watchexec',
   () => whichCmd('watchexec'),
   ...(() => {
+    if (process.platform === 'win32') {
+      try { installWatchexecWindows(); } catch { /* swallow, let --force re-trigger */ }
+      return ['cmd', ['/c', 'echo', 'watchexec check']];
+    }
     const [cmd, args] = installWatchexecCmd();
-    // apt-get 需要 sudo; cargo 兜底提示走 ensureInstalled 的失败分支
-    return [cmd === 'apt-get' && process.getuid?.() !== 0 ? 'sudo' : cmd, cmd === 'apt-get' && process.getuid?.() !== 0 ? ['apt-get', ...args] : args];
+    return [cmd === 'apt-get' && process.getuid?.() !== 0 ? 'sudo' : cmd,
+            cmd === 'apt-get' && process.getuid?.() !== 0 ? ['apt-get', ...args] : args];
   })(),
-  WEB,
+  SUMI,
   { global: true },
 );
 
-// 3.1 Windows: 把刚装好的 watchexec.exe 注入 PATH (让 whichCmd / 子进程能找到)
+function prependWindowsBinToPath() {
+  if (process.platform !== 'win32') return;
+  const binDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'numas', 'bin');
+  if (!fs.existsSync(path.join(binDir, 'watchexec.exe'))) return;
+  const sep = path.delimiter;
+  if (!(process.env.PATH || '').split(sep).some((p) => p.toLowerCase() === binDir.toLowerCase())) {
+    process.env.PATH = `${binDir}${sep}${process.env.PATH || ''}`;
+  }
+}
 prependWindowsBinToPath();
 
-// 3. 端口冲突清理 (上轮跑剩的 zombie, 避免 listen EADDRINUSE)
-//    macOS BSD lsof 必须用 `-ti :PORT` (带冒号), Linux 用 `-ti :PORT` 也 OK
+// ----------------------------------------------------------------------------
+// 5. killPort 清理 zombie
+// ----------------------------------------------------------------------------
 function killPort(port) {
   try {
     const out = spawnSync('lsof', ['-ti', `:${port}`]);
@@ -281,25 +288,168 @@ function killPort(port) {
     for (const pid of pids) {
       try { process.kill(parseInt(pid, 10), 'SIGKILL'); } catch { /* */ }
     }
+    if (pids.length) console.log(`[numas] 清理端口 ${port} (${pids.length} 个 pid)`);
   } catch { /* ignore */ }
 }
-killPort(OPENCODE_PORT);
-killPort(WEB_PORT);
+console.log(`[numas] 清理端口 ${PORT} ...`);
+killPort(PORT);
 
-// 4. 启 opencode (独立 detached 进程组, cli.js 持有 pgid)
-//   显式 --cors * 兼容 opencode 默认 CORS = *; --hostname 0.0.0.0 允许外部访问
-console.log(`[numas] 启动 opencode (port=${OPENCODE_PORT}, hostname=0.0.0.0, cors=*)`);
-console.log(`[numas]   cmd: ${opencodeBin}`);
-const opencodeProc = spawn(opencodeBin, [
-  'serve',
+// ----------------------------------------------------------------------------
+// 6. sumi build (hash 增量)
+//    hash = sha256( package.json + lock + src/** + webpack.config.js + scripts/** )
+// ----------------------------------------------------------------------------
+const sumiDist = path.join(SUMI, 'dist');
+const sumiBuildMarker = path.join(sumiDist, '.numas-sumi-build-hash');
+
+function walkSrc(root) {
+  const out = [];
+  function recur(dir) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name === 'node_modules' || e.name === 'dist' || e.name.startsWith('.')) continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) recur(p);
+      else out.push(p);
+    }
+  }
+  recur(root);
+  return out;
+}
+function sumiBuildHash() {
+  const h = crypto.createHash('sha256');
+  for (const f of ['package.json', 'package-lock.json', 'webpack.config.js', 'tsconfig.json']) {
+    try { h.update(fs.readFileSync(path.join(SUMI, f))); } catch { h.update(f); }
+  }
+  for (const f of walkSrc(SUMI)) {
+    try { h.update(fs.readFileSync(f)); } catch { /* */ }
+  }
+  return h.digest('hex');
+}
+function sumiBuildUpToDate() {
+  if (FORCE_BUILD) return false;
+  if (!fs.existsSync(sumiBuildMarker)) return false;
+  try {
+    return fs.readFileSync(sumiBuildMarker, 'utf8').trim() === sumiBuildHash();
+  } catch { return false; }
+}
+
+console.log(`[numas] sumi build (cwd=${SUMI}) ...`);
+if (sumiBuildUpToDate()) {
+  console.log('[numas] sumi 源码未变, 跳过 build (复用 dist)');
+} else {
+  const t0 = Date.now();
+  const r = spawnSync(npmCmd, ['run', 'build'], { cwd: SUMI, stdio: 'inherit', shell: isWin });
+  if (r.status !== 0) {
+    console.error(`[numas] sumi build 失败 (status=${r.status})`);
+    process.exit(1);
+  }
+  console.log(`[numas] sumi build 完成 (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  try { fs.writeFileSync(sumiBuildMarker, sumiBuildHash()); } catch { /* */ }
+}
+
+if (!fs.existsSync(path.join(sumiDist, 'index.html'))) {
+  console.error(`[numas] sumi build 产物缺 index.html: ${sumiDist}`);
+  process.exit(1);
+}
+
+// ----------------------------------------------------------------------------
+// 7. cp sumi/dist → opencode/packages/app/dist (替换官方 UI)
+// ----------------------------------------------------------------------------
+console.log(`[numas] 复制 sumi/dist → opencode/packages/app/dist (替换官方 UI)`);
+function copyDir(src, dst) {
+  fs.mkdirSync(dst, { recursive: true });
+  for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, e.name);
+    const d = path.join(dst, e.name);
+    if (e.isDirectory()) copyDir(s, d);
+    else fs.copyFileSync(s, d);
+  }
+}
+// 先清空 packages/app/dist (避免老文件残留, 例如 favicon 多版本)
+if (fs.existsSync(OPENCODE_APP_DIST)) {
+  fs.rmSync(OPENCODE_APP_DIST, { recursive: true, force: true });
+}
+copyDir(sumiDist, OPENCODE_APP_DIST);
+console.log(`[numas]   → ${OPENCODE_APP_DIST}`);
+
+// ----------------------------------------------------------------------------
+// 8. opencode build (hash 增量 + NUMAS_WEB_DIST=.../sumi/dist 嵌入)
+//    hash = sha256( opencode/packages/opencode/src/** + script/** + sumi dist 内 hash marker )
+//    产物: opencode/packages/opencode/dist/opencode-<platform>/bin/opencode
+// ----------------------------------------------------------------------------
+const modelsApiFixture = path.join(OPENCODE_PKG, 'test', 'tool', 'fixtures', 'models-api.json');
+const opencodeBuildMarker = path.join(OPENCODE_PKG, 'dist', '.numas-opencode-build-hash');
+
+function opencodeBuildHash() {
+  const h = crypto.createHash('sha256');
+  // opencode 关键源码
+  for (const root of [
+    path.join(OPENCODE_PKG, 'src'),
+    path.join(OPENCODE_PKG, 'script'),
+  ]) {
+    for (const f of walkSrc(root)) {
+      try { h.update(fs.readFileSync(f)); } catch { /* */ }
+    }
+  }
+  // NUMAS_WEB_DIST 指向的 sumi/dist hash (跟上一步的 sumi build hash 一致即可)
+  h.update(sumiBuildHash());
+  return h.digest('hex');
+}
+function opencodeBuildUpToDate() {
+  if (FORCE_BUILD) return false;
+  if (!fs.existsSync(OPENCODE_BIN) && !fs.existsSync(OPENCODE_BIN_WIN)) return false;
+  if (!fs.existsSync(opencodeBuildMarker)) return false;
+  try {
+    return fs.readFileSync(opencodeBuildMarker, 'utf8').trim() === opencodeBuildHash();
+  } catch { return false; }
+}
+
+console.log(`[numas] opencode build (cwd=${OPENCODE_PKG}, NUMAS_WEB_DIST=${sumiDist}) ...`);
+if (opencodeBuildUpToDate()) {
+  console.log('[numas] opencode 源码 + sumi dist 未变, 跳过 build (复用二进制)');
+} else {
+  const t0 = Date.now();
+  const env = {
+    ...process.env,
+    NUMAS_WEB_DIST: sumiDist,
+    MODELS_DEV_API_JSON: modelsApiFixture,
+  };
+  const r = spawnSync(bunCmd, ['run', 'script/build.ts', '--single', '--skip-install'], {
+    cwd: OPENCODE_PKG,
+    stdio: 'inherit',
+    shell: isWin,
+    env,
+  });
+  if (r.status !== 0) {
+    console.error(`[numas] opencode build 失败 (status=${r.status})`);
+    process.exit(1);
+  }
+  console.log(`[numas] opencode build 完成 (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  try { fs.writeFileSync(opencodeBuildMarker, opencodeBuildHash()); } catch { /* */ }
+}
+
+const finalBin = fs.existsSync(OPENCODE_BIN) ? OPENCODE_BIN : OPENCODE_BIN_WIN;
+if (!fs.existsSync(finalBin)) {
+  console.error(`[numas] 找不到 opencode binary: ${finalBin}`);
+  process.exit(1);
+}
+
+// ----------------------------------------------------------------------------
+// 9. 启 opencode web (用刚 build 的二进制, 含内嵌 sumi)
+// ----------------------------------------------------------------------------
+console.log(`[numas] 启动 opencode web (port=${PORT}, cors=*, registry=${REGISTRY})`);
+console.log(`[numas]   bin: ${finalBin}`);
+const opencodeProc = spawn(finalBin, [
+  'web',
   '--hostname', '0.0.0.0',
-  '--port', String(OPENCODE_PORT),
+  '--port', String(PORT),
   '--cors', '*',
+  '--registry', REGISTRY,
 ], {
-  cwd: WEB,
   stdio: 'inherit',
-  detached: true,   // 独立进程组, cli.js 杀整组
-  shell: true,       // 跨平台, .cmd / .sh shim
+  detached: true,
+  shell: false,
 });
 if (!opencodeProc.pid) {
   console.error('[numas] opencode 启动失败 (no pid)');
@@ -307,73 +457,37 @@ if (!opencodeProc.pid) {
 }
 opencodeProc.on('error', (e) => console.warn('[numas] opencode spawn error:', e.message));
 opencodeProc.on('exit', (code, sig) => {
-  if (code !== 0 || sig) {
-    console.error(`[numas] opencode 异常退出 (code=${code}, signal=${sig})`);
-  }
+  if (code !== 0 || sig) console.error(`[numas] opencode 异常退出 (code=${code}, signal=${sig})`);
 });
 console.log(`[numas] opencode pid=${opencodeProc.pid} (group=${opencodeProc.pid})`);
 
-// 5. 注入 env 传给 webpack 子进程 (APP_BASE_URL 用 127.0.0.1, web 端本机连)
-process.env.APP_BASE_URL = process.env.APP_BASE_URL || `http://127.0.0.1:${OPENCODE_PORT}`;
-process.env.OPENCODE_PORT = String(OPENCODE_PORT);
-process.env.WEB_PORT = String(WEB_PORT);
-// registry 服务 dev 不启, 注入空 baseUrl 让 web 端代码降级
-process.env.REGISTRY_BASE_URL = process.env.REGISTRY_BASE_URL || '';
-
-// 6. 启 webpack (npm run dev, 独立 detached 进程组)
-//   npm run dev 走 .cmd/.sh shim, macOS 也要 shell: true
-console.log(`[numas] 启动 webpack (port=${WEB_PORT}, cwd=${WEB})`);
-const webpackProc = spawn(npmCmd, ['run', 'dev'], {
-  cwd: WEB,
-  stdio: 'inherit',
-  detached: true,   // 独立进程组, cli.js 杀整组
-  shell: true,       // 跨平台, .cmd / .sh shim
-});
-if (!webpackProc.pid) {
-  console.error('[numas] webpack 启动失败');
-  try { process.kill(-opencodeProc.pid, 'SIGKILL'); } catch { /* */ }
-  process.exit(1);
-}
-webpackProc.on('error', (e) => console.warn('[numas] webpack spawn error:', e.message));
-console.log(`[numas] webpack pid=${webpackProc.pid} (group=${webpackProc.pid})`);
-
-// 7. cleanup: 父进程 SIGINT/SIGTERM/exit → kill 两组子进程
+// ----------------------------------------------------------------------------
+// 10. cleanup + 自动开浏览器
+// ----------------------------------------------------------------------------
 const cleanup = (signal) => {
-  console.log(`[numas] cleanup (${signal || 'exit'}) → kill opencode + webpack`);
+  console.log(`[numas] cleanup (${signal || 'exit'}) → kill opencode`);
   try { process.kill(-opencodeProc.pid, signal || 'SIGTERM'); } catch { /* */ }
-  try { process.kill(-webpackProc.pid, signal || 'SIGTERM'); } catch { /* */ }
   setTimeout(() => process.exit(0), 3000);
 };
 process.on('SIGINT',  () => cleanup('SIGINT'));
 process.on('SIGTERM', () => cleanup('SIGTERM'));
 process.on('exit',    () => {
   try { process.kill(-opencodeProc.pid, 'SIGTERM'); } catch { /* */ }
-  try { process.kill(-webpackProc.pid, 'SIGTERM'); } catch { /* */ }
 });
 
-// 8. 自动打开浏览器 (sleep 4s 等 webpack-dev-server ready, 跨平台调用)
-//    失败仅 warn, 不阻塞进程 (headless server / 无桌面环境也兼容)
- const browserUrl = `http://localhost:${WEB_PORT}`;
- console.log(`[numas] 4s 后自动打开浏览器 ${browserUrl}`);
- setTimeout(() => {
-   // 已有浏览器连到 WEB_PORT 则跳过 (不重复开 tab)
-   try {
-     const { execSync } = require('node:child_process');
-     const conn = execSync(`lsof -ti :${WEB_PORT} -sTCP:ESTABLISHED`, { stdio: 'pipe' }).toString().trim();
-     if (conn) {
-       console.log('[numas] 检测到浏览器已连接, 跳过自动打开');
-       return;
-     }
-   } catch { /* 无连接, 继续 open */ }
-   let opener, args;
-   if (process.platform === 'darwin') { opener = 'open'; args = [browserUrl]; }
-   else if (process.platform === 'win32') { opener = 'cmd'; args = ['/c', 'start', '', browserUrl]; }
-   else { opener = 'xdg-open'; args = [browserUrl]; }
-   try {
-     const r = spawn(opener, args, { detached: true, stdio: 'ignore', shell: false });
-     r.on('error', (e) => console.warn(`[numas] 自动打开浏览器失败 (${e.message}), 请手动访问 ${browserUrl}`));
-     r.unref();
-   } catch (e) {
-     console.warn(`[numas] 自动打开浏览器失败 (${e.message}), 请手动访问 ${browserUrl}`);
-   }
- }, 4000);
+const browserUrl = `http://localhost:${PORT}`;
+console.log(`[numas] 4s 后自动打开浏览器 ${browserUrl}`);
+
+setTimeout(() => {
+  let opener, args;
+  if (process.platform === 'darwin') { opener = 'open'; args = [browserUrl]; }
+  else if (process.platform === 'win32') { opener = 'cmd'; args = ['/c', 'start', '', browserUrl]; }
+  else { opener = 'xdg-open'; args = [browserUrl]; }
+  try {
+    const r = spawn(opener, args, { detached: true, stdio: 'ignore', shell: false });
+    r.on('error', (e) => console.warn(`[numas] 自动打开浏览器失败 (${e.message}), 请手动访问 ${browserUrl}`));
+    r.unref();
+  } catch (e) {
+    console.warn(`[numas] 自动打开浏览器失败 (${e.message}), 请手动访问 ${browserUrl}`);
+  }
+}, 4000);

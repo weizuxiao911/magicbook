@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>opencode API 调试工具</title>
+<style>
+  :root {
+    --bg: #0e0e10;
+    --bg-soft: #18181b;
+    --bg-elev: #1f1f23;
+    --border: #2a2a30;
+    --border-strong: #3a3a42;
+    --text: #e4e4e7;
+    --text-dim: #a1a1aa;
+    --text-mute: #71717a;
+    --accent: #fafafa;
+    --get: #4ade80;
+    --post: #60a5fa;
+    --put: #fbbf24;
+    --patch: #c084fc;
+    --delete: #f87171;
+    --ok: #4ade80;
+    --err: #f87171;
+    --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg-soft);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr auto;
+    gap: 12px;
+    align-items: center;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  header label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  header input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+  }
+  header input:focus {
+    outline: none;
+    border-color: var(--border-strong);
+  }
+  header .actions { display: flex; gap: 8px; align-self: end; }
+  header button {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  header button:hover { background: var(--border); }
+  main {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    min-height: calc(100vh - 60px);
+  }
+  nav {
+    background: var(--bg-soft);
+    border-right: 1px solid var(--border);
+    padding: 12px;
+    overflow-y: auto;
+  }
+  nav h2 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-mute);
+  }
+  .env-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .env-row label {
+    flex: 0 0 80px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .env-row input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 6px;
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: 11px;
+  }
+  .env-row .clear {
+    cursor: pointer;
+    color: var(--text-mute);
+    font-size: 14px;
+    background: none;
+    border: none;
+    padding: 0 4px;
+  }
+  .env-row .clear:hover { color: var(--err); }
+  nav .nav-list {
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+  nav .nav-list a {
+    display: block;
+    padding: 4px 6px;
+    color: var(--text-dim);
+    text-decoration: none;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+  nav .nav-list a:hover {
+    background: var(--bg-elev);
+    color: var(--text);
+  }
+  nav .nav-list a .badge {
+    display: inline-block;
+    width: 36px;
+    text-align: center;
+    font-size: 9px;
+    font-weight: 600;
+    margin-right: 6px;
+    padding: 1px 0;
+    border-radius: 2px;
+    color: #000;
+  }
+  section.content {
+    padding: 16px;
+    overflow-y: auto;
+  }
+  .group {
+    margin-bottom: 20px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-soft);
+    overflow: hidden;
+  }
+  .group-header {
+    padding: 10px 14px;
+    background: var(--bg-elev);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    user-select: none;
+  }
+  .group-header h3 {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .group-header .count {
+    font-size: 11px;
+    color: var(--text-mute);
+  }
+  .group-body { padding: 0; }
+  .endpoint {
+    border-top: 1px solid var(--border);
+    padding: 12px 14px;
+  }
+  .endpoint:first-child { border-top: none; }
+  .endpoint-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .badge {
+    display: inline-block;
+    min-width: 48px;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: #000;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .badge.GET { background: var(--get); }
+  .badge.POST { background: var(--post); }
+  .badge.PUT { background: var(--put); }
+  .badge.PATCH { background: var(--patch); }
+  .badge.DELETE { background: var(--delete); }
+  .endpoint-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: var(--text);
+  }
+  .endpoint-path {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    flex: 1;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .endpoint-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 8px;
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label {
+    font-size: 10px;
+    color: var(--text-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .field input, .field textarea, .field select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 5px 7px;
+    border-radius: 3px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+  }
+  .field textarea { min-height: 100px; resize: vertical; }
+  .field input:focus, .field textarea:focus {
+    outline: none;
+    border-color: var(--border-strong);
+  }
+  .controls {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .btn {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 10px;
+    border-radius: 3px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn:hover { background: var(--border); }
+  .btn.primary {
+    background: var(--accent);
+    color: #000;
+    font-weight: 600;
+  }
+  .btn.primary:hover { background: #fff; }
+  .response {
+    margin-top: 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg);
+    max-height: 320px;
+    overflow: auto;
+  }
+  .response-head {
+    padding: 6px 10px;
+    background: var(--bg-elev);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    font-size: 11px;
+  }
+  .status { font-weight: 600; }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  .response-body {
+    padding: 8px 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .response-body.empty { color: var(--text-mute); font-style: italic; }
+  .toast {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    background: var(--bg-elev);
+    border: 1px solid var(--border-strong);
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
+  .toast.ok { border-color: var(--ok); }
+  .toast.err { border-color: var(--err); }
+  .toast.hidden { display: none; }
+  .workflow-banner {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .workflow-banner strong { color: var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <h1>opencode API 调试工具</h1>
+  <label>服务器地址
+    <input id="host" value="http://127.0.0.1:4096" />
+  </label>
+  <label>项目目录
+    <input id="directory" value="/Users/weizuxiao/Documents/opencode" />
+  </label>
+  <div class="actions">
+    <button id="expand-all">全部展开</button>
+    <button id="collapse-all">全部折叠</button>
+  </div>
+</header>
+<main>
+  <nav>
+    <h2>环境变量</h2>
+    <div id="env-list"></div>
+    <div class="nav-list">
+      <h2>分组</h2>
+      <div id="nav-list"></div>
+    </div>
+  </nav>
+  <section class="content" id="content">
+    <div class="workflow-banner">
+      <strong>依赖顺序：</strong>健康检查 → 位置 → 文件系统 → 代理/模型/提供商 → 技能/命令/引用 → 会话（产生 sessionID）→ 会话控制 → 消息与事件 → 权限 → 询问 → 伪终端（产生 ptyID）→ 集成 → 凭据 → 项目复制。先调用前面的接口拿到 ID，后面的接口会自动填充占位符。
+    </div>
+  </section>
+</main>
+<div class="toast hidden" id="toast"></div>
+<script>
+const ENV_KEYS = [
+  "sessionID", "messageID", "ptyID", "credentialID",
+  "integrationID", "attemptID", "permissionID", "permissionSavedID",
+  "questionID", "providerID", "workspaceID", "directory",
+]
+const PREFIX_TO_ENV = {
+  ses_: "sessionID",
+  msg_: "messageID",
+  pty_: "ptyID",
+  cred_: "credentialID",
+  intg_: "integrationID",
+  att_: "attemptID",
+  per_: "permissionID",
+  psv_: "permissionSavedID",
+  que_: "questionID",
+  wrk_: "workspaceID",
+  prj_: "providerID",
+}
+
+const env = loadEnv()
+const hostInput = document.getElementById("host")
+const dirInput = document.getElementById("directory")
+hostInput.value = localStorage.getItem("oc_host") || hostInput.value
+dirInput.value = localStorage.getItem("oc_directory") || dirInput.value
+hostInput.addEventListener("change", () => localStorage.setItem("oc_host", hostInput.value))
+dirInput.addEventListener("change", () => localStorage.setItem("oc_directory", dirInput.value))
+env.directory = dirInput.value
+dirInput.addEventListener("input", () => { env.directory = dirInput.value })
+
+function loadEnv() {
+  const stored = JSON.parse(localStorage.getItem("oc_env") || "{}")
+  return Object.fromEntries(ENV_KEYS.map((k) => [k, stored[k] || ""]))
+}
+function saveEnv() {
+  localStorage.setItem("oc_env", JSON.stringify(env))
+}
+function renderEnv() {
+  const el = document.getElementById("env-list")
+  el.innerHTML = ""
+  for (const k of ENV_KEYS) {
+    const row = document.createElement("div")
+    row.className = "env-row"
+    const label = document.createElement("label")
+    label.textContent = k
+    const input = document.createElement("input")
+    input.value = env[k] || ""
+    input.placeholder = k === "directory" ? "/路径" : "自动捕获"
+    input.addEventListener("change", () => {
+      env[k] = input.value.trim()
+      saveEnv()
+    })
+    const clear = document.createElement("button")
+    clear.className = "clear"
+    clear.textContent = "×"
+    clear.title = "清除"
+    clear.addEventListener("click", () => {
+      env[k] = ""
+      saveEnv()
+      renderEnv()
+    })
+    row.appendChild(label)
+    row.appendChild(input)
+    row.appendChild(clear)
+    el.appendChild(row)
+  }
+}
+
+function showToast(text, kind) {
+  const t = document.getElementById("toast")
+  t.textContent = text
+  t.className = "toast " + (kind || "")
+  t.classList.remove("hidden")
+  setTimeout(() => t.classList.add("hidden"), 2500)
+}
+
+function extractIds(obj, depth) {
+  depth = depth || 0
+  if (depth > 6) return
+  if (obj == null) return
+  if (typeof obj === "string") {
+    for (const prefix in PREFIX_TO_ENV) {
+      if (obj.startsWith(prefix)) {
+        const k = PREFIX_TO_ENV[prefix]
+        if (!env[k]) {
+          env[k] = obj
+          saveEnv()
+        }
+      }
+    }
+    return
+  }
+  if (Array.isArray(obj)) {
+    obj.forEach((v) => extractIds(v, depth + 1))
+    return
+  }
+  if (typeof obj === "object") {
+    for (const k in obj) extractIds(obj[k], depth + 1)
+  }
+}
+
+const GROUPS = [
+  {
+    name: "0. 健康检查",
+    description: "存活探针，无依赖",
+    endpoints: [
+      { name: "health.get", method: "GET", path: "/api/health" },
+    ],
+  },
+  {
+    name: "1. 位置",
+    description: "解析当前位置（也可通过 query 或 header 传入）",
+    endpoints: [
+      { name: "location.get", method: "GET", path: "/api/location", query: true },
+    ],
+  },
+  {
+    name: "2. 文件系统",
+    description: "位置范围内的文件操作。路径都是相对于位置目录。",
+    endpoints: [
+      { name: "fs.read", method: "GET", path: "/api/fs/read/*", pathParam: { key: "rest", placeholder: "README.md" } },
+      { name: "fs.list", method: "GET", path: "/api/fs/list", query: true },
+      { name: "fs.find", method: "GET", path: "/api/fs/find", query: true },
+      { name: "fs.stat", method: "GET", path: "/api/fs/stat", query: true, body: { content: '{\n  "path": "README.md"\n}' } },
+      { name: "fs.write", method: "POST", path: "/api/fs/write", query: true, body: { content: '{\n  "path": "test.txt",\n  "content": "aGVsbG8gd29ybGQ="\n}' } },
+      { name: "fs.mkdir", method: "POST", path: "/api/fs/mkdir", query: true, body: { content: '{\n  "path": "new-dir",\n  "recursive": true\n}' } },
+      { name: "fs.rename", method: "POST", path: "/api/fs/rename", query: true, body: { content: '{\n  "from": "test.txt",\n  "to": "new-dir/test.txt"\n}' } },
+      { name: "fs.remove", method: "POST", path: "/api/fs/remove", query: true, body: { content: '{\n  "path": "new-dir/test.txt",\n  "recursive": true\n}' } },
+    ],
+  },
+  {
+    name: "3. 代理 / 模型 / 提供商",
+    description: "已配置 AI 资源的只读目录",
+    endpoints: [
+      { name: "agent.list", method: "GET", path: "/api/agent" },
+      { name: "model.list", method: "GET", path: "/api/model" },
+      { name: "provider.list", method: "GET", path: "/api/provider" },
+      { name: "provider.get", method: "GET", path: "/api/provider/:providerID", pathParam: { key: "providerID" } },
+    ],
+  },
+  {
+    name: "4. 技能 / 命令 / 引用",
+    description: "技能、斜杠命令、引用的只读发现",
+    endpoints: [
+      { name: "skill.list", method: "GET", path: "/api/skill", query: true },
+      { name: "command.list", method: "GET", path: "/api/command", query: true },
+      { name: "reference.list", method: "GET", path: "/api/reference", query: true },
+    ],
+  },
+  {
+    name: "5. 会话",
+    description: "创建会话并捕获 sessionID 供后续接口使用",
+    endpoints: [
+      { name: "session.list", method: "GET", path: "/api/session" },
+      { name: "session.create", method: "POST", path: "/api/session", body: { content: "{}" } },
+      { name: "session.active", method: "GET", path: "/api/session/active" },
+      { name: "session.get", method: "GET", path: "/api/session/:sessionID", pathParam: { key: "sessionID" } },
+    ],
+  },
+  {
+    name: "6. 会话控制",
+    description: "切换代理/模型、发送 prompt、压缩、中断、回退",
+    endpoints: [
+      { name: "session.switchAgent", method: "POST", path: "/api/session/:sessionID/agent", pathParam: { key: "sessionID" }, body: { content: '{\n  "agent": "build"\n}' } },
+      { name: "session.switchModel", method: "POST", path: "/api/session/:sessionID/model", pathParam: { key: "sessionID" }, body: { content: '{\n  "providerID": "anthropic",\n  "modelID": "claude-sonnet-4-5"\n}' } },
+      { name: "session.prompt", method: "POST", path: "/api/session/:sessionID/prompt", pathParam: { key: "sessionID" }, body: { content: '{\n  "parts": [\n    { "type": "text", "text": "你好" }\n  ]\n}' } },
+      { name: "session.compact", method: "POST", path: "/api/session/:sessionID/compact", pathParam: { key: "sessionID" }, body: { content: "{}" } },
+      { name: "session.wait", method: "POST", path: "/api/session/:sessionID/wait", pathParam: { key: "sessionID" }, body: { content: "{}" } },
+      { name: "session.revert.stage", method: "POST", path: "/api/session/:sessionID/revert/stage", pathParam: { key: "sessionID" }, body: { content: "{}" } },
+      { name: "session.revert.clear", method: "POST", path: "/api/session/:sessionID/revert/clear", pathParam: { key: "sessionID" }, body: { content: "{}" } },
+      { name: "session.revert.commit", method: "POST", path: "/api/session/:sessionID/revert/commit", pathParam: { key: "sessionID" }, body: { content: "{}" } },
+      { name: "session.context", method: "GET", path: "/api/session/:sessionID/context", pathParam: { key: "sessionID" } },
+      { name: "session.history", method: "GET", path: "/api/session/:sessionID/history", pathParam: { key: "sessionID" } },
+      { name: "session.interrupt", method: "POST", path: "/api/session/:sessionID/interrupt", pathParam: { key: "sessionID" }, body: { content: "{}" } },
+    ],
+  },
+  {
+    name: "7. 消息与事件",
+    description: "读取消息、订阅事件流（SSE）",
+    endpoints: [
+      { name: "session.messages", method: "GET", path: "/api/session/:sessionID/message", pathParam: { key: "sessionID" } },
+      { name: "session.message", method: "GET", path: "/api/session/:sessionID/message/:messageID", pathParam: { key: "sessionID" }, pathParam2: { key: "messageID" } },
+      { name: "session.events", method: "GET", path: "/api/session/:sessionID/event", pathParam: { key: "sessionID" } },
+      { name: "event.subscribe", method: "GET", path: "/api/event", note: "服务器推送事件（SSE）" },
+    ],
+  },
+  {
+    name: "8. 权限",
+    description: "待处理权限请求、已保存规则、单会话控制",
+    endpoints: [
+      { name: "permission.request.list", method: "GET", path: "/api/permission/request" },
+      { name: "permission.saved.list", method: "GET", path: "/api/permission/saved" },
+      { name: "permission.saved.remove", method: "DELETE", path: "/api/permission/saved/:permissionID", pathParam: { key: "permissionID" } },
+      { name: "session.permission.create", method: "POST", path: "/api/session/:sessionID/permission", pathParam: { key: "sessionID" }, body: { content: "{}" } },
+      { name: "session.permission.list", method: "GET", path: "/api/session/:sessionID/permission", pathParam: { key: "sessionID" } },
+      { name: "session.permission.get", method: "GET", path: "/api/session/:sessionID/permission/:permissionID", pathParam: { key: "sessionID" }, pathParam2: { key: "permissionID" } },
+      { name: "session.permission.reply", method: "POST", path: "/api/session/:sessionID/permission/:permissionID/reply", pathParam: { key: "sessionID" }, pathParam2: { key: "permissionID" }, body: { content: '{\n  "response": "always"\n}' } },
+    ],
+  },
+  {
+    name: "9. 询问",
+    description: "待处理的用户问题、单会话问答",
+    endpoints: [
+      { name: "question.request.list", method: "GET", path: "/api/question/request" },
+      { name: "session.question.list", method: "GET", path: "/api/session/:sessionID/question", pathParam: { key: "sessionID" } },
+      { name: "session.question.reply", method: "POST", path: "/api/session/:sessionID/question/:questionID/reply", pathParam: { key: "sessionID" }, pathParam2: { key: "questionID" }, body: { content: '{\n  "answers": ["是"]\n}' } },
+      { name: "session.question.reject", method: "POST", path: "/api/session/:sessionID/question/:questionID/reject", pathParam: { key: "sessionID" }, pathParam2: { key: "questionID" }, body: { content: "{}" } },
+    ],
+  },
+  {
+    name: "10. 伪终端",
+    description: "伪终端会话，从 create 中捕获 ptyID",
+    endpoints: [
+      { name: "pty.list", method: "GET", path: "/api/pty", query: true },
+      { name: "pty.create", method: "POST", path: "/api/pty", query: true, body: { content: '{\n  "command": "bash",\n  "args": ["-l"]\n}' } },
+      { name: "pty.get", method: "GET", path: "/api/pty/:ptyID", pathParam: { key: "ptyID" }, query: true },
+      { name: "pty.update", method: "PUT", path: "/api/pty/:ptyID", pathParam: { key: "ptyID" }, query: true, body: { content: '{\n  "title": "我的终端"\n}' } },
+      { name: "pty.remove", method: "DELETE", path: "/api/pty/:ptyID", pathParam: { key: "ptyID" }, query: true },
+      { name: "pty.connectToken", method: "POST", path: "/api/pty/:ptyID/connect-token", pathParam: { key: "ptyID" }, query: true, body: { content: "{}" } },
+    ],
+  },
+  {
+    name: "11. 集成",
+    description: "外部提供商的 OAuth/密钥连接、授权流程",
+    endpoints: [
+      { name: "integration.list", method: "GET", path: "/api/integration" },
+      { name: "integration.get", method: "GET", path: "/api/integration/:integrationID", pathParam: { key: "integrationID" } },
+      { name: "integration.connect.key", method: "POST", path: "/api/integration/:integrationID/connect/key", pathParam: { key: "integrationID" }, body: { content: '{\n  "key": "sk-xxx"\n}' } },
+      { name: "integration.connect.oauth", method: "POST", path: "/api/integration/:integrationID/connect/oauth", pathParam: { key: "integrationID" }, body: { content: '{\n  "code": "xxx"\n}' } },
+      { name: "integration.attempt.status", method: "GET", path: "/api/integration/attempt/:attemptID", pathParam: { key: "attemptID" } },
+      { name: "integration.attempt.complete", method: "POST", path: "/api/integration/attempt/:attemptID/complete", pathParam: { key: "attemptID" }, body: { content: "{}" } },
+      { name: "integration.attempt.cancel", method: "DELETE", path: "/api/integration/attempt/:attemptID", pathParam: { key: "attemptID" } },
+    ],
+  },
+  {
+    name: "12. 凭据",
+    description: "已存储的凭据（重命名/删除）",
+    endpoints: [
+      { name: "credential.update", method: "PATCH", path: "/api/credential/:credentialID", pathParam: { key: "credentialID" }, body: { content: '{\n  "label": "重命名"\n}' } },
+      { name: "credential.remove", method: "DELETE", path: "/api/credential/:credentialID", pathParam: { key: "credentialID" } },
+    ],
+  },
+  {
+    name: "13. 项目复制",
+    description: "把项目复制到工作区索引",
+    endpoints: [
+      { name: "projectCopy.create", method: "POST", path: "/api/project_copy", body: { content: '{\n  "from": "/path/to/source",\n  "to": "/path/to/dest"\n}' } },
+      { name: "projectCopy.remove", method: "DELETE", path: "/api/project_copy", body: { content: '{\n  "id": "xxx"\n}' } },
+      { name: "projectCopy.refresh", method: "POST", path: "/api/project_copy/refresh", body: { content: "{}" } },
+    ],
+  },
+]
+
+function substitutePath(path, ep) {
+  if (ep.pathParam) {
+    path = path.replace(":" + ep.pathParam.key, env[ep.pathParam.key] || ":" + ep.pathParam.key)
+  }
+  if (ep.pathParam2) {
+    path = path.replace(":" + ep.pathParam2.key, env[ep.pathParam2.key] || ":" + ep.pathParam2.key)
+  }
+  return path
+}
+
+function buildUrl(ep) {
+  const host = hostInput.value.replace(/\/$/, "")
+  let path = substitutePath(ep.path, ep)
+  if (ep.pathParam && ep.pathParam.key === "rest") {
+    const rest = env[ep.pathParam.key] || ep.pathParam.placeholder || ""
+    path = path.replace("*", rest)
+  }
+  let url = host + path
+  if (ep.query) {
+    const dir = dirInput.value
+    if (dir) url += (url.includes("?") ? "&" : "?") + "location[directory]=" + encodeURIComponent(dir)
+  }
+  return url
+}
+
+function renderEndpoint(ep) {
+  const card = document.createElement("div")
+  card.className = "endpoint"
+
+  const head = document.createElement("div")
+  head.className = "endpoint-head"
+  const badge = document.createElement("span")
+  badge.className = "badge " + ep.method
+  badge.textContent = ep.method
+  const name = document.createElement("span")
+  name.className = "endpoint-name"
+  name.textContent = ep.name
+  const pathEl = document.createElement("span")
+  pathEl.className = "endpoint-path"
+  pathEl.textContent = buildUrl(ep)
+  head.appendChild(badge)
+  head.appendChild(name)
+  head.appendChild(pathEl)
+  card.appendChild(head)
+
+  if (ep.note) {
+    const note = document.createElement("div")
+    note.style.cssText = "font-size:11px;color:var(--text-mute);margin-bottom:6px"
+    note.textContent = ep.note
+    card.appendChild(note)
+  }
+
+  if (ep.body) {
+    const bodyField = document.createElement("div")
+    bodyField.className = "field"
+    bodyField.style.gridColumn = "1 / -1"
+    const bodyLabel = document.createElement("label")
+    bodyLabel.textContent = "请求体（JSON）"
+    const bodyTextarea = document.createElement("textarea")
+    bodyTextarea.value = ep.body.content
+    bodyTextarea.spellcheck = false
+    bodyField.appendChild(bodyLabel)
+    bodyField.appendChild(bodyTextarea)
+    card.appendChild(bodyField)
+    ep._bodyEl = bodyTextarea
+  }
+
+  const controls = document.createElement("div")
+  controls.className = "controls"
+  const send = document.createElement("button")
+  send.className = "btn primary"
+  send.textContent = "发送"
+  controls.appendChild(send)
+  card.appendChild(controls)
+
+  const responseBox = document.createElement("div")
+  responseBox.className = "response"
+  responseBox.style.display = "none"
+  card.appendChild(responseBox)
+  ep._responseEl = responseBox
+
+  send.addEventListener("click", () => sendRequest(ep, card))
+
+  if (ep.method === "GET" && !ep.pathParam && !ep.pathParam2) {
+    const fillBtn = document.createElement("button")
+    fillBtn.className = "btn"
+    fillBtn.textContent = "刷新 URL"
+    fillBtn.addEventListener("click", () => {
+      pathEl.textContent = buildUrl(ep)
+    })
+    controls.appendChild(fillBtn)
+  }
+
+  return card
+}
+
+async function sendRequest(ep, card) {
+  const url = buildUrl(ep)
+  const responseEl = ep._responseEl
+  const init = { method: ep.method, headers: {} }
+  if (ep._bodyEl) {
+    init.headers["Content-Type"] = "application/json"
+    init.body = ep._bodyEl.value
+  }
+  try {
+    const t0 = performance.now()
+    const resp = await fetch(url, init)
+    const t1 = performance.now()
+    const text = await resp.text()
+    let body = text
+    let parsed = null
+    try { parsed = JSON.parse(text); body = JSON.stringify(parsed, null, 2) } catch {}
+    const isOk = resp.ok
+    const isJson = parsed != null
+    if (isJson) extractIds(parsed)
+    responseEl.innerHTML = ""
+    const head = document.createElement("div")
+    head.className = "response-head"
+    const status = document.createElement("span")
+    status.className = "status " + (isOk ? "ok" : "err")
+    status.textContent = resp.status + " " + resp.statusText
+    const time = document.createElement("span")
+    time.style.color = "var(--text-mute)"
+    time.textContent = Math.round(t1 - t0) + "ms"
+    head.appendChild(status)
+    head.appendChild(time)
+    responseEl.appendChild(head)
+    const bodyEl = document.createElement("div")
+    bodyEl.className = "response-body" + (body ? "" : " empty")
+    bodyEl.textContent = body || "（空响应体）"
+    responseEl.appendChild(bodyEl)
+    responseEl.style.display = "block"
+    if (isOk && isJson) {
+      const captured = captureSummary(parsed)
+      if (captured) showToast("已捕获：" + captured, "ok")
+    } else if (!isOk) {
+      showToast("错误 " + resp.status, "err")
+    }
+    renderEnv()
+  } catch (err) {
+    responseEl.innerHTML = ""
+    const bodyEl = document.createElement("div")
+    bodyEl.className = "response-body"
+    bodyEl.textContent = "网络错误：" + err.message
+    responseEl.appendChild(bodyEl)
+    responseEl.style.display = "block"
+    showToast("网络错误", "err")
+  }
+}
+
+function captureSummary(parsed) {
+  const captured = []
+  for (const k of ENV_KEYS) {
+    if (env[k] && k !== "directory") {
+      const v = env[k]
+      if (v.startsWith("ses_") || v.startsWith("msg_") || v.startsWith("pty_") ||
+          v.startsWith("cred_") || v.startsWith("intg_") || v.startsWith("att_") ||
+          v.startsWith("per_") || v.startsWith("psv_") || v.startsWith("que_") ||
+          v.startsWith("wrk_") || v.startsWith("prj_")) {
+        captured.push(k + "=" + v)
+      }
+    }
+  }
+  return captured.length ? captured.join(", ") : null
+}
+
+function renderGroups() {
+  const content = document.getElementById("content")
+  const navList = document.getElementById("nav-list")
+  GROUPS.forEach((g, idx) => {
+    const group = document.createElement("div")
+    group.className = "group"
+    const header = document.createElement("div")
+    header.className = "group-header"
+    const titleWrap = document.createElement("div")
+    const h3 = document.createElement("h3")
+    h3.textContent = g.name
+    const desc = document.createElement("div")
+    desc.style.cssText = "font-size:11px;color:var(--text-mute);margin-top:2px"
+    desc.textContent = g.description
+    titleWrap.appendChild(h3)
+    titleWrap.appendChild(desc)
+    const count = document.createElement("span")
+    count.className = "count"
+    count.textContent = g.endpoints.length + " 个接口"
+    header.appendChild(titleWrap)
+    header.appendChild(count)
+    const body = document.createElement("div")
+    body.className = "group-body"
+    g.endpoints.forEach((ep) => body.appendChild(renderEndpoint(ep)))
+    body.style.display = idx < 3 ? "block" : "none"
+    header.addEventListener("click", () => {
+      body.style.display = body.style.display === "none" ? "block" : "none"
+    })
+    group.appendChild(header)
+    group.appendChild(body)
+    content.appendChild(group)
+
+    const link = document.createElement("a")
+    link.href = "#"
+    link.textContent = g.name.replace(/^\d+\.\s*/, "")
+    link.addEventListener("click", (e) => {
+      e.preventDefault()
+      body.style.display = "block"
+      group.scrollIntoView({ behavior: "smooth", block: "start" })
+    })
+    navList.appendChild(link)
+  })
+}
+
+document.getElementById("expand-all").addEventListener("click", () => {
+  document.querySelectorAll(".group-body").forEach((b) => (b.style.display = "block"))
+})
+document.getElementById("collapse-all").addEventListener("click", () => {
+  document.querySelectorAll(".group-body").forEach((b) => (b.style.display = "none"))
+})
+
+renderEnv()
+renderGroups()
+</script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Numas web — opensumi/codeblitz 交互层（纯浏览器）",
+  "scripts": {
+    "dev": "node node_modules/webpack-cli/bin/cli.js serve --config webpack.config.js",
+    "build": "cross-env NODE_ENV=production node node_modules/webpack-cli/bin/cli.js --config webpack.config.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "postinstall": "node scripts/patch-codeblitz-constant.js && node scripts/patch-opensumi-customeditors.js"
+  },
+  "dependencies": {
+    "@codeblitzjs/ide-core": "2.4.6",
+    "@opencode-ai/sdk": "^1.18.11",
+    "@opensumi/ide-terminal-next": "3.6.5-next-1766394426.0",
+    "marked": "^7.0.5",
+    "marked-shiki": "^1.2.1",
+    "pdfjs-dist": "^4.10.38",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "shiki": "^4.4.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "cross-env": "^7.0.3",
+    "css-loader": "^6.7.3",
+    "esbuild": "^0.24.0",
+    "esbuild-loader": "^4.2.2",
+    "file-loader": "^6.2.0",
+    "html-webpack-plugin": "^5.6.0",
+    "less": "^4.8.1",
+    "less-loader": "^12.3.3",
+    "node-polyfill-webpack-plugin": "^3.0.0",
+    "path-browserify": "^1.0.1",
+    "raw-loader": "^4.0.2",
+    "style-loader": "^3.3.1",
+    "ts-loader": "^9.5.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4",
+    "url-loader": "^4.1.1",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^4.15.1"
+  }
+}
