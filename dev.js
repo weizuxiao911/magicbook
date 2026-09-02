@@ -47,7 +47,7 @@ function parseFlagInt(flag, fallback) {
   }
   return fallback;
 }
-const PORT = parseFlagInt('--port', parseInt(process.env.NUMAS_PORT || '4096', 10));
+const PORT = parseFlagInt('--port', parseInt(process.env.NUMAS_PORT || '24096', 10));
 const REGISTRY = parseFlag('--registry', process.env.NUMAS_REGISTRY || 'http://127.0.0.1:7790');
 const FORCE_BUILD = process.argv.includes('--force-build');
 const FAST = process.argv.includes('--fast') || process.env.NUMAS_FAST === '1' || process.env.NUMAS_FAST === 'true';

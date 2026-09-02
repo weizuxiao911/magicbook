@@ -80,7 +80,7 @@ AI 给方案推荐 + 备选时, **必须** 用 `question` 工具让用户点选,
 
 | 目录 / 文件 | 作用 |
 | --- | --- |
-| `dev.js` | 根 `package.json#bin`, npx 入口, 编排 build + spawn `opencode web --port 4096` |
+| `dev.js` | 根 `package.json#bin`, npx 入口, 编排 build + spawn `opencode web --port 24096` |
 | `package.json` | name=`numas`, deps 只有 `opencode-ai@^1.18.11` (binary 兜底), scripts `dev=node dev.js` |
 | `sumi/` | **客户端 IDE** (codeblitz/opensumi + React), webpack 独立 build |
 | `opencode/` | **完整 fork 的 opencode 仓库** (bun workspace, 31 个 packages), 内嵌编译产物被 dev.js spawn |
@@ -169,7 +169,7 @@ AI 给方案推荐 + 备选时, **必须** 用 `question` 工具让用户点选,
 
 | 端 | 默认 | 说明 |
 | --- | --- | --- |
-| opencode web (集成模式) | **4096** | dev.js 默认; `--port <n>` / `NUMAS_PORT` 改 |
+| opencode web (集成模式) | **24096** | dev.js 默认; `--port <n>` / `NUMAS_PORT` 改 |
 | webpack devServer (独立模式) | 7788 | `sumi/webpack.config.js:242`; `WEB_PORT` 改; dev.js 集成模式不起 |
 | vsix registry | 7790 | `registry/src/server.js:21`; `NUMAS_REGISTRY` 改; 手动启 |
 
@@ -180,13 +180,13 @@ AI 给方案推荐 + 备选时, **必须** 用 `question` 工具让用户点选,
 1. sumi deps 自检自装 (npm install --ignore-scripts, hash marker)
 2. opencode-ai 全局 binary 自检自装 (npm i -g, 兜底)
 3. [dead code] watchexec 自检自装 (brew/apt/PowerShell) — 实际未用
-4. killPort(4096) (lsof -ti :4096)
+4. killPort(24096) (lsof -ti :24096)
 5. sumi build (npm run build, hash 命中则跳过)
 6. mirror cp sumi/dist → opencode/packages/app/dist (mtime+size 增量)
 7. opencode build (bun run script/build.ts --single --skip-install, NUMAS_WEB_DIST=sumi/dist, hash 命中则跳过)
-8. spawn opencode web --hostname 0.0.0.0 --port 4096 --cors * --registry <url> (detached pgid=-pid)
+8. spawn opencode web --hostname 0.0.0.0 --port 24096 --cors * --registry <url> (detached pgid=-pid)
 9. SIGINT/SIGTERM cleanup (kill -pgid)
-10. 4s 后 spawn open / cmd /c start / xdg-open http://localhost:4096
+10. 4s 后 spawn open / cmd /c start / xdg-open http://localhost:24096
 ```
 
 **注意**: 第 3 步装 watchexec 是 dead code — 客户端零 watch 进程, 全部在 opencode 服务端 (`@parcel/watcher`). 待清理.
@@ -195,7 +195,7 @@ AI 给方案推荐 + 备选时, **必须** 用 `question` 工具让用户点选,
 
 | Flag / Env | 默认 | 说明 |
 | --- | --- | --- |
-| `--port <n>` / `NUMAS_PORT` | 4096 | opencode web 端口 |
+| `--port <n>` / `NUMAS_PORT` | 24096 | opencode web 端口 |
 | `--registry <url>` / `NUMAS_REGISTRY` | http://127.0.0.1:7790 | vsix registry |
 | `--fast` / `NUMAS_FAST=1` | off | 跳过 sumi build / cp / opencode build (复用 5-10s → 1-2s) |
 | `--force-build` | off | 强制重 build, 忽略 hash |

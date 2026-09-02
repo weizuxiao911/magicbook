@@ -11,7 +11,7 @@ Numas = **sumi (codeblitz/opensumi 容器 + React) 客户端** + **opencode (本
 
 - 纯本地, 浏览器打开就用, 跨平台 mac / linux / win
 - AI 助手 / 资源管理器 / 终端 / PDF 阅读标注 / HTML 渲染 / Paper 试卷库 全内置
-- 单一端口 (默认 4096)
+- 单一端口 (默认 24096)
 
 ### 设计原则
 
@@ -30,7 +30,7 @@ Numas = **sumi (codeblitz/opensumi 容器 + React) 客户端** + **opencode (本
 npx -y github:weizuxiao911/numas
 ```
 
-启动后浏览器自动打开 http://localhost:4096.
+启动后浏览器自动打开 http://localhost:24096.
 
 ### 开发者
 
@@ -47,7 +47,7 @@ npm run dev        # = node dev.js
 |---|---|---|
 | Node | ≥ 20 (LTS 推荐) | dev.js 启动强校验, < 20 直接报错退出 |
 | bun | 自动 | `opencode build` 依赖 (dev.js 启动时自检) |
-| 端口 4096 | 空闲 | dev.js 启动前 `lsof -ti :4096` 清 zombie |
+| 端口 24096 | 空闲 | dev.js 启动前 `lsof -ti :24096` 清 zombie |
 
 `npm install --ignore-scripts` 跳过 spdlog native postinstall (Python 3.14 删 distutils 后 node-gyp@9 必崩), opensumi 走 JS fallback logger, 主流程不受影响.
 
@@ -61,7 +61,7 @@ npx -y github:weizuxiao911/numas [flags]
 
 | Flag / Env | 默认 | 说明 |
 |---|---|---|
-| `--port <n>` / `NUMAS_PORT` | 4096 | opencode web 端口 |
+| `--port <n>` / `NUMAS_PORT` | 24096 | opencode web 端口 |
 | `--registry <url>` / `NUMAS_REGISTRY` | http://127.0.0.1:7790 | vsix registry 地址 |
 | `--fast` / `NUMAS_FAST=1` | off | 跳过 sumi build / cp dist / opencode build, 只杀 port + 启 opencode (复用场景 5-10s → 1-2s). 改了前端代码必须去掉 |
 | `--force-build` | off | 强制重 build (sumi + opencode), 忽略 hash 缓存 |
@@ -85,7 +85,7 @@ npx -y github:weizuxiao911/numas --registry http://192.168.1.10:7790
 
 ### 4.1 整体 (本地集成模式)
 
-dev.js 编排: sumi deps 自检 → opencode binary 自检 → kill port → sumi build → mirror cp → opencode build (内嵌 sumi dist) → spawn `opencode web --port 4096`.
+dev.js 编排: sumi deps 自检 → opencode binary 自检 → kill port → sumi build → mirror cp → opencode build (内嵌 sumi dist) → spawn `opencode web --port 24096`.
 
 ```mermaid
 graph LR
@@ -94,7 +94,7 @@ graph LR
   Dev -->|"NUMAS_WEB_DIST"| OcBuild["opencode build"]
   OcBuild -->|"二进制内嵌 sumi"| OcBin["opencode-<os>-<arch>/bin/opencode"]
   Dev -->|"spawn detached"| OcBin
-  OcBin -->|"listen 4096"| Browser["http://localhost:4096"]
+  OcBin -->|"listen 24096"| Browser["http://localhost:24096"]
 ```
 
 **进程树**: dev.js → opencode web (独立 detached 进程组, pgid=-pid). SIGINT 杀整组.
@@ -236,10 +236,10 @@ opensumi/codeblitz 通过 BrowserFS → `WriteSyncFS` (`sumi/src/config/runtime.
 ## 8. 排错 FAQ
 
 **Q: 启动后浏览器没自动打开?**
-A: 系统 `open` / `xdg-open` 不可用 (headless server). 手动打开 http://localhost:4096.
+A: 系统 `open` / `xdg-open` 不可用 (headless server). 手动打开 http://localhost:24096.
 
-**Q: 端口 4096 被占?**
-A: `lsof -ti :4096 | xargs kill -9` 清 zombie, 或 `--port <n>` 改.
+**Q: 端口 24096 被占?**
+A: `lsof -ti :24096 | xargs kill -9` 清 zombie, 或 `--port <n>` 改.
 
 **Q: `npm install` 卡 spdlog 报错?**
 A: Python 3.14 删 distutils 后 node-gyp@9 必崩. dev.js 已加 `--ignore-scripts` 跳过, opensumi 自动 fallback JS logger.
