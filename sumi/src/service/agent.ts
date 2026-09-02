@@ -18,7 +18,7 @@ import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 import type { IAgent, AgentMessage, AgentModel, AgentSession } from '../commands/agent';
 import { AgentToken } from '../commands/agent';
-import { appBaseUrl, effectiveCwd, cwdHeader, isPathNotFoundError } from './env';
+import { appBaseUrl, effectiveCwd, cwdHeader, isPathNotFoundError, normalizeCwdPath } from './env';
 
 let _client: any = null;
 
@@ -92,7 +92,7 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
     try {
       if (sdk) {
         const { data } = await sdk.path.get({ directory: cwd });
-        if ((data as any)?.directory) hostCwd = (data as any).directory;
+        if ((data as any)?.directory) hostCwd = normalizeCwdPath((data as any).directory);
         const shells = await probeShells(sdk, cwd);
         defaultShell = shells;
       }
@@ -107,7 +107,7 @@ export class AgentServiceImpl implements IAgent, ClientAppContribution {
         });
         const json = await res.json();
         const locDir = (json as any)?.location?.directory;
-        if (typeof locDir === 'string' && locDir) hostCwd = locDir;
+        if (typeof locDir === 'string' && locDir) hostCwd = normalizeCwdPath(locDir);
         if (hostCwd) console.log('[agent] hostCwd 探测 (fs.list location.directory):', hostCwd);
       } catch { /* 忽略, 走默认 */ }
     }

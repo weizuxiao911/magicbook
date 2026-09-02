@@ -43,15 +43,34 @@ export function appBaseUrl(): string {
   return injected.replace(/\/+$/, '');
 }
 
+/** Windows 盘符格式判定: 'D:' / 'D:\...' / 'D:/...' (含带前导 '/' 的 '/D:/...' 错误形态) */
+function isWindowsDrivePath(p: string): boolean {
+  return /^\/?[A-Za-z]:/.test(p);
+}
+
+/** 工作目录规范化 (发送 header / 写 APP_CWD 前统一走):
+ *  - Windows 盘符: 去前导 '/' (/D:/Work → D:/Work), 反斜杠转正斜杠 (D:\Work → D:/Work)
+ *    (server 端 path.win32 能处理; 前导 '/' 会让 server 按 POSIX 根解析 → 500/错目录)
+ *  - POSIX (/Users/...): 原样
+ */
+export function normalizeCwdPath(p: string): string {
+  if (!p) return p;
+  const s = p.replace(/\\/g, '/');
+  if (isWindowsDrivePath(s)) return s.replace(/^\/+/, '');
+  return s;
+}
+
 /** 当前有效工作目录: APP_CWD (用户选择) → __APP_CONFIG__.cwd (initRuntime 注入的 hostCwd) → '' */
 export function effectiveCwd(): string {
   if (typeof localStorage === 'undefined') return '';
-  return localStorage.getItem('APP_CWD') || ((typeof window !== 'undefined' ? (window as any).__APP_CONFIG__?.cwd : '') || '');
+  const raw = localStorage.getItem('APP_CWD') || ((typeof window !== 'undefined' ? (window as any).__APP_CONFIG__?.cwd : '') || '');
+  return normalizeCwdPath(raw);
 }
 
-/** x-opencode-directory header: per-request 工作目录切换; encodeURI 防中文路径破 ISO-8859-1 */
+/** x-opencode-directory header: per-request 工作目录切换; encodeURI 防中文路径破 ISO-8859-1
+ *  盘符路径绝不带 '/' 前缀 (server 端按 POSIX 根解析会 500/错目录) */
 export function cwdHeader(): Record<string, string> {
-  const cwd = effectiveCwd();
+  const cwd = normalizeCwdPath(effectiveCwd());
   return cwd ? { 'x-opencode-directory': encodeURI(cwd) } : {};
 }
 
@@ -166,12 +185,14 @@ export function getCwd(): string {
  */
 export function setCwd(dir: string): void {
   if (!dir) return;
+  const norm = normalizeCwdPath(dir);
+  if (!norm) return;
   const prev = getCwd();
-  if (prev === dir) return;
-  localStorage.setItem(APP_CWD_KEY, dir);
-  addRecent(dir);
+  if (prev === norm) return;
+  localStorage.setItem(APP_CWD_KEY, norm);
+  addRecent(norm);
   // 派事件 (reload 前通知, 让在挂拓展有机会保存状态)
-  notifyChanged(dir, prev);
+  notifyChanged(norm, prev);
   // 刷新: 简方案, 后续切 in-place 时再去掉
   window.location.reload();
 }

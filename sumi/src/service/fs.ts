@@ -51,6 +51,17 @@ function normalizeSep(p: string): string {
   return p.replace(/\\/g, '/');
 }
 
+/** Windows 盘符判定 (含带前导 '/' 的错误形态 '/D:/...') */
+function isWindowsDrive(p: string): boolean {
+  return /^\/?[A-Za-z]:/.test(p);
+}
+
+/** 绝对路径规范化: 盘符形态去前导 '/' + 反斜杠转正斜杠; POSIX 原样 */
+function normalizeAbs(p: string): string {
+  const s = normalizeSep(p);
+  return isWindowsDrive(s) ? s.replace(/^\/+/, '') : s;
+}
+
 /** 宿主机绝对路径 → 相对 effectiveCwd() 的相对路径,  用于 server 端 /api/fs/* 端点.
  *  跨平台:  macOS/Linux '/Users/foo' 跟 cwd '/Users/foo' →  '.' ;  Windows 'C:\foo' 跟 cwd 'C:\foo' → '.'.
  *  返回 null 表示 absPath 不在 cwd 下 (server 端 FSUtil.contains 校验会失败).
@@ -59,10 +70,10 @@ function normalizeSep(p: string): string {
 function absToRel(absPath: string, cwd: string): string | null {
   if (!cwd) {
     // 无 cwd 兜底,  不 strip — server fallback process.cwd 时会拼错位,  但至少不崩.
-    return normalizeSep(absPath.replace(/^\/+/, ''));
+    return normalizeAbs(absPath).replace(/^\/+/, '');
   }
-  const a = normalizeSep(absPath).replace(/\/+$/, '');
-  const c = normalizeSep(cwd).replace(/\/+$/, '');
+  const a = normalizeAbs(absPath).replace(/\/+$/, '');
+  const c = normalizeAbs(cwd).replace(/\/+$/, '');
   if (a === c) return '.';
   if (a.startsWith(c + '/')) return a.slice(c.length + 1);
   return null;
@@ -164,14 +175,17 @@ function uriToRel(uri: string): string | null {
     path = rawPath;
   }
   // host 绝对路径 → 去 host cwd 前缀; 不在 cwd 下 → null 丢弃
+  // 跨平台: Windows host 路径 'C:\Users\...' 跟 cwd 比较必须规范化 (反斜杠/正斜杠),
+  // 不能直接 startsWith — 否则 Windows 下全部事件 null → explorer 不更新;
+  // 更不能给盘符路径补 '/' 前缀 (会变 '/C:/Users/...' 坏路径).
   const hostCwd = effectiveCwd();
   if (hostCwd) {
-    const normCwd = hostCwd.replace(/\/+$/, '');
-    if (path === normCwd) return '/';
-    if (path.startsWith(normCwd + '/')) return path.slice(normCwd.length) || '/';
-    return null;
+    const r = absToRel(path, hostCwd);
+    if (r === null) return null;
+    return r === '.' ? '/' : `/${r}`;
   }
-  // 兜底: 无 cwd 时接受任意绝对路径 (保持原行为)
+  // 兜底: 无 cwd 时接受任意绝对路径 (保持原行为); 盘符格式不加 / 前缀
+  if (/^[A-Za-z]:/.test(path)) return path;
   return path.startsWith('/') ? path : `/${path}`;
 }
 
@@ -381,7 +395,8 @@ function handleJsonObject(obj: any): void {
   }
   // key 统一 IDE 相对路径格式 (带前导 /), 跟 recordSyncedHash 的 workspaceRel 一致 —
   // 否则 WriteSyncFS 写后记录的是 /1.txt, watcher 对比的是 1.txt → 永远匹配不上, 断循环失效
-  const key = obj.p.startsWith('/') ? obj.p : `/${obj.p}`;
+  // 注: Windows 盘符路径 (C:\...) 不加 / 前缀
+  const key = obj.p.startsWith('/') || /^[A-Za-z]:/.test(obj.p) ? obj.p : `/${obj.p}`;
   scheduleFsFire(key, opencodeEvent);
 }
 
@@ -790,9 +805,14 @@ export class FileSystemServiceImpl implements IFileSystem {
               return;
             }
           }
-          const rel = hostCwd && relPath.startsWith(hostCwd + '/')
-            ? relPath.slice(hostCwd.length)
+          const rel = hostCwd
+            ? (() => {
+                const r = absToRel(relPath, hostCwd);
+                if (r === null) return null;
+                return r === '.' ? '/' : `/${r}`;
+              })()
             : relPath.startsWith('/') ? relPath : `/${relPath}`;
+          if (!rel) return;
           console.log('[filesystem] fs event:', t, rel, '→ scheduleFsFire');
           scheduleFsFire(rel, typeMap[changeType] ?? FileChangeType.UPDATED);
         } catch { /* ignore bad frame */ }
