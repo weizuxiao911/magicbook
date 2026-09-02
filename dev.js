@@ -90,6 +90,13 @@ function sumiBuildUpToDate() {
   try { return fs.readFileSync(sumiBuildMarker, 'utf8').trim() === sumiBuildHash(); } catch { return false; }
 }
 
+// ============================================================================
+// 0. 清理占用端口 / 残留 opencode 进程
+//    必须在 build 之前: Windows 上产物 exe 被运行中进程占用时无法删除 (rm 会报 Operation not permitted)
+// ============================================================================
+killPort(PORT);
+killOpenCodeProcesses();
+
 console.log(`[numas] step 1/3: sumi build (cwd=${SUMI})`);
 if (FAST) {
   console.log('[numas] --fast: 跳过 sumi build (复用 dist)');
@@ -177,10 +184,18 @@ const opencodeBuildMarker = path.join(OPENCODE_PKG, 'dist', '.numas-opencode-bui
 
 function opencodeBuildHash() {
   const h = crypto.createHash('sha256');
-  for (const root of [
-    path.join(OPENCODE_PKG, 'src'),
-    path.join(OPENCODE_PKG, 'script'),
-  ]) {
+  // opencode binary 编译整个 workspace (core/server/protocol/schema/...), 不是只编译 packages/opencode
+  // hash 范围 = opencode/packages/* 全部源码 (walkSrc 自动跳过 node_modules/dist/.git)
+  const packagesDir = path.join(ROOT, 'opencode', 'packages');
+  const roots = [];
+  let entries;
+  try { entries = fs.readdirSync(packagesDir, { withFileTypes: true }); } catch { entries = []; }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name.startsWith('.')) continue;
+    roots.push(path.join(packagesDir, e.name));
+  }
+  if (!roots.length) roots.push(OPENCODE_PKG);
+  for (const root of roots) {
     for (const f of walkSrc(root)) {
       try { h.update(fs.readFileSync(f)); } catch { /* */ }
     }
@@ -233,12 +248,40 @@ if (!fs.existsSync(finalBin)) {
 // ============================================================================
 function killPort(port) {
   try {
-    const out = spawnSync('lsof', ['-ti', `:${port}`]);
-    const pids = String(out.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
+    let pids = [];
+    if (isWin) {
+      // Windows: netstat -ano 找监听端口的 PID
+      const out = spawnSync('netstat', ['-ano']);
+      const lines = String(out.stdout || '').split('\n');
+      for (const line of lines) {
+        const m = line.trim().split(/\s+/);
+        if (m.length >= 5 && m[1].endsWith(`:${port}`) && /LISTENING/i.test(m[3])) {
+          const pid = parseInt(m[4], 10);
+          if (pid && !pids.includes(pid)) pids.push(pid);
+        }
+      }
+    } else {
+      // mac/linux: lsof -ti :port
+      const out = spawnSync('lsof', ['-ti', `:${port}`]);
+      pids = String(out.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean).map(Number);
+    }
     for (const pid of pids) {
-      try { process.kill(parseInt(pid, 10), 'SIGKILL'); } catch { /* */ }
+      if (pid === process.pid) continue; // 别杀掉自己
+      try { process.kill(pid, 'SIGKILL'); } catch { /* */ }
     }
     if (pids.length) console.log(`[numas] 清理端口 ${port} (${pids.length} 个 pid)`);
+  } catch { /* ignore */ }
+}
+
+function killOpenCodeProcesses() {
+  try {
+    if (isWin) {
+      const r = spawnSync('taskkill', ['/F', '/IM', 'opencode.exe', '/T']);
+      if (r.status === 0) console.log('[numas] 已清理残留 opencode.exe 进程');
+    } else {
+      const r = spawnSync('pkill', ['-x', 'opencode']);
+      if (r.status === 0) console.log('[numas] 已清理残留 opencode 进程');
+    }
   } catch { /* ignore */ }
 }
 console.log(`[numas] step 3/3: 启 opencode web (hostname=0.0.0.0, port=${PORT}, cors=*, registry=${REGISTRY})`);

@@ -4,6 +4,7 @@ import { $ } from "bun"
 import path from "path"
 import { fileURLToPath } from "url"
 import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin"
+import { rm, mkdir } from "fs/promises"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -33,7 +34,15 @@ const createEmbeddedWebUIBundle = async () => {
   } else {
     console.log(`Building Web UI to embed in the binary`)
     appDir = path.join(import.meta.dirname, "../../app")
-    await $`OPENCODE_CHANNEL=${Script.channel} bun run --cwd ${appDir} build`
+    // 跨平台: 不用 POSIX 的 `OPENCODE_CHANNEL=X cmd` 前缀 (Windows cmd/powershell 不支持), 改注入 process.env
+    const prevChannel = process.env.OPENCODE_CHANNEL
+    process.env.OPENCODE_CHANNEL = Script.channel
+    try {
+      await $`bun run --cwd ${appDir} build`
+    } finally {
+      if (prevChannel === undefined) delete process.env.OPENCODE_CHANNEL
+      else process.env.OPENCODE_CHANNEL = prevChannel
+    }
   }
   const dist = path.join(appDir, "dist")
   const files = (await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: dist })))
@@ -142,7 +151,18 @@ const targets = singleFlag
     })
   : allTargets
 
-await $`rm -rf dist`
+try {
+  await rm("dist", { recursive: true, force: true })
+} catch (e: any) {
+  if (e?.code === "EPERM" || e?.code === "EBUSY" || e?.code === "EACCES") {
+    console.error(
+      "[numas] 删除 dist 失败: 产物文件被占用 (opencode.exe 可能还在运行).\n" +
+        "[numas] 请先停止正在运行的 opencode / numas dev, 再重新构建.",
+    )
+    process.exit(1)
+  }
+  throw e
+}
 
 const binaries: Record<string, string> = {}
 if (!skipInstall) {
@@ -162,7 +182,7 @@ for (const item of targets) {
     .filter(Boolean)
     .join("-")
   console.log(`building ${name}`)
-  await $`mkdir -p dist/${name}/bin`
+  await mkdir(`dist/${name}/bin`, { recursive: true })
 
   const workerPath = "./src/cli/tui/worker.ts"
   const treeSitterWorkerPath = "opentui-tree-sitter-worker.js"
@@ -222,7 +242,7 @@ for (const item of targets) {
     }
   }
 
-  await $`rm -rf ./dist/${name}/bin/tui`
+  await rm(`./dist/${name}/bin/tui`, { recursive: true, force: true })
   await Bun.file(`dist/${name}/package.json`).write(
     JSON.stringify(
       {

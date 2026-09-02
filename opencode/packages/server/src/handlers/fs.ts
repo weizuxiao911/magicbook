@@ -84,7 +84,7 @@ export const FileSystemHandler = HttpApiBuilder.group(Api, "server.fs", (handler
           const location = yield* Location.Service
           const rootReal = yield* fs.realPath(location.directory).pipe(Effect.orElseSucceed(() => location.directory))
           const subpath = ctx.query.path
-          const watchRoot = subpath ? path.resolve(location.directory, subpath) : location.directory
+          const watchRoot = subpath ? path.resolve(location.directory, FSUtil.windowsPath(subpath)) : location.directory
           const filterRootReal = subpath
             ? yield* fs.realPath(watchRoot).pipe(Effect.orElseSucceed(() => watchRoot))
             : rootReal

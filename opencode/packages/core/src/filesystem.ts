@@ -102,7 +102,7 @@ const baseLayer = Layer.effect(
     const events = yield* EventV2.Service
     const root = yield* fs.realPath(location.directory).pipe(Effect.orDie)
     const resolve = Effect.fnUntraced(function* (input?: RelativePath) {
-      const absolute = path.resolve(location.directory, input ?? ".")
+      const absolute = path.resolve(location.directory, FSUtil.windowsPath(input ?? "."))
       if (!FSUtil.contains(location.directory, absolute))
         return yield* Effect.die(new Error("Path escapes the location"))
       const real = yield* fs.realPath(absolute).pipe(Effect.orDie)
@@ -110,7 +110,7 @@ const baseLayer = Layer.effect(
       return { absolute, real, directory: location.directory, root }
     })
     const resolveTarget = Effect.fnUntraced(function* (input: RelativePath) {
-      const absolute = path.resolve(location.directory, input)
+      const absolute = path.resolve(location.directory, FSUtil.windowsPath(input))
       if (!FSUtil.contains(location.directory, absolute))
         return yield* Effect.die(new Error("Path escapes the location"))
       let parent = path.dirname(absolute)

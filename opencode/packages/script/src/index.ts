@@ -55,8 +55,8 @@ const team = [
   ...(await Bun.file(teamPath)
     .text()
     .then((x) => x.split(/\r?\n/).map((x) => x.trim()))
-    .then((x) => x.filter((x) => x && !x.startsWith("#"))))
-    .catch(() => []),
+    .then((x) => x.filter((x) => x && !x.startsWith("#")))
+    .catch(() => [])),
   ...bot,
 ]
 
