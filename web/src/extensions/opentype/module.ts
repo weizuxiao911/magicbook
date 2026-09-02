@@ -193,15 +193,23 @@ export class OpenTypeContribution implements BrowserEditorContribution, CommandC
     return types.filter((t) => (t as any).componentId !== WELCOME_ID);
   }
 
-  /** 用指定打开方式打开文件 (未打开则先 open) */
+  /** 用指定打开方式打开文件.
+   * forceOpenType 在跨 customEditor ↔ code 切换时只是叠加 component, 不卸载原 mount;
+   * 改用: close 当前 customEditor (ce-patch 监 DOM 移除触发 __paperUnmount) → 重 open 走默认 resolver
+   *   → changeOpenType 兜底 (若默认走的不对).
+   * 注: 重新切回原 customEditor 时 ce-patch 会从 pendingMounts 自动重 mount, 不会丢. */
   private async openWith(uri: URI, item: IEditorOpenType): Promise<void> {
     const group = this.editorService.currentEditorGroup;
     if (!group) return;
-    const current = group.currentResource?.uri;
-    if (!current || !current.isEqual(uri)) {
-      await this.editorService.open(uri, { preview: false });
-    }
-    group.changeOpenType((item as any).componentId ?? item.type);
+    const compId = (item as any).componentId ?? item.type;
+    // 1. 关闭当前 customEditor mount (走 ce-patch 卸载流程)
+    try { await this.editorService.close(uri); } catch { /* ignore */ }
+    await new Promise((r) => setTimeout(r, 150));
+    // 2. 重 open, 让默认 resolver 分发; 传 forceOpenType 保底跨 slot
+    await this.editorService.open(uri, { preview: false, focus: true, forceOpenType: item });
+    await new Promise((r) => setTimeout(r, 100));
+    // 3. 二次 changeOpenType (若 forceOpenType 没生效)
+    group.changeOpenType(compId);
   }
 
   /** 写默认编辑器关联: preference 优先 (超时保护), 失败降级 localStorage; 当前文件立即应用 */
