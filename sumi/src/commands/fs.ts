@@ -48,6 +48,10 @@ export interface IFileSystem {
   move(from: string, to: string): Promise<boolean>;
   /** 递归查找文件名 */
   find(idePath: string, pattern?: string): Promise<string[]>;
+  /** 宿主机绝对路径浏览 (FilePicker 用):  走 /api/fs/list?path=<abs>  不走 relForApi.  absPath 必须以 '/' 开头 */
+  listDir(absPath: string): Promise<FsEntry[]>;
+  /** 宿主机绝对路径建目录 (FilePicker 用):  走 /api/fs/mkdir { path: <abs> } */
+  mkdirAbs(absPath: string): Promise<boolean>;
 }
 
 /** BrowserFS 文件类型常量（codeblitz ide-browserfs FileType 枚举） */

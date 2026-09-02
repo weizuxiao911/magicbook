@@ -19,7 +19,8 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 import { notification } from '@opensumi/ide-components/lib/notification';
 
-import { appBaseUrl, cwdHeader } from '../../service/env';
+import { FsToken, type IFileSystem } from '../../commands/fs';
+import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/injectable-hooks';
 
 interface DirEntry { name: string; path: string; type: 'file' | 'directory'; }
 
@@ -39,19 +40,12 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\"'\"'`)}'`;
 }
 
-async function browseDir(path: string): Promise<{ path: string; entries: DirEntry[] }> {
-  // /api/fs/list 直连 (SDK file.list 走 v1 /file 路由, server 没有)
-  const base = appBaseUrl();
-  const url = `${base.replace(/\/+$/, '')}/api/fs/list?location[directory]=${encodeURIComponent(path)}`;
-  const res = await fetch(url, { headers: cwdHeader() });
-  if (!res.ok) throw new Error(`browse failed: HTTP ${res.status}`);
-  const json = await res.json();
-  const data = json?.data ?? json;
-  const entries: Array<{ path: string; type: 'file' | 'directory' }> = Array.isArray(data) ? data : [];
-  const list = entries.map((e) => ({
-    name: e.path.replace(/\/+$/, '').split('/').pop() || '',
-    path: path.replace(/\/+$/, '') + '/' + e.path.replace(/^\/+/, '').replace(/\/+$/, ''),
-    type: e.type === 'directory' ? ('directory' as const) : ('file' as const),
+async function browseDir(fs: IFileSystem, path: string): Promise<{ path: string; entries: DirEntry[] }> {
+  const raw = await fs.listDir(path);
+  const list: DirEntry[] = raw.map((e) => ({
+    name: e.name,
+    path: path.replace(/\/+$/, '') + '/' + e.name,
+    type: e.type,
   }));
   return { path: path.replace(/\/+$/, ''), entries: list };
 }
@@ -82,21 +76,10 @@ async function getFsSession(): Promise<string> {
   return id;
 }
 
-async function mkdirDir(parent: string, name: string): Promise<{ ok: boolean; path: string }> {
+async function mkdirDir(fs: IFileSystem, parent: string, name: string): Promise<{ ok: boolean; path: string }> {
   const target = parent.replace(/\/+$/, '') + '/' + name;
-  try {
-    const base = appBaseUrl();
-    const url = `${base.replace(/\/+$/, '')}/api/fs/mkdir?location[directory]=${encodeURIComponent(parent.replace(/\/+$/, ''))}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: name.replace(/^\/+/, ''), recursive: true }),
-    });
-    if (!res.ok) return { ok: false, path: target };
-    return { ok: true, path: target };
-  } catch {
-    return { ok: false, path: target };
-  }
+  const ok = await fs.mkdirAbs(target);
+  return { ok, path: target };
 }
 
 /** 判断 entry 是否符合当前模式 */
@@ -131,6 +114,7 @@ export const FilePicker: React.FC = () => {
   const [mkName, setMkName] = useState('');
   const [active, setActive] = useState(0);
   const [query, setQuery] = useState('');
+  const fs = useInjectable<any>(FsToken as any);
   const configRef = useRef<FilePickerConfig | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const mkRef = useRef<HTMLInputElement>(null);
@@ -160,7 +144,7 @@ export const FilePicker: React.FC = () => {
     }
     setLoading(true);
     try {
-      const r = await browseDir(dir);
+      const r = await browseDir(fs, dir);
       setCurrentPath(r.path);
       setEntries(r.entries);
       setSelected(null); setActive(0);

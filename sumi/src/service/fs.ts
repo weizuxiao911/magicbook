@@ -46,12 +46,35 @@ import {
  *  - "/workspace/4.txt" → "4.txt" (兼容 codeblitz WORKSPACE_ROOT 残留)
  *  - "/Users/weizuxiao/.../4.txt" (host 绝对) → "4.txt" (去 host cwd 前缀, 跟 opencode cwd 拼)
  *  - "/Users/.../其他" (不在 cwd 下) → 原样, opencode 端会 "Path escapes the location" */
+/** 跨平台路径分隔符: 把 \ 和 / 都规范化成 /.  Windows path.resolve 兼容 */
+function normalizeSep(p: string): string {
+  return p.replace(/\\/g, '/');
+}
+
+/** 宿主机绝对路径 → 相对 effectiveCwd() 的相对路径,  用于 server 端 /api/fs/* 端点.
+ *  跨平台:  macOS/Linux '/Users/foo' 跟 cwd '/Users/foo' →  '.' ;  Windows 'C:\foo' 跟 cwd 'C:\foo' → '.'.
+ *  返回 null 表示 absPath 不在 cwd 下 (server 端 FSUtil.contains 校验会失败).
+ *  注: 用于 FilePicker 状态 (host 绝对路径) 跟 opencode /api/fs/list 等 server 端点协议.
+ */
+function absToRel(absPath: string, cwd: string): string | null {
+  if (!cwd) {
+    // 无 cwd 兜底,  不 strip — server fallback process.cwd 时会拼错位,  但至少不崩.
+    return normalizeSep(absPath.replace(/^\/+/, ''));
+  }
+  const a = normalizeSep(absPath).replace(/\/+$/, '');
+  const c = normalizeSep(cwd).replace(/\/+$/, '');
+  if (a === c) return '.';
+  if (a.startsWith(c + '/')) return a.slice(c.length + 1);
+  return null;
+}
+
 function relForApi(idePath: string): string {
   const hostCwd = effectiveCwd();
-  if (hostCwd && idePath.startsWith(hostCwd + '/')) {
-    return idePath.slice(hostCwd.length + 1);
+  if (hostCwd) {
+    const r = absToRel(idePath, hostCwd);
+    if (r !== null) return r;
   }
-  let p = idePath.replace(/^\/+/, '');
+  let p = normalizeSep(idePath).replace(/^\/+/, '');
   if (p.startsWith('workspace/')) p = p.slice('workspace/'.length);
   return p;
 }
@@ -62,8 +85,8 @@ async function fsApiFetch<T = any>(path: string, init: RequestInit = {}): Promis
   if (!base) throw new Error('fs api: app base url not ready');
   const url = `${base.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
   const headers: Record<string, string> = {
-    ...(init.headers as Record<string, string> | undefined),
     ...cwdHeader(),
+    ...(init.headers as Record<string, string> | undefined),
   };
   if (init.body) headers['Content-Type'] = 'application/json';
   const res = await fetch(url, { ...init, headers });
@@ -76,13 +99,13 @@ async function fsApiFetch<T = any>(path: string, init: RequestInit = {}): Promis
   return (await res.text()) as unknown as T;
 }
 
-async function fsApiGet<T = any>(path: string): Promise<T> {
-  const res = await fsApiFetch<{ data?: T }>(path);
+async function fsApiGet<T = any>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fsApiFetch<{ data?: T }>(path, init);
   return (res as any)?.data !== undefined ? (res as any).data : (res as T);
 }
 
-async function fsApiPost<T = any>(path: string, body?: object): Promise<T> {
-  const res = await fsApiFetch<{ data?: T }>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined });
+async function fsApiPost<T = any>(path: string, body?: object, init: RequestInit = {}): Promise<T> {
+  const res = await fsApiFetch<{ data?: T }>(path, { ...init, method: 'POST', body: body ? JSON.stringify(body) : undefined });
   return (res as any)?.data !== undefined ? (res as any).data : (res as T);
 }
 
@@ -378,7 +401,7 @@ export async function startFsWatcher(cwd: string): Promise<void> {
     //   file.edited / file.watcher.updated → scheduleFsFire.
     // 这里只确认 cwd 存在 (connectEvents 无 cwd 依赖, 但 cwd 校验防止 stale APP_CWD 静默失效).
     try {
-      await fsApiGet(`/api/fs/list?location[directory]=${encodeURIComponent(cwd)}`);
+      await fsApiGet(`/api/fs/list?path=${encodeURIComponent('.')}`);
       watcherCwd = cwd;
       watcherStopped = false;
       watcherRetryCount = 0;
@@ -754,6 +777,19 @@ export class FileSystemServiceImpl implements IFileSystem {
           // (如 /Users/weizuxiao/Documents/.../1.txt), 但 explorer / monaco 走的是
           // /workspace 前缀, 跟 effectiveCwd() 拼出 browserfs 相对路径.
           const hostCwd = effectiveCwd();
+          // 跨 location 隔离: /global/event (V1 SSE) 会收到**所有** instance 的 watcher
+          // 事件 (每个打开过的目录各有一个 watcher, 含 git 仓库). 若 relPath 不在当前
+          // effectiveCwd() 子树内 → 是别的目录的事件, 必须 skip, 否则 fsStat 打 500
+          // (server resolve 不存在/逃逸 → die) → readPathHash null → 误报 DELETED →
+          // explorer 树反复重建/清空 (实测: numas 根 .git/index.lock + debug.http 事件
+          // 污染 2026春季学期实验 会话).
+          if (hostCwd) {
+            const r = absToRel(relPath, hostCwd);
+            if (r === null) {
+              console.log('[filesystem] skip 非当前工作目录事件:', relPath, { hostCwd });
+              return;
+            }
+          }
           const rel = hostCwd && relPath.startsWith(hostCwd + '/')
             ? relPath.slice(hostCwd.length)
             : relPath.startsWith('/') ? relPath : `/${relPath}`;
@@ -971,6 +1007,49 @@ export class FileSystemServiceImpl implements IFileSystem {
       this.invalidateParent(idePath);
       return true;
     } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 宿主机任意目录浏览 (FilePicker 用):  走 /api/fs/list?path=. + `x-opencode-directory: <absPath>`.
+   *   header 本身就是目标目录 → 任意目录都能列 (含上级/根, 不被 APP_CWD 锁死),  不 escape,  跨平台.
+   *   absPath 不存在 → server 500 (ENOENT),  这里 catch 返回 [] + warn.
+   *   macOS/Linux abs 形如 '/Users/...'; Windows 形如 'C:\\Users\\...' (encodeURI 兼容).
+   */
+  async listDir(absPath: string): Promise<FsEntry[]> {
+    console.log('[fs.listDir] IN', { absPath });
+    try {
+      const data = await fsApiGet<Array<{ path: string; type: 'file' | 'directory' }>>(`/api/fs/list?path=.`, {
+        headers: { 'x-opencode-directory': encodeURI(absPath.replace(/\\/g, '/')) },
+      });
+      const entries: FsEntry[] = Array.isArray(data) ? data.map((e) => ({
+        name: e.path.replace(/\/+$/, '').split('/').pop() || e.path,
+        type: e.type === 'directory' ? 'directory' : 'file',
+      })) : [];
+      console.log('[fs.listDir] OUT', { absPath, count: entries.length });
+      return entries;
+    } catch (e) {
+      console.warn('[fs.listDir] ERR', { absPath, err: (e as any)?.message });
+      return [];
+    }
+  }
+
+  /**
+   * 宿主机任意目录下建目录 (FilePicker 用):  走 /api/fs/mkdir { path: <name> } + `x-opencode-directory: <parent>`.
+   *   header 是父目录 → 任意位置可建,  跨平台.
+   */
+  async mkdirAbs(absPath: string): Promise<boolean> {
+    console.log('[fs.mkdirAbs] IN', { absPath });
+    const parent = absPath.replace(/\\/g, '/').replace(/\/+$/, '');
+    const name = parent.split('/').pop() || '';
+    try {
+      await fsApiPost('/api/fs/mkdir', { path: name, recursive: true }, {
+        headers: { 'x-opencode-directory': encodeURI(parent) },
+      });
+      return true;
+    } catch (e) {
+      console.warn('[fs.mkdirAbs] ERR', { absPath, err: (e as any)?.message });
       return false;
     }
   }
