@@ -1,280 +1,268 @@
-# Numas
+# Numas — 牛马们的 AI 工作台
 
-## 1. 背景说明
+> **Numas (牛马们)** — 打工人首选工作模式。
+> 一个本地一体化 AI IDE, 一行命令拉起, 对标腾讯 workbuddy。
 
-Numas 是一个**纯浏览器 + 本地 CLI** 的 AI 工作台, 直连 opencode, 无中间层。
+🐮
+
+---
+
+## 1. 这是什么
+
+Numas = **sumi (开源 codeblitz/opensumi IDE 容器) + opencode (AI + 终端 + 文件系统本地服务)** 二合一打包。
+
+- 纯本地, 浏览器打开就用, 跨平台 mac / linux / win
+- AI 助手 / 资源管理器 / 终端 / PDF 阅读标注 / HTML 渲染 / Paper 试卷库 全内置
+- 单一 4096 端口 (opencode 二进制内嵌 sumi dist)
+
+### 设计原则
+
+- **砍中间层**: 客户端直连 opencode (HTTP/WS), 无服务端代理, 部署简单
+- **集成打包**: opencode 二进制内嵌 sumi dist, 启动即一体, 无需分别管两个进程
+- **DI 解耦**: 业务只依赖接口 Token, 替换实现 / 写测试都简单
+- **vsix 拓展**: 功能以 BrowserModule 注册, 独立打包, registry 分发
+
+---
+
+## 2. 快速开始
+
+### 用户 (推荐)
 
 ```bash
 npx -y github:weizuxiao911/numas
 ```
 
-一行命令启动, 自动装依赖 (web deps + opencode 二进制), 启两个进程 (opencode serve + webpack-dev-server), 4 秒后自动打开浏览器到 `http://localhost:7788`。
+启动后浏览器自动打开 http://localhost:4096.
 
-**设计原则**:
-- 砍中间层 (client → opencode 直连 HTTP/WS, 无服务端代理)
-- 部署简单 (`npx` 一行, 跨平台 mac/linux/win)
-- 纯前端 React + codeblitz/opensumi 容器渲染 PDF / 代码 / 终端
-- 业务模块通过 DI 解耦, 可替换可测试
-
-## 2. 核心功能
-
-| 模块 | 能力 |
-|---|---|
-| **AI 助手** | 会话管理、会话切换、AI 对话、模型切换、token 服务商设置、附件上传、工作目录切换 |
-| **资源管理器** | 完整的文件系统功能, 支持实时文件读写和刷新, 保证 Numas 与外围文件读写数据一致 |
-| **终端** | 接入宿主 shell, 自适应平台类型 (macOS / Windows / Linux) |
-| **主题** | 暗色 (默认) / 亮色主题切换 |
-
-**内置服务**: PDF (阅读和交互编辑, 目录与页面快速切换) / HTML (HTML 渲染与 JS 执行)
-
-## 3. 安装部署
-
-### 启动
+### 开发者
 
 ```bash
-# 方式 1: npx (推荐, 自动装好)
-npx -y github:weizuxiao911/numas
-
-# 方式 2: 本地开发
-git clone https://github.com/weizuxiao911/numas && cd numas
-npm install
-npm run dev
+git clone https://github.com/weizuxiao911/numas
+cd numas
+npm install        # 装 dev.js 自身依赖 (opencode-ai 二进制 + tsx 等)
+npm run dev        # = node dev.js, 集成模式
 ```
 
-启动后浏览器自动打开 `http://localhost:7788`。
-**唯一前置**: Node ≥ 20 (LTS 推荐), npm 10+。
+### 前置
 
-### 端口
-
-| 端 | 默认 | 修改方式 |
+| 项 | 要求 | 说明 |
 |---|---|---|
-| opencode | 24096 | `--server-port` flag 或 `web/.env.development` 的 `OPENCODE_PORT` |
-| webpack-dev-server | 7788 | `--web-port` flag 或 `web/.env.development` 的 `WEB_PORT` |
+| Node | ≥ 20 (LTS 推荐) | dev.js 启动强校验, < 20 直接报错退出 |
+| watchexec | 自动装 | fs watcher PTY 依赖 (opencode 子进程 FSEvents 必炸, 必须 Rust FSEvents 直连). dev.js 自检自装 (mac: brew / linux: apt / win: winget) |
+| opencode-ai | 自动装 | `npm i -g opencode-ai --ignore-scripts` |
+| 端口 4096 | 空闲 | dev.js 启动前自动 `lsof -ti :4096` 清 zombie |
+
+`--ignore-scripts` 跳过 spdlog native postinstall (Python 3.14 删 distutils 后 node-gyp@9 必崩), opensumi 走 JS fallback logger, 主流程不受影响.
+
+---
+
+## 3. 命令行参数
 
 ```bash
-npx -y github:weizuxiao911/numas --server-port 24097 --web-port 8080
+npx -y github:weizuxiao911/numas [flags]
 ```
 
-CORS: opencode 默认 `cors=*`, 客户端直连无需代理。
-
-### 平台
-
-| 平台 | shell | 状态 |
+| Flag / Env | 默认 | 说明 |
 |---|---|---|
-| macOS | zsh 优先 | ✓ |
-| Linux | bash | ✓ |
-| Windows | powershell / pwsh / cmd | ✓ |
+| `--port <n>` / `NUMAS_PORT` | 4096 | opencode web 端口 |
+| `--registry <url>` / `NUMAS_REGISTRY` | http://127.0.0.1:7790 | vsix registry 地址 |
+| `--fast` / `NUMAS_FAST=1` | off | **跳过 sumi build / cp dist / opencode build**, 只杀 port + 启 opencode (复用场景 5-10s → 1-2s). 改了前端代码必须去掉 |
+| `--force-build` | off | 强制重 build (sumi + opencode), 忽略 hash 缓存 |
 
-### 关闭
+示例:
 
-`Ctrl+C` → dev.js 杀整组 (opencode + webpack)。
+```bash
+# 改端口
+npx -y github:weizuxiao911/numas --port 8080
 
-### 部署提示
+# 快启 (不重 build)
+npx -y github:weizuxiao911/numas --fast
 
-| 项 | 说明 |
+# 自定义 registry
+npx -y github:weizuxiao911/numas --registry http://192.168.1.10:7790
+```
+
+---
+
+## 4. 架构
+
+### 4.1 整体 (集成模式)
+
+dev.js 编排: 装 sumi deps + 装 opencode 全局二进制 + 装 watchexec + 杀 port → sumi build → mirror cp sumi/dist → opencode/packages/app/dist → opencode build (内嵌 sumi dist) → 启 opencode web.
+
+```mermaid
+graph LR
+  User["npx github:"] --> Dev["dev.js"]
+  Dev -->|"build"|SumiBuild["sumi/dist/"]
+  Dev -->|"mirror cp"|AppDist["opencode/packages/app/dist/"]
+  Dev -->|"NUMAS_WEB_DIST"|OcBuild["opencode build"]
+  OcBuild -->|"二进制内嵌 sumi"|OcBin["opencode-<os>-<arch>/bin/opencode"]
+  Dev -->|"spawn detached"|OcBin
+  OcBin -->|"listen 4096"|Browser["http://localhost:4096"]
+```
+
+**进程树** (dev.js 持有, SIGINT 杀整组):
+
+```
+dev.js (pgid=N)
+  └── opencode web @ 4096 (独立 detached 进程组)
+```
+
+集成模式**只一个**进程组 (opencode 自己 serve 内嵌的 sumi dist). 老 web/ 客户端模式 (webpack-dev-server + opencode 分别跑) 已废弃.
+
+### 4.2 客户端分层 (sumi/)
+
+按 DI 思想分层, **业务只依赖接口 Token**, 不直接 import 实现. 后续开发人员理解这个分层就能维护系统.
+
+```
+外部 (UI / 事件)
+    ↓
+extensions  (sumi/src/extensions/: chat, pdf, html, opentype, paper, welcome)
+    ↓
+codeblitz / opensumi 容器  (@opensumi/ide-core-browser, useInjectable)
+    ↓
+commands  (sumi/src/commands/: IFileSystem, IAgent, tokens — 接口)
+    ↓
+service  (sumi/src/service/: fs, agent, env, terminal, registry — 实现)
+```
+
+**铁律**: 所有拓展文件系统操作必须走 codeblitz + opencode fs API, 严禁直连 service 层 (`__APP_FS__` FsPty). 直连易崩 (PDF 标注写 sidecar 走 `__APP_FS__.write` 标 2 个就触发 FsPty 异常), 路径分裂难维护.
+
+| 层 | 目录 | 职责 |
+|---|---|---|
+| **commands** | `sumi/src/commands/` | 接口定义 (IFileSystem, IFileServiceClient 等), 业务与实现解耦 |
+| **config** | `sumi/src/config/` | 容器配置 (modules 列表, layout, brand, bfs, runtime) |
+| **service** | `sumi/src/service/` | 接口实现 (fs, agent, env, terminal, registry), 挂载 `window.__APP_FS__` / `__APP_OPENCODE__` |
+| **extensions** | `sumi/src/extensions/` | 用户感知功能 (chat, pdf, html, opentype, paper, welcome), 自包含 (组件 + 类型 + helpers + module.ts) |
+| **assets** | `sumi/src/assets/` | Logo (🐮 SVG), favicon, 字体 |
+| **styles** | `sumi/src/styles/` | 全局 CSS overrides / slots |
+
+### 4.3 内置拓展
+
+| 拓展 | 能力 |
 |---|---|
-| 自装依赖 | `dev.js` 自动 `npm install --ignore-scripts` (跳 native postinstall) + `npm i -g opencode-ai` (~50MB) |
-| 端口冲突 | 启动前自动 `lsof -ti :7788 :24096` 清 zombie |
-| 自动开浏览器 | 启动后 4s, 失败仅 warn (headless server 兼容) |
-| npm warn | `spdlog deprecated` 可忽略 (opensumi 传递依赖, 已用 JS fallback) |
-| 升级失败 | `rm -rf ~/.npm/_npx ~/.npm/_cacache` 清 npx 缓存 |
+| **AI 助手** (chat) | 多 session tab, 多 model / agent 切换, token 服务商设置, 附件上传, 工作目录切换 (切 cwd → 所有 opencode SDK 调用走新 cwdHeader → 文件引用 / 终端 / 上下文跟随) |
+| **资源管理器** | codeblitz file tree, 实时同步宿主机 (watchexec FSEvents 直连, 不依赖 chokidar) |
+| **终端** | 接入宿主 shell, 自适应平台 (mac zsh 优先 / linux bash / win powershell) |
+| **PDF 阅读 + 标注** | 5 档缩放 (50%-150%), Rect 圈选 + sidecar JSON 持久化 (`{pdf}.annotation`), AI ask popover + 批注演示动画 |
+| **HTML 渲染** | 内置 HTML viewer + JS 执行, opentype 切换文本/HTML |
+| **Paper 试卷库** | 题库 / 试卷库 (独立 vsix, registry 分发) |
+| **主题** | 暗色 (默认) / 亮色切换 |
 
-## 4. 设计思想
+### 4.4 vsix 拓展 (registry 模式)
 
-### 4.1 整体架构 (codeblitz + opencode 通过 dev.js 串联)
+`extensions/` 内三个 vsix 源码:
 
-```mermaid
-graph TB
-  Cli["dev.js npx 入口"]
-  Oc["opencode serve 24096"]
-  Wb["webpack-dev-server 7788"]
-  Cli ==>|"spawn detached"| Wb
-  Cli ==>|"spawn detached"| Oc
-  Wb -->|"内置启 + DefinePlugin 注入"| Oc
-  Wb -->|"browser client 直连 HTTP/WS"| Oc
-```
+| 拓展 | 目录 | 分发 |
+|---|---|---|
+| html | `extensions/html/` | vsix 自打包, registry @ 7790 |
+| paper | `extensions/paper/` | vsix 自打包, registry @ 7790 |
+| pdf | `extensions/pdf/` | 内置 (走 sumi/src/extensions/pdf, 不走 vsix) |
 
-**进程树** (dev.js 持有, 同进程组, SIGINT 杀整组):
+vsix 通过 registry HTTP 分发 (HTTPS, 自签证书 SAN + 系统信任). 用户可独立开发扩展, 在 `extensions/your-ext/` 写 vsix `package.json` + `BrowserModule`.
 
-```mermaid
-graph TB
-  Dev["dev.js pgid A"]
-  Oc["opencode serve"]
-  Wp["webpack-dev-server"]
-  Dev --> Oc
-  Dev --> Wp
-```
-
-**闭环**:
-- `dev.js` 启两个 detached 进程 (opencode serve + webpack-dev-server)
-- `webpack.config.js` 编译期读 `OPENCODE_PORT` / `APP_BASE_URL`, 通过 `DefinePlugin` 注入到 `window.__APP_CONFIG__.appBaseUrl`, 客户端直连 opencode
-- 无中间层 HTTP 代理, 0 个 409 死锁, 部署简单 (`npx` 一行)
-
-### 4.2 分层设计 (web/)
-
-按 DI 思想分层, 业务只依赖**接口** (Token/Service), 不直接 import 实现。后续开发人员理解这个分层就能维护系统。
-
-| 层 | 目录 | 职责 | 依赖 |
-|---|---|---|---|
-| **commands** | `src/commands/` | 接口定义 (IFileSystem, IAgent, IFileServiceClient 等), 业务与实现解耦 | 无 |
-| **config** | `src/config/` | 容器配置 (modules 列表, layout, brand, bfs, runtime) | commands |
-| **service** | `src/service/` | 接口实现 (fs, agent, env, terminal, registry), 暴露 Promise 接口, 挂载 `window.__APP_FS__` 等 | commands |
-| **extensions** | `src/extensions/` | 用户感知功能 (pdf, chat, html, welcome), 自包含 (组件 + 类型 + helpers + module.ts) | commands + container (DI) |
-
-**DI 机制**: 业务通过 `useInjectable(Token)` 拿服务, 不 import service 文件 (避免循环依赖)。service 内部实现细节 (PTY 队列 / 心跳 / cwd) 业务无感。
-
-```tsx
-// 业务层典型用法 (以 chat 为例)
-import { useInjectable } from '@opensumi/ide-core-browser';
-import { IFileServiceClient } from '@opensumi/ide-file-service';
-const fileService = useInjectable<IFileServiceClient>(IFileServiceClient);
-```
-
-### 4.3 内置拓展 (codeblitz 交互拓展容器)
-
-codeblitz/opensumi 是**交互拓展容器**, 一切业务行为/交互都通过**拓展** (BrowserModule) 实现, 由 `web/src/config/modules.ts` 统一注册到容器。容器提供 slot 插槽 / 命令面板 / 主题等基础设施, 拓展只关心功能逻辑。
-
-#### chat (AI 助手)
-
-- **核心功能**: 接入 opencode SDK 跑 LLM, 多 session tab, 多 model / agent 切换, token 服务商设置, 附件上传, 工作目录切换
-- **工作目录切换全局影响**: 切工作目录 (`localStorage.APP_CWD`) → `effectiveCwd()` 重新读 → 所有 opencode SDK 调用走新的 `cwdHeader` (`x-opencode-directory: encodeURI(cwd)`) → 上下文 (文件 / 命令) 跟随新目录。这是**全局开关**, 影响 chat 文件引用 / 终端 cwd / 所有 SDK 调用
-
-#### pdf (PDF 工具)
-
-- **功能说明**: 打开 `.pdf` 文件进入阅读模式, 高度主导缩放 (5 档 50%-150%), Rect 框选创建标注, hover X 删除, sidecar JSON 持久化到 `.{pdf}.annotation`
-- **核心设计逻辑**:
-  - **高度主导缩放**: `pageH = opensumi-editor.clientHeight × 档位`, `pageW = pageH × PDF aspect`. 缩放档位变化触发全 rebuild
-  - **Rect 圈选 + 坐标换算**: mousedown/move/up 画蓝色蒙层, mouseup 算 `pdfX/Y = cssX/Y / pageW/H × pb.width/height` (左下原点, y 翻转)
-  - **sidecar 持久化**: `.{pdfBasename}.annotation`, IDE 相对路径 `/.{basename}.annotation`, read-merge-write + debounce 500ms + SHA-256 自写去重
-  - **重建策略**: 缩放档位变化 → 全 rebuild (274 页); sidecar 变化 (保存/删除/外部同步) → 只 rebuild 当前页. 拆分 useEffect deps 隔离触发范围
-  - **弹出到 body**: popover portal 到 `document.body` + z-index 99999, 避免被 chat panel 遮挡
+---
 
 ## 5. 工作原理
 
-### 5.1 文件系统如何实现
+### 5.1 文件系统 (FsPty + SDK 读)
 
-**分层**:
-- **读盘**: 走 opencode SDK (`client.file.read`), HTTP `/api/fs/read`, ~10ms. 频繁调用不卡
-- **写盘**: 走 FsPty (PTY worker, 跑在 opencode PTY 里), stdin/stdout JSON 协议, ~100ms+
+**读盘**: 走 opencode SDK (`client.file.read`), HTTP `/api/fs/read`, ~10ms. 频繁调用不卡.
 
-**FsPty 自愈** (`src/service/fs.ts`):
+**写盘**: 走 **FsPty** (PTY worker 跑在 opencode PTY 里), stdin/stdout JSON 协议, ~100ms+.
+
+**FsPty 自愈** (`sumi/src/service/fs.ts`):
 - **单例 + 串行队列**: `queue.then` 链保证同一 PTY 不并发, 避免命令乱序
 - **超时**: 默认 10s, 写盘 30s 基础 + 1s/KB base64 (上限 5min)
-- **自愈 (timeout reset)**: 超时时清 self 状态 (`initPromise` / `ws` / `ptyId`), 下次 request 触发 init 重建 PTY, 业务 retry 透明恢复
-- **心跳 (5s ping)**: 每 5s 发 `ping` op, 连续 2 次失败 (~10s 无响应) → 强制 reset, 即使队列挂死也能清
+- **自愈 (timeout reset)**: 超时清 self 状态, 下次 request 触发 init 重建 PTY, 业务 retry 透明恢复
+- **心跳 (5s ping)**: 每 5s 发 ping op, 连续 2 次失败 → 强制 reset, 即使队列挂死也能清
 
-**BrowserFS 桥接**: opensumi 容器 → `RemoteFS` (`web/src/config/bfs.ts`) → `__APP_FS__` (`web/src/service/fs.ts`) → 读 SDK / 写 FsPty. 同一链路, 缓存零散。
+**Why FsPty**: opencode session.shell 单 shell 限制 → 写文件 409 死锁. PTY 全局无 session 限制 + 串行化 = 0 个 409.
+
+**watchexec watcher** (替代 chokidar): opencode 子进程 FSEvents 对 node 全废 (EMFILE), watchexec (Rust FSEvents 直连) 在 pty 里全事件正常, 替代 chokidar polling 的盲区 (空目录删除无事件).
 
 ### 5.2 工作目录切换全局影响
 
-**来源优先级** (`src/service/env.ts:39-42`):
+**来源优先级** (`sumi/src/service/env.ts`):
 1. `localStorage.APP_CWD` (用户运行时切换) — 最高
 2. `window.__APP_CONFIG__.cwd` (启动时固定) — 兜底
 
 **全局影响**:
-- **opencode SDK 调用**: 全部 `headers: cwdHeader()`, header = `'x-opencode-directory': encodeURI(cwd)`. 切 cwd → 所有 SDK (file / find / pty / event) 上下文跟随
-- **FsPty 初始化**: 启动时 `effectiveCwd()` 决定 PTY 进程的工作目录. **切 cwd 不重建 FsPty** (cwd 切换是当前已知遗留 — 后续需修)
-- **chat / pdf 标注 / 终端**: 全部读 `effectiveCwd()`, 自动跟随
+- opencode SDK 全部 `headers: cwdHeader()`, header = `'x-opencode-directory': encodeURI(cwd)`. 切 cwd → 所有 SDK 调用上下文跟随
+- chat / pdf 标注 / 终端全部读 `effectiveCwd()`, 自动跟随
 
-**当前限制**: 工作目录切换**不**触发 FsPty 重建, 写盘路径基于启动时的 cwd. 这是已知遗留, 修法: 监听 cwd 变化 → `resetFsPty()` 强制销毁, 下次 getFsPty() 重建。
+**CJK 路径**: HTTP header ISO-8859-1 限制, `x-opencode-directory` 必须 `encodeURI()` 包裹.
 
-### 5.3 全局定义了哪些可以给拓展使用
+### 5.3 拓展注册机制
 
-**接口层** (`web/src/commands/`): 业务层与实现层的契约, 拓展通过 DI 拿。
+所有拓展通过 BrowserModule 在 `sumi/src/config/modules.ts` 统一注册到 codeblitz 容器. 容器提供 slot 插槽 / 命令面板 / 主题等基础设施, 拓展只关心功能逻辑.
 
-| 接口 | 来源 | 提供能力 |
-|---|---|---|
-| `IFileSystem` | `web/src/commands/fs.ts` | list / read / readBinary / write / rm / mkdirp / move / meta / exists / find |
-| `IFileServiceClient` | `@opensumi/ide-file-service` | opensumi 容器内文件操作 (BrowserFS 走 `__APP_FS__`) |
-| `IAgentService` | `web/src/commands/agent.ts` (待定义) | opencode SDK 高阶封装 (session / model / agent 列表) |
-| `ITerminalController` | `@opensumi/ide-terminal-next` | 终端生命周期 (创建 / 销毁 / 聚焦) |
-| `IEditorDocumentModelService` | `@opensumi/ide-editor` | 编辑器文档模型 (untitled tab 内容写入) |
-| `WorkbenchEditorService` | `@opensumi/ide-editor` | 编辑器服务 (open / focus) |
+```tsx
+import { useInjectable } from '@opensumi/ide-core-browser';
+import { IFileServiceClient } from '@opensumi/ide-file-service';
 
-**全局挂载** (`web/src/index.tsx`): 非 DI 场景 (setTimeout 回调 / DOM 事件) 通过 `window.__APP_FS__` / `window.__APP_OPENCODE__` 拿服务。
+const fileService = useInjectable<IFileServiceClient>(IFileServiceClient);
+```
 
-| 全局变量 | 类型 | 用途 |
-|---|---|---|
-| `window.__APP_CONFIG__` | `{ appBaseUrl, cwd, defaultShell }` | 编译期注入的 opencode 地址 + 初始 cwd |
-| `window.__APP_FS__` | `IFileSystem` | 非 DI 场景读盘/写盘 (e.g. sidecar.ts 写盘) |
-| `window.__APP_OPENCODE__` | `createOpencodeClient` SDK 实例 | 非 DI 场景 SDK 调用 |
-| `window.__APP_AGENT__` | 高阶 API (session / model / agent) | chat 拓展非 DI 场景 |
+---
 
-## 6. 注意事项
+## 6. 文档索引
 
-### 6.1 已知限制 (一期)
+| 文档 | 内容 |
+|---|---|
+| [AGENTS.md](./AGENTS.md) | AI 协作铁律 (技术选型 / 交互协议 / 功能设计 / 改动反馈 / 代码提交 / 分层架构 5 条铁律), 决策历史, 踩坑速查 |
+| [docs/架构设计.md](./docs/架构设计.md) | 集成模式架构详细设计 |
+| [docs/功能清单.md](./docs/功能清单.md) | 内置能力完整清单 |
+| [docs/文件系统设计与测试用例.md](./docs/文件系统设计与测试用例.md) | FsPty / RemoteFS / BrowserFS 桥接 + 测试用例 |
+| [docs/标注功能设计与测试用例.md](./docs/标注功能设计与测试用例.md) | PDF 标注 sidecar 设计 + AI ask popover + 批注演示动画 |
 
-- **PDF 标注**: 跨页选区不支持, 不支持编辑已有标注 (只能删除重建), 无侧栏列表, 无删除撤销, 无删除确认弹窗
+---
+
+## 7. 已知限制
+
+- **PDF 标注**: 跨页选区不支持, 不支持编辑已有标注 (只能删除重建), 无侧栏列表
 - **PDF 缩放**: 5 档 (50/75/100/125/150), 不支持自定义百分比
 - **多用户**: 不支持 (opencode 单实例, 无服务端)
 - **历史持久化**: opencode SQLite (`~/.local/share/opencode/opencode.db`), 重启不丢
 
-### 6.2 常见问题
+---
+
+## 8. 排错 FAQ
 
 **Q: 启动后浏览器没自动打开?**
-A: 系统 `open` / `xdg-open` 不可用 (headless server). 手动打开 `http://localhost:7788`。
+A: 系统 `open` / `xdg-open` 不可用 (headless server). 手动打开 http://localhost:4096.
 
-**Q: 端口被占?**
-A: `lsof -ti :7788 :24096 | xargs kill -9` 清 zombie, 或 `--web-port` / `--server-port` 改。
+**Q: 端口 4096 被占?**
+A: `lsof -ti :4096 | xargs kill -9` 清 zombie, 或 `--port <n>` 改.
+
+**Q: `npm install` 卡 spdlog 报错?**
+A: Python 3.14 删 distutils 后 node-gyp@9 必崩. dev.js 已加 `--ignore-scripts` 跳过, spdlog 没 build 但 opensumi 自动 fallback JS logger.
 
 **Q: 标注保存失败 (toast "标注保存失败")?**
-A: FsPty 写盘卡住, 触发自愈: 5s 后心跳检测 → 强制 reset → 下次自动重试。持续失败可重启 dev 清 FsPty 队列。
-
-**Q: 重启后标注丢失?**
-A: 标注存 `.{pdf}.annotation`, 丢失说明 sidecar 文件被删。检查 PDF 同目录。
+A: FsPty 写盘卡住, 触发自愈: 5s 后心跳检测 → 强制 reset → 下次自动重试. 持续失败可重启 dev 清 FsPty 队列.
 
 **Q: macOS 终端中文乱码?**
-A: `LANG=zh_CN.UTF-8` 环境变量。
+A: `LANG=zh_CN.UTF-8` 环境变量.
 
-**Q: web 能离线用吗?**
-A: 不能。需 opencode 本地跑 (提供 AI + 文件系统 + 终端)。
+**Q: 改了前端代码但 UI 没变?**
+A: 跑 `node dev.js --force-build` 强制 rebuild, 或去掉 `--fast`.
 
-**Q: 怎样扩展 (加自己的 extension)?**
-A: `extensions/your-ext/` 写 vsix `package.json` + `BrowserModule`, 在 `web/src/config/modules.ts` 注册, 编译时打包。
+**Q: 重启很慢?**
+A: 用 `--fast` 跳过 build/cp (前提: 上次 build 后没改 sumi/src/ 或 opencode 源码).
 
-### 6.3 性能与限制
+**Q: Node 版本 < 20?**
+A: dev.js 启动即报错退出, 提示安装链接 https://nodejs.org.
 
-- **FsPty 写盘**: ~100ms-几秒 (PTY 启动 + 命令构造), chunked 4KB base64, 大文件不撑爆 ws
-- **FsPty 写超时**: 30s 基础 + 1s/KB base64, 上限 5min (`fs.ts:923-925`)
-- **重建 274 页**: 1-3 秒 (canvas 异步渲染 + IO 懒加载)
-- **标注边长**: 1000+ 标注走 IO 懒加载 + 按 page 索引, 性能不受影响
+**Q: npx 首次执行不提示确认?**
+A: 加 `-y` 跳过 (`npx -y github:weizuxiao911/numas`). 缓存失败 `rm -rf ~/.npm/_npx`.
 
-### 6.4 排错清单
+---
 
-| 现象 | 原因 | 修法 |
-|---|---|---|
-| 端口 7788 占用 | dev 残留 | `lsof -ti :7788 \| xargs kill -9` |
-| opencode 启动慢 | PTY 冷启 | 等 5-10s |
-| npm install 卡 spdlog | Python 3.14 无 distutils | `--ignore-scripts` 跳过 (dev.js 已加) |
-| 中文路径 404 | cwdHeader | 已 `encodeURI`, 升级后问题 |
-| 标注保存失败 | FsPty 卡 | 心跳自愈, 重启 dev 兜底 |
-| Mac 弹窗 click 无效 | popover z-index | 已 portal 到 body + z-index 99999 |
+## 9. 关闭
 
-### 6.5 目录结构
+`Ctrl+C` → dev.js 杀整组 (opencode + 二进制进程).
 
-```
-numas/
-├── dev.js              # npx 入口
-├── package.json        # bin: numas
-├── web/                # 核心客户端
-│   ├── src/
-│   │   ├── App.tsx
-│   │   ├── index.tsx
-│   │   ├── config/     # layout, modules, brand, bfs
-│   │   ├── commands/   # 接口定义
-│   │   ├── service/    # fs, agent, env, terminal
-│   │   ├── extensions/ # pdf, chat, html, welcome
-│   │   ├── assets/
-│   │   └── styles/
-│   ├── webpack.config.js
-│   └── package.json
-├── extensions/         # vsix 源码
-├── registry/           # vsix 分发 (dev 不起)
-├── .tmp/               # 临时日志/截图 (gitignore)
-├── pdf标注设计.md       # PDF 标注功能设计 + 实施记录
-├── README.md           # 本文件
-└── AGENTS.md           # AI 协作铁律
-```
+---
 
 ## License
 
