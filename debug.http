@@ -1,0 +1,7 @@
+
+### OPEN V2
+http://localhost:24096/api/fs/list?location[directory]=/Users/weizuxiao/Documents/2026%E6%98%A5%E5%AD%A3%E5%AD%A6%E6%9C%9F%E5%AE%9E%E9%AA%8C
+
+### 请求头
+http://localhost:24096/api/fs/list?directory=/Users/weizuxiao/Documents/2026%E6%98%A5%E5%AD%A3%E5%AD%A6%E6%9C%9F%E5%AE%9E%E9%AA%8C
+x-opencode-directory: /Users/weizuxiao/Documents/2026%E6%98%A5%E5%AD%A3%E5%AD%A6%E6%9C%9F%E5%AE%9E%E9%AA%8C
