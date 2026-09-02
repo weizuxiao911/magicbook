@@ -1,0 +1,13 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+out/
+.webpack-cache/
+
+# 临时
+.cache/
+*.log
+.tmp/
+.DS_Store

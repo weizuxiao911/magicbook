@@ -1,0 +1,411 @@
+### Variables 
+@host = http://127.0.0.1:4096
+@dir = /Users/weizuxiao/Documents/opencode
+@sessionID = ses_xxx
+@messageID = msg_xxx
+@credentialID = cred_xxx
+@ptyID = pty_xxx
+@providerID = prj_xxx
+@integrationID = intg_xxx
+@attemptID = att_xxx
+@permissionID = perm_xxx
+@questionID = qst_xxx
+@directory = {{dir}}
+
+# ============================================================
+# Health
+# ============================================================
+
+### health.get
+GET {{host}}/api/health
+
+# ============================================================
+# Location
+# ============================================================
+
+### location.get
+GET {{host}}/api/location?location[directory]={{directory}}
+
+# ============================================================
+# Filesystem
+# ============================================================
+
+### fs.stat
+GET {{host}}/api/fs/stat?path=README.md&location[directory]={{directory}}
+
+### fs.list
+GET {{host}}/api/fs/list?location[directory]={{directory}}
+
+### fs.find
+GET {{host}}/api/fs/find?query=README&location[directory]={{directory}}
+
+### fs.read
+GET {{host}}/api/fs/read/README.md?location[directory]={{directory}}
+
+### fs.write
+POST {{host}}/api/fs/write?location[directory]={{directory}}
+Content-Type: application/json
+
+{
+  "path": "test-write.txt",
+  "content": "aGVsbG8gd29ybGQ="
+}
+
+### fs.mkdir
+POST {{host}}/api/fs/mkdir?location[directory]={{directory}}
+Content-Type: application/json
+
+{
+  "path": "test-dir/nested",
+  "recursive": true
+}
+
+### fs.rename
+POST {{host}}/api/fs/rename?location[directory]={{directory}}
+Content-Type: application/json
+
+{
+  "from": "test-write.txt",
+  "to": "test-dir/moved.txt"
+}
+
+### fs.remove
+POST {{host}}/api/fs/remove?location[directory]={{directory}}
+Content-Type: application/json
+
+{
+  "path": "test-dir/moved.txt",
+  "recursive": true
+}
+
+### fs.watch (SSE)
+GET {{host}}/api/fs/watch?location[directory]={{directory}}
+
+# ============================================================
+# Session
+# ============================================================
+
+### session.list
+GET {{host}}/api/session
+
+### session.create
+POST {{host}}/api/session
+Content-Type: application/json
+
+{}
+
+### session.active
+GET {{host}}/api/session/active
+
+### session.get
+GET {{host}}/api/session/{{sessionID}}
+
+### session.switchAgent
+POST {{host}}/api/session/{{sessionID}}/agent
+Content-Type: application/json
+
+{
+  "agent": "build"
+}
+
+### session.switchModel
+POST {{host}}/api/session/{{sessionID}}/model
+Content-Type: application/json
+
+{
+  "providerID": "{{providerID}}",
+  "modelID": "claude-sonnet"
+}
+
+### session.prompt
+POST {{host}}/api/session/{{sessionID}}/prompt
+Content-Type: application/json
+
+{
+  "parts": [
+    { "type": "text", "text": "hello" }
+  ]
+}
+
+### session.compact
+POST {{host}}/api/session/{{sessionID}}/compact
+Content-Type: application/json
+
+{}
+
+### session.wait
+POST {{host}}/api/session/{{sessionID}}/wait
+Content-Type: application/json
+
+{}
+
+### session.revert.stage
+POST {{host}}/api/session/{{sessionID}}/revert/stage
+Content-Type: application/json
+
+{}
+
+### session.revert.clear
+POST {{host}}/api/session/{{sessionID}}/revert/clear
+Content-Type: application/json
+
+{}
+
+### session.revert.commit
+POST {{host}}/api/session/{{sessionID}}/revert/commit
+Content-Type: application/json
+
+{}
+
+### session.context
+GET {{host}}/api/session/{{sessionID}}/context
+
+### session.history
+GET {{host}}/api/session/{{sessionID}}/history
+
+### session.events
+GET {{host}}/api/session/{{sessionID}}/event
+
+### session.interrupt
+POST {{host}}/api/session/{{sessionID}}/interrupt
+Content-Type: application/json
+
+{}
+
+### session.message
+GET {{host}}/api/session/{{sessionID}}/message/{{messageID}}
+
+# ============================================================
+# Message
+# ============================================================
+
+### session.messages
+GET {{host}}/api/session/{{sessionID}}/message
+
+# ============================================================
+# Event
+# ============================================================
+
+### event.subscribe (SSE)
+GET {{host}}/api/event
+
+# ============================================================
+# Permission
+# ============================================================
+
+### permission.request.list
+GET {{host}}/api/permission/request
+
+### permission.saved.list
+GET {{host}}/api/permission/saved
+
+### permission.saved.remove
+DELETE {{host}}/api/permission/saved/{{permissionID}}
+
+### session.permission.create
+POST {{host}}/api/session/{{sessionID}}/permission
+Content-Type: application/json
+
+{}
+
+### session.permission.list
+GET {{host}}/api/session/{{sessionID}}/permission
+
+### session.permission.get
+GET {{host}}/api/session/{{sessionID}}/permission/{{permissionID}}
+
+### session.permission.reply
+POST {{host}}/api/session/{{sessionID}}/permission/{{permissionID}}/reply
+Content-Type: application/json
+
+{
+  "response": "always"
+}
+
+# ============================================================
+# Question
+# ============================================================
+
+### question.request.list
+GET {{host}}/api/question/request
+
+### session.question.list
+GET {{host}}/api/session/{{sessionID}}/question
+
+### session.question.reply
+POST {{host}}/api/session/{{sessionID}}/question/{{questionID}}/reply
+Content-Type: application/json
+
+{
+  "answers": ["yes"]
+}
+
+### session.question.reject
+POST {{host}}/api/session/{{sessionID}}/question/{{questionID}}/reject
+Content-Type: application/json
+
+{}
+
+# ============================================================
+# PTY
+# ============================================================
+
+### pty.list
+GET {{host}}/api/pty?location[directory]={{directory}}
+
+### pty.create
+POST {{host}}/api/pty?location[directory]={{directory}}
+Content-Type: application/json
+
+{
+  "command": "bash",
+  "args": ["-l"]
+}
+
+### pty.get
+GET {{host}}/api/pty/{{ptyID}}?location[directory]={{directory}}
+
+### pty.update
+PUT {{host}}/api/pty/{{ptyID}}?location[directory]={{directory}}
+Content-Type: application/json
+
+{
+  "title": "my shell"
+}
+
+### pty.remove
+DELETE {{host}}/api/pty/{{ptyID}}?location[directory]={{directory}}
+
+### pty.connectToken
+POST {{host}}/api/pty/{{ptyID}}/connect-token?location[directory]={{directory}}
+Content-Type: application/json
+
+{}
+
+### pty.connect
+GET {{host}}/api/pty/{{ptyID}}/connect?ticket=xxx
+
+# ============================================================
+# Agent
+# ============================================================
+
+### agent.list
+GET {{host}}/api/agent
+
+# ============================================================
+# Model
+# ============================================================
+
+### model.list
+GET {{host}}/api/model
+
+# ============================================================
+# Provider
+# ============================================================
+
+### provider.list
+GET {{host}}/api/provider
+
+### provider.get
+GET {{host}}/api/provider/{{providerID}}
+
+# ============================================================
+# Integration
+# ============================================================
+
+### integration.list
+GET {{host}}/api/integration
+
+### integration.get
+GET {{host}}/api/integration/{{integrationID}}
+
+### integration.connect.key
+POST {{host}}/api/integration/{{integrationID}}/connect/key
+Content-Type: application/json
+
+{
+  "key": "sk-xxx"
+}
+
+### integration.connect.oauth
+POST {{host}}/api/integration/{{integrationID}}/connect/oauth
+Content-Type: application/json
+
+{
+  "code": "xxx"
+}
+
+### integration.attempt.status
+GET {{host}}/api/integration/attempt/{{attemptID}}
+
+### integration.attempt.complete
+POST {{host}}/api/integration/attempt/{{attemptID}}/complete
+Content-Type: application/json
+
+{}
+
+### integration.attempt.cancel
+DELETE {{host}}/api/integration/attempt/{{attemptID}}
+
+# ============================================================
+# Credential
+# ============================================================
+
+### credential.update
+PATCH {{host}}/api/credential/{{credentialID}}
+Content-Type: application/json
+
+{
+  "label": "renamed"
+}
+
+### credential.remove
+DELETE {{host}}/api/credential/{{credentialID}}
+
+# ============================================================
+# Reference
+# ============================================================
+
+### reference.list
+GET {{host}}/api/reference?location[directory]={{directory}}
+
+# ============================================================
+# Command
+# ============================================================
+
+### command.list
+GET {{host}}/api/command?location[directory]={{directory}}
+
+# ============================================================
+# Skill
+# ============================================================
+
+### skill.list
+GET {{host}}/api/skill?location[directory]={{directory}}
+
+# ============================================================
+# Project Copy
+# ============================================================
+
+### projectCopy.create
+POST {{host}}/api/project_copy
+Content-Type: application/json
+
+{
+  "from": "/path/to/source",
+  "to": "/path/to/dest"
+}
+
+### projectCopy.remove
+DELETE {{host}}/api/project_copy
+Content-Type: application/json
+
+{
+  "id": "xxx"
+}
+
+### projectCopy.refresh
+POST {{host}}/api/project_copy/refresh
+Content-Type: application/json
+
+{}
