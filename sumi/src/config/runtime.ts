@@ -28,8 +28,13 @@ import { getFileSystemService, recordSyncedHash } from '../service/fs';
 
 /** BrowserFS 路径 → IDE 相对路径（去 /workspace 前缀） */
 function workspaceRel(path: string): string {
-  const p = path.startsWith(WORKSPACE_ROOT) ? path.slice(WORKSPACE_ROOT.length) : path;
-  return p || '/';
+  // 大小写不敏感比较: Windows 盘符 codeblitz 用 /d:/... 小写, WORKSPACE_ROOT 也小写,
+  // 但保险起见不区分大小写 (Windows 文件系统不区分盘符大小写)
+  if (path.toLowerCase().startsWith(WORKSPACE_ROOT.toLowerCase())) {
+    const rel = path.slice(WORKSPACE_ROOT.length);
+    return rel || '/';
+  }
+  return path || '/';
 }
 
 /** codeblitz OverlayFS 内部墓碑日志 (writable 根下, OverlayFS.js deletionLogPath):

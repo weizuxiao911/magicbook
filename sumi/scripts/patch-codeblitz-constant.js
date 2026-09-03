@@ -45,10 +45,12 @@ function __numasWorkspaceRoot() {
 }
 function __numasWsNormalize(p) {
     var s = String(p).replace(/\\\\/g, '/').replace(/\\/+$/, '');
-    // Windows 盘符 (D:/... 或 /D:/...) → codeblitz URI 形态 (前导 '/', 与 macOS /Users 对齐):
-    // codeblitz workspaceDir 必须前导 '/', 否则内部 watch 把相对路径拼成
-    // "D:/Work/.../D:/Work/..." 双重拼接 → explorer 挂错目录.
+    // Windows 盘符 (D:/... 或 /D:/...) → codeblitz URI 形态 (前导 '/', 盘符小写):
+    //   codeblitz watch/BrowserFS 路径是 /d:/... (小写盘符), WORKSPACE_ROOT 必须同形态,
+    //   否则 workspaceRel 的 startsWith 大小写不匹配 → 路径不 strip → explorer 列错目录.
+    //   前导 '/' 必须: codeblitz workspaceDir 若无前导 '/', watch 会把相对路径拼成双份.
     if (/^[A-Za-z]:/.test(s)) s = '/' + s;
+    s = s.replace(/^\/([A-Za-z]):/, function (_, drive) { return '/' + drive.toLowerCase() + ':'; });
     if (s === '/' || s === '') return '/workspace';
     return s;
 }
