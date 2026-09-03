@@ -7,7 +7,7 @@
 
 import React, { useEffect, useState } from 'react';
 
-import { AppRenderer, getDefaultAppConfig } from '@codeblitzjs/ide-core';
+import { AppRenderer, getDefaultAppConfig, WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 import '@codeblitzjs/ide-core/bundle/codeblitz.css';
 import '@codeblitzjs/ide-core/languages';
 
@@ -64,7 +64,7 @@ export const App: React.FC = () => {
   return (
     <AppRenderer
       appConfig={{
-        workspaceDir: '/',
+        workspaceDir: WORKSPACE_ROOT,
         ...buildSlots(),
         // monaco worker CDN: alipay (gw.alipayobjects.com) 404 缺失 editor.worker.bundle.js
         //   → 编辑器 fallback 主线程 "现在无法访问编辑器". jsdelivr / npmmirror 有文件.
