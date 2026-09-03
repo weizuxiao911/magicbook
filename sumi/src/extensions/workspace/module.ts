@@ -16,6 +16,7 @@ import { Domain, CommandContribution, CommandRegistry, BrowserModule, ClientAppC
 import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 import { EXPLORER_CONTAINER_ID } from '@opensumi/ide-explorer/lib/browser/explorer-contribution';
 import { IWorkspaceService } from '@opensumi/ide-workspace/lib/common/workspace.interface';
+import { IFileTreeService } from '@opensumi/ide-file-tree-next/lib/common';
 import { URI, FileStat } from '@opensumi/ide-core-common';
 
 import { WorkspaceView } from './WorkspaceView';
@@ -27,6 +28,8 @@ export class WorkspaceContribution implements CommandContribution, ClientAppCont
   layoutService: IMainLayoutService;
   @Autowired(IWorkspaceService)
   workspaceService: IWorkspaceService;
+  @Autowired(IFileTreeService)
+  fileTreeService: IFileTreeService;
 
   registerCommands(commands: CommandRegistry): void {
     // 不再注册 OPEN_FOLDER — 切工作目录入口统一在 chat 输入框底部
@@ -56,6 +59,14 @@ export class WorkspaceContribution implements CommandContribution, ClientAppCont
       try {
         await this.workspaceService.setWorkspace(stat);
         console.log('[workspace] setWorkspace ok:', uriStr);
+        // FileTreeService.init 在 onStart 早期已 fire-and-forget 拿到空 roots;
+        // setWorkspace 更新 roots 后必须显式刷新 FileTree, 让它重新拉根 (实测无 refresh 则 explorer 仍按空根渲染).
+        try {
+          await this.fileTreeService?.refresh?.();
+          console.log('[workspace] fileTreeService refreshed after setWorkspace');
+        } catch (e) {
+          console.warn('[workspace] fileTreeService refresh 失败:', e);
+        }
       } catch (e) {
         console.error('[workspace] setWorkspace 失败:', e);
       }

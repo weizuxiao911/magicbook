@@ -669,8 +669,9 @@ export class FileSystemServiceImpl implements IFileSystem {
   /** 验证 opensumi IFileServiceClient → BrowserFS → server fs 链路（拓展读文件的通道） */
   private async verifyOpensumiLink(): Promise<void> {
     try {
-      const stat = await this.fileService.getFileStat('file:///workspace');
-      console.log('[filesystem] opensumi 链路验证: file:///workspace stat =', {
+      const rootUri = `file://${WORKSPACE_ROOT}`;
+      const stat = await this.fileService.getFileStat(rootUri);
+      console.log('[filesystem] opensumi 链路验证:', rootUri, 'stat =', {
         isDirectory: stat?.isDirectory,
         children: stat?.children?.map((c) => ({ name: c.uri.split('/').pop(), isDirectory: c.isDirectory })),
       });
@@ -759,8 +760,8 @@ export class FileSystemServiceImpl implements IFileSystem {
   /** 刷新 explorer 文件树 */
   private async refreshExplorer(): Promise<void> {
     try {
-      this.fileService.fireFilesChange({ changes: [{ uri: 'file:///workspace', type: 1 }] });
-      console.log('[filesystem] explorer 已刷新 (fireFilesChange)');
+      this.fileService.fireFilesChange({ changes: [{ uri: `file://${WORKSPACE_ROOT}`, type: 1 }] });
+      console.log('[filesystem] explorer 已刷新 (fireFilesChange)', `file://${WORKSPACE_ROOT}`);
     } catch (e) {
       console.warn('[filesystem] explorer 刷新失败:', e);
     }
