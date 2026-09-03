@@ -207,6 +207,21 @@ export function subscribeCwd(cb: (next: string, prev: string) => void): () => vo
   return () => window.removeEventListener('workspace:changed', handler);
 }
 
+/**
+ * 启动时应用 URL `?directory=` 作为工作目录 (访问携带 query 参数时, 将该路径作为工作目录).
+ * - 有 `?directory=` → normalizeCwdPath 后 setCwd (写 APP_CWD + reload 一次)
+ * - setCwd 内部 `prev === norm` 幂等 → 同值不 reload, 无死循环
+ * - 无 query / 已同值 → 不动作
+ */
+export function applyUrlDirectory(): void {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+  try {
+    const raw = new URL(window.location.href).searchParams.get('directory');
+    if (!raw) return;
+    setCwd(raw);
+  } catch { /* ignore */ }
+}
+
 function notifyChanged(next: string, prev: string): void {
   window.dispatchEvent(new CustomEvent('workspace:changed', { detail: { next, prev } }));
 }

@@ -56,6 +56,15 @@ function isWindowsDrive(p: string): boolean {
   return /^\/?[A-Za-z]:/.test(p);
 }
 
+/** 跨平台 basename: 兼容 '/' 和 '\' 分隔符.
+ *  server Entry.path 目录尾 sep 用 path.sep: mac '/', win '\' (e.g. 'docs\').
+ *  client 之前只按 '/' 解析 → Windows 下 name 带 '\' → explorer 树不显示. */
+function pathBase(p: string): string {
+  const s = normalizeSep(p).replace(/[\\\/]+$/, '');
+  const seg = s.split('/').pop();
+  return seg ? seg : p;
+}
+
 /** 绝对路径规范化: 盘符形态去前导 '/' + 反斜杠转正斜杠; POSIX 原样 */
 function normalizeAbs(p: string): string {
   const s = normalizeSep(p);
@@ -837,7 +846,7 @@ export class FileSystemServiceImpl implements IFileSystem {
     try {
       const data = await fsApiGet<Array<{ path: string; type: 'file' | 'directory' }>>(`/api/fs/list?path=${encodeURIComponent(queryPath)}`);
       const entries: FsEntry[] = Array.isArray(data) ? data.map((e) => ({
-        name: e.path.replace(/\/+$/, '').split('/').pop() || '',
+        name: pathBase(e.path),
         type: e.type === 'directory' ? 'directory' : 'file',
       })) : [];
       console.log('[fs.list] OUT', { idePath, count: entries.length, names: entries.map(e => e.name) });
@@ -1047,7 +1056,7 @@ export class FileSystemServiceImpl implements IFileSystem {
         headers: { 'x-opencode-directory': encodeURI(norm) },
       });
       const entries: FsEntry[] = Array.isArray(data) ? data.map((e) => ({
-        name: e.path.replace(/\/+$/, '').split('/').pop() || e.path,
+        name: pathBase(e.path),
         type: e.type === 'directory' ? 'directory' : 'file',
       })) : [];
       console.log('[fs.listDir] OUT', { absPath, norm, count: entries.length });
