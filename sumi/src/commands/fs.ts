@@ -14,6 +14,8 @@
 export interface FsEntry {
   name: string;
   type: 'file' | 'directory';
+  /** server 返回的原始 path (Windows 含 '\\' 已 normalize 成 '/'),  可选 */
+  path?: string;
 }
 
 /** 文件元信息（server /fs/stat） */

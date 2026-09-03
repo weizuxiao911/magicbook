@@ -66,6 +66,13 @@ function pathBase(p: string): string {
   return seg ? seg : p;
 }
 
+/** server 响应路径统一规范化: 把反斜杠替换成正斜杠 (跨平台一致).
+ *  server Entry.path 在 Windows 目录尾带 '\\' (path.sep),  file/absolute 同理.
+ *  client 全局统一替换  → 跨平台路径形态一致, 避免 'dist\\' vs 'dist/' 拼 URI 失配. */
+function normalizeServerPath(p: string): string {
+  return p.replace(/\\/g, '/');
+}
+
 /** 绝对路径规范化: 盘符形态去前导 '/' + 反斜杠转正斜杠; POSIX 原样 */
 function normalizeAbs(p: string): string {
   const s = normalizeSep(p);
@@ -855,8 +862,11 @@ export class FileSystemServiceImpl implements IFileSystem {
         console.log('[fs.list] ERR', { idePath, error: (error as any)?.message || error });
         return [];
       }
-      const entries: FsEntry[] = (data || []).map((e) => ({
+      const entries: FsEntry[] = (data || []).map((e: any) => ({
         name: e.name,
+        // server handler file.ts 透传 item.path (Windows 目录尾 '\\')  和 absolute,
+        // 客户端统一替换 '\\' → '/'  让跨平台路径形态一致,  避免 explorer tree / FilePicker 拼路径失配.
+        path: e.path ? normalizeServerPath(e.path) : undefined,
         type: e.type === 'directory' ? 'directory' : 'file',
       }));
       console.log('[fs.list] OUT', { idePath, count: entries.length, names: entries.map(e => e.name) });
@@ -1079,8 +1089,11 @@ export class FileSystemServiceImpl implements IFileSystem {
       const data = await fsApiGet<Array<{ path: string; type: 'file' | 'directory' }>>(`/api/fs/list?path=.`, {
         headers: { 'x-opencode-directory': encodeURI(norm) },
       });
-      const entries: FsEntry[] = Array.isArray(data) ? data.map((e) => ({
+      const entries: FsEntry[] = Array.isArray(data) ? data.map((e: any) => ({
+        // server Entry.path 在 Windows 目录尾带 '\\' (path.sep).  统一替换为 '/'  让跨平台
+        // 路径形态一致 (e.g. Windows 'dist\\' → 'dist/'),  避免 FilePicker 拼路径失配.
         name: pathBase(e.path),
+        path: normalizeServerPath(e.path),
         type: e.type === 'directory' ? 'directory' : 'file',
       })) : [];
       console.log('[fs.listDir] OUT', { absPath, norm, count: entries.length });
