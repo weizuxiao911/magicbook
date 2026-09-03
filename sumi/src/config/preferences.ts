@@ -14,7 +14,7 @@ export const preferences: IAppRendererProps['appConfig']['defaultPreferences'] =
   'editor.previewMode': false,
   'editor.enablePreviewFromCodeNavigation': false,
   'editor.autoSave': 'afterDelay',
-  'editor.autoSaveDelay': 100,
+  'editor.autoSaveDelay': 250,
   // 文件树: 第一层与分组标题完全左对齐(baseIndent 负补偿) + 每层缩进 16 让父子层级明显
   'explorer.fileTree.baseIndent': -12,
   'explorer.fileTree.indent': 16,
