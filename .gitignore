@@ -6,9 +6,6 @@ dist/
 out/
 .webpack-cache/
 
-# numas 集成: web/ 是旧的独立客户端 (后续可能被 sumi/ 取代), 先 gitignore
-web/
-
 # 单个 vsix 产物 (extensions/*/dist/*.vsix) — 跟 registry/vsix 区分
 *.vsix
 !registry/vsix/*.vsix
