@@ -138,6 +138,7 @@ export const App: React.FC = () => {
         // monaco worker CDN: alipay (gw.alipayobjects.com) 404 缺失 editor.worker.bundle.js
         //   → 编辑器 fallback 主线程 "现在无法访问编辑器". jsdelivr / npmmirror 有文件.
         componentCDNType: 'jsdelivr',
+        useSimplifyExplorerPanel: true, // 去掉 explorer 容器里的「打开的编辑器」「大纲」section
         panelSizes: { [SlotLocation.left]: 276 },
         defaultPreferences: preferences,
         extensionMetadata: extensionMetadata as any,
