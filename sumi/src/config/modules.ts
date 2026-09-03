@@ -18,6 +18,7 @@ import { RegistryModule } from '../service/registry';
 import { FileSystemModule } from '../service/fs';
 import { TerminalModule } from '../service/terminal';
 import { EnvModule } from '../service/env';
+import { FsProviderModule } from './fs';
 
 export function getBuiltinModules(_opts?: { vsixMetadata?: any[] }): any[] {
   return [
@@ -35,5 +36,8 @@ export function getBuiltinModules(_opts?: { vsixMetadata?: any[] }): any[] {
     FilePickerModule,
     PdfReaderModule,
     OpenTypeModule,
+    // 注册自定义 file scheme provider (覆盖 codeblitz 默认 DiskFileSystemProvider)
+    // 放在最后, 确保 codeblitz 默认 fsProviders 先就位, 我们再 fsProviders.delete + registerProvider
+    FsProviderModule,
   ];
 }
