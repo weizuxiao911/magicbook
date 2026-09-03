@@ -26,20 +26,25 @@ const CONST_FILE = path.resolve(__dirname, '../node_modules/@codeblitzjs/ide-sum
 const MARKER = '__numasWorkspaceRoot';
 
 const PATCH = `// numas patch (postinstall): WORKSPACE_ROOT 运行时取真实工作目录 (file:///workspace/x → file:///{cwd}/x)
-//   优先级: localStorage APP_CWD (用户选择) → sessionStorage APP_CWD_FALLBACK (hostCwd 兜底) → __APP_CONFIG__.cwd → '/workspace'
-//   注意: constant.js 在 createApp 时首次求值, 此时 __APP_CONFIG__.cwd 可能尚未注入 (initRuntime 异步), 故 storage 优先
+//   优先级: URL ?directory= (source-of-truth) → __APP_CONFIG__.cwd (opencode /path 注入) → '/workspace' (兜底)
+//   注: constant.js 在 createApp 时首次求值. opencode service initRuntime 异步,
+//   启动时无 URL ?directory 也没 __APP_CONFIG__.cwd → 兜底 '/workspace' → initRuntime 完 redirect + reload
+//   二次求值时 URL 已有 ?directory, 直接读.
 function __numasWorkspaceRoot() {
     try {
-        if (typeof localStorage !== 'undefined') {
-            const saved = localStorage.getItem('APP_CWD') || sessionStorage.getItem('APP_CWD_FALLBACK');
-            if (saved) return saved.replace(/\\/+$/, '');
+        if (typeof window !== 'undefined' && window.location) {
+            const dir = new URL(window.location.href).searchParams.get('directory');
+            console.log('[numas-patch] __numasWorkspaceRoot: dir=' + dir);
+            if (dir) return dir.replace(/\\\\/+$/, '');
         }
         if (typeof window !== 'undefined' && window.__APP_CONFIG__) {
             const c = window.__APP_CONFIG__;
+            console.log('[numas-patch] __numasWorkspaceRoot: __APP_CONFIG__.cwd=' + c?.cwd);
             if (c.cwd) return c.cwd.replace(/\\/+$/, '');
         }
     }
-    catch (e) { /* 存储不可用 → 默认 */ }
+    catch (e) { console.log('[numas-patch] __numasWorkspaceRoot: error', e); }
+    console.log('[numas-patch] __numasWorkspaceRoot: fallback /workspace');
     return '/workspace';
 }
 export const WORKSPACE_ROOT = __numasWorkspaceRoot();`;

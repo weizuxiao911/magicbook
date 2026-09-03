@@ -1,12 +1,14 @@
 /**
  * chat 全局配置读取 — extensions/chat/scheme.ts
  *
- * 只读取全局配置 (window.__APP_CONFIG__.chatConfig, 由 webapp 容器在启动期注入),
- * 不直接依赖 @/config/brand, 拓展保持自包含.
+ * 品牌/建议文案单一来源: config/brand.ts (直接 import, 编译期可静态追踪).
+ * 不依赖 window.__APP_CONFIG__.chatConfig 中间层, 避免绕路.
  *
  * chatConfig 结构: { brand: 品牌文案, suggestions: 欢迎页建议卡片 }
  * 没有全局配置时返回 null, UI 留空处理 (不兜底默认品牌).
  */
+
+import { APP_CHAT_CONFIG } from '@/config/brand';
 
 export interface ChatBrand {
   name: string;
@@ -29,17 +31,15 @@ export interface ChatConfig {
 }
 
 export function getChatConfig(): ChatConfig | null {
-  if (typeof window === 'undefined') return null;
-  const g = (window as any).__APP_CONFIG__?.chatConfig as ChatConfig | undefined;
-  return g || null;
+  return APP_CHAT_CONFIG as unknown as ChatConfig;
 }
 
 export function getBrand(): ChatBrand | null {
-  return getChatConfig()?.brand || null;
+  return APP_CHAT_CONFIG.brand as unknown as ChatBrand;
 }
 
 export function getSuggestions(): ChatSuggestion[] {
-  return getChatConfig()?.suggestions || [];
+  return APP_CHAT_CONFIG.suggestions as unknown as ChatSuggestion[];
 }
 
 export function formatBrand(template: string, brand?: ChatBrand | null): string {

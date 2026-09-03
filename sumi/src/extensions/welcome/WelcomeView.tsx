@@ -2,8 +2,9 @@ import React, { useMemo, useRef } from 'react';
 import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/injectable-hooks';
 import { CommandService } from '@opensumi/ide-core-common';
 
-import { FsToken, type IFileSystem } from '@/commands/fs';
-import { EnvToken, type IEnvService } from '@/commands/env';
+import { FsToken, type IFileSystem } from '@/service/filesystem';
+import { getWorkspace } from '@/infra/url';
+import { APP_CHAT_CONFIG } from '@/config/brand';
 
 /**
  * WelcomeView — webapp 主区欢迎页
@@ -12,22 +13,18 @@ import { EnvToken, type IEnvService } from '@/commands/env';
  * 工作区无打开文件时由 WelcomeContribution.onDidRestoreState 自动打开.
  *
  * 内容:
- *   - logo (品牌 logo) + 品牌名 + 标语 (从全局配置 __APP_CONFIG__.chatConfig.brand 读取)
+ *   - logo (品牌 logo) + 品牌名 + 标语 (单一来源: config/brand.ts)
  *   - 快捷操作: 上传文件到工作区
  */
 export const WelcomeView: React.FC<{ resource?: any }> = () => {
   const commandService = useInjectable<CommandService>(CommandService);
   const fs = useInjectable<IFileSystem>(FsToken);
-  const env = useInjectable<IEnvService>(EnvToken);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 品牌/logo 从全局配置 (__APP_CONFIG__.chatConfig.brand) 读取, 不硬编码
-  const brand = useMemo(() => {
-    const cfg = (window as any).__APP_CONFIG__;
-    return cfg?.chatConfig?.brand || { name: 'AI 工作台', logo: '', title: '' };
-  }, []);
+  // 品牌/logo 单一来源: config/brand.ts
+  const brand = useMemo(() => APP_CHAT_CONFIG.brand, []);
 
-  const workspaceDir = env?.getCwdSync?.() || '';
+  const workspaceDir = getWorkspace();
 
   const handleUploadClick = () => fileInputRef.current?.click();
 

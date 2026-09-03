@@ -5,7 +5,7 @@
  * 渲染前拉取 registry 拓展元数据（编译期配置, 无登录依赖; codeblitz ext host 加载 vsix 用）.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import { AppRenderer, getDefaultAppConfig } from '@codeblitzjs/ide-core';
 import '@codeblitzjs/ide-core/bundle/codeblitz.css';
@@ -15,10 +15,64 @@ import { buildSlots } from './config/slots';
 import { getBuiltinModules } from './config/modules';
 import { preferences } from './config/preferences';
 import { runtimeConfig } from './config/runtime';
-import { getRegistryService } from './service/registry';
-import type { ExtensionMetadata } from './commands/registry';
+import { ExtensionServiceImpl } from './service/extension';
+import type { ExtensionMetadata } from './service/extension';
+import { urlWorkspace, getWorkspace, appBaseUrl } from './infra/url';
+import { APP_CHAT_CONFIG } from './config/brand';
 import './styles/overrides.css';
 import './styles/slots.css';
+
+const BRAND = APP_CHAT_CONFIG.brand;
+
+/**
+ * SplashScreen — URL 缺 `?directory=` 时的显式动画 loading 遮罩.
+ * App 侧会先探测真实 workspace → replaceState 补 URL → reload;
+ * reload 后 urlWorkspace() 非空, 正常渲染 IDE. 探测失败由 8s 超时兜底.
+ * 品牌文案一律来自 config/brand.ts (单一来源), 不在此硬编码.
+ */
+function SplashScreen(): React.JSX.Element {
+  return (
+    <div className="numas-splash" role="status" aria-live="polite">
+      <div className="numas-splash-logo">{BRAND.logo}</div>
+      <div className="numas-splash-spinner" />
+      <div className="numas-splash-title">{BRAND.name}</div>
+      <div className="numas-splash-text">{BRAND.subtitle}</div>
+    </div>
+  );
+}
+
+/**
+ * 探测真实 workspace 并同步到 URL (source-of-truth).
+ * 优先级: URL `?directory=`(已有) → __APP_CONFIG__.cwd (opencode /path 注入)
+ *        → 调 opencode `/path` 拿 directory。 拿到后 replaceState 补 URL。
+ * 返回 true 表示已补好 URL (调用方应 reload); false 表示无可补 (交给 initRuntime 兜底)。
+ */
+async function ensureUrlWorkspace(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  try {
+    if (urlWorkspace()) return false; // URL 已有, 无需处理
+    let ws = getWorkspace(); // __APP_CONFIG__.cwd
+    if (!ws) {
+      // 主动探 opencode /path 拿 workdir
+      const base = appBaseUrl();
+      if (base) {
+        try {
+          const res = await fetch(`${base.replace(/\/+$/, '')}/path`, {
+            headers: { Accept: 'application/json' },
+          });
+          const json = await res.json();
+          ws = json?.directory || json?.worktree || '';
+        } catch { /* ignore */ }
+      }
+    }
+    if (!ws) return false;
+    const u = new URL(window.location.href);
+    u.searchParams.set('directory', ws);
+    window.history.replaceState(null, '', u.toString());
+    console.log('[App] 探测 workspace 并补 URL:', ws);
+    return true;
+  } catch { return false; }
+}
 
 /** 渲染前暂存上次打开的编辑器 uris（容器初始化恢复失败会清空 storage, 登录后按暂存恢复） */
 function stashSavedEditorUris(): void {
@@ -51,15 +105,35 @@ export const App: React.FC = () => {
   const defaultModules = getDefaultAppConfig().modules || [];
   const [extensionMetadata, setExtensionMetadata] = useState<ExtensionMetadata[]>([]);
   const [ready, setReady] = useState(false);
+  // URL 缺 `?directory=` 时先显示 splash: 探测 workspace → replaceState 补 URL → reload
+  const noExplicitWorkspace = urlWorkspace() === '';
+  // 兜底: 探测失败 / opencode 未起时, 8s 后强制渲染 IDE (跳过 reload 分支)
+  const [forceRender, setForceRender] = useState(false);
+  // 启动期直接 instantiate (DI 容器还未就绪, 一次性调用)
+  const extService = useMemo(() => new ExtensionServiceImpl(), []);
 
   useEffect(() => {
-    getRegistryService()
-      .installMetadata()
+    extService.installMetadata()
       .then(setExtensionMetadata)
       .finally(() => setReady(true));
-  }, []);
+  }, [extService]);
 
-  if (!ready) return null;
+  // URL 缺 `?directory=` 时: 探测真实 workspace 补 URL → reload (一次性)
+  useEffect(() => {
+    if (!noExplicitWorkspace) return;
+    let cancelled = false;
+    const t = setTimeout(() => { if (!cancelled) setForceRender(true); }, 8000);
+    (async () => {
+      try {
+        const patched = await ensureUrlWorkspace();
+        if (!cancelled && patched) window.location.reload();
+        else if (!cancelled) setForceRender(true);
+      } catch { if (!cancelled) setForceRender(true); }
+    })();
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [noExplicitWorkspace]);
+
+  if (!ready || (noExplicitWorkspace && !forceRender)) return <SplashScreen />;
 
   return (
     <AppRenderer

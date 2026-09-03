@@ -4,7 +4,7 @@ import { CommandService } from '@opensumi/ide-core-common';
 import { SlotLocation } from '@opensumi/ide-core-browser';
 import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 
-import { FsToken, type IFileSystem } from '@/commands/fs';
+import { FsToken, type IFileSystem } from '@/service/filesystem';
 
 import {
   aiListAgents,
@@ -21,8 +21,7 @@ import {
   isAiReady,
 } from '@/extensions/chat/commands/api';
 import { modelPrefs } from '@/extensions/chat/commands/modelPrefs';
-import { getCwd, subscribeCwd } from '@/service/env';
-import { secureUrl } from '@/service/env';
+import { getWorkspace, subscribeWorkspace, secureUrl } from '@/infra/url';
 import { PartRenderer } from './parts/PartRenderer';
 import { PermissionModal } from './parts/PermissionModal';
 import { ModelPicker } from './parts/ModelPicker';
@@ -183,14 +182,14 @@ export const Chat: React.FC = () => {
     return rt ? { userId: rt.userId, tenantId: rt.tenantId, deployEnv: rt.deployEnv } : null;
   }, []);
 
-  // 工作目录状态 (供上传附件按钮 + @提及等使用, 切入口已上移到顶栏 logo 旁的全局按钮,
-  // 通过 service/env.requestShowPicker() 派 workspace:request-show → WorkspacePicker 居中模态)
-  const [wsCwd, setWsCwd] = useState<string>(() => getCwd());
+  // 工作空间状态 (供上传附件按钮 + @提及等使用, 切入口已上移到顶栏 logo 旁的全局按钮,
+  // 通过 workspace:request-show 派发 → WorkspacePicker 居中模态)
+  const [workspace, setWorkspace] = useState<string>(() => getWorkspace());
   useEffect(() => {
-    const refresh = () => setWsCwd(getCwd());
-    const unsub = subscribeCwd(refresh);
+    const refresh = () => setWorkspace(getWorkspace());
+    const unsub = subscribeWorkspace(refresh);
     window.addEventListener('storage', refresh);
-    // runtime-ready 时再刷一次 (处理 chat mount 后才 setCwd / reload 时序)
+    // runtime-ready 时再刷一次 (处理 chat mount 后才 setWorkspace / reload 时序)
     window.addEventListener('runtime-ready', refresh);
     return () => {
       unsub();
@@ -423,7 +422,7 @@ export const Chat: React.FC = () => {
   // sessionID 持久化到 sessionStorage, 跟当前 APP_CWD 绑定.
   // 切工作目录后 reload, 旧 SESSION_KEY 读不到 → 触发 ensureDraft 建新 session (新 cwd 下)
   // 这保证 session 的 directory 字段永远跟当前 cwd 一致, pwd 等 shell 命令结果正确
-  const SESSION_KEY = useMemo(() => sessionKeyFor(getCwd()), []);
+  const SESSION_KEY = useMemo(() => sessionKeyFor(getWorkspace()), []);
   // 仅启动时恢复一次上次会话. 注意: 不能依赖 sessionID 重跑 (restore 读 storage + write 写
   // storage 会形成 A↔B 乒乓 → applySessionToUI 反复 session.get → 请求洪流).
   // 顺手清掉 4a0b040 之前的旧版 'chat.sessionID' (无 cwd 后缀) 残留
@@ -1655,7 +1654,7 @@ export const Chat: React.FC = () => {
             )}
             <div className="chat__input-bar">
               {/* 上传附件: 用 File System Access API (localhost 支持) 绕开 CodeBlitz 对原生 file chooser 的拦截 */}
-              {wsCwd && (
+              {workspace && (
                 <button
                   type="button"
                   className="chat__bar-btn chat__bar-plus"

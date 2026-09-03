@@ -8,12 +8,8 @@ import { installCustomEditorPatch } from './patches/patch-custom-editor';
 import './config/app';
 import './styles/overrides.css';
 import './styles/slots.css';
-// 访问携带 ?directory=<path> 时, 将该路径作为工作目录 (写 APP_CWD; 不同则 reload 一次)
-import { applyUrlDirectory } from './service/env';
 
 installCustomEditorPatch();
-
-applyUrlDirectory();
 
 (window as any).React = React;
 

@@ -862,4 +862,53 @@ div[data-viewlet-id="sessions-default"] [class*="titlebar"] {
   content: none;
 }
 
+/* ============ Numas Splash (URL 无 ?directory= 时的显式动画 loading) ============ */
+.numas-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: #1a1b1e;
+  color: #e6e6e6;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.numas-splash-logo {
+  font-size: 56px;
+  line-height: 1;
+  animation: numas-breathe 1.6s ease-in-out infinite;
+}
+.numas-splash-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.18);
+  border-top-color: #4c8dff;
+  animation: numas-spin 0.9s linear infinite;
+}
+.numas-splash-title {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.numas-splash-text {
+  font-size: 13px;
+  color: rgba(230, 230, 230, 0.65);
+  animation: numas-fade 1.4s ease-in-out infinite;
+}
+@keyframes numas-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes numas-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+@keyframes numas-fade {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
 

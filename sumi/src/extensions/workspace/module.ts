@@ -13,19 +13,16 @@
 
 import { Injectable, Autowired } from '@opensumi/di';
 import { Domain, CommandContribution, CommandRegistry, BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser';
-import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
-import { EXPLORER_CONTAINER_ID } from '@opensumi/ide-explorer/lib/browser/explorer-contribution';
 import { IWorkspaceService } from '@opensumi/ide-workspace/lib/common/workspace.interface';
 import { IFileTreeService } from '@opensumi/ide-file-tree-next/lib/common';
 import { URI, FileStat } from '@opensumi/ide-core-common';
 
-import { WorkspaceView } from './WorkspaceView';
+import { getWorkspace } from '../../infra/url';
+import { normalizeCwdPath } from '../../infra/path';
 
 @Injectable()
 @Domain(CommandContribution, ClientAppContribution)
 export class WorkspaceContribution implements CommandContribution, ClientAppContribution {
-  @Autowired(IMainLayoutService)
-  layoutService: IMainLayoutService;
   @Autowired(IWorkspaceService)
   workspaceService: IWorkspaceService;
   @Autowired(IFileTreeService)
@@ -36,49 +33,35 @@ export class WorkspaceContribution implements CommandContribution, ClientAppCont
   }
 
   async onStart(): Promise<void> {
-    const cwd = localStorage.getItem('APP_CWD');
-    if (cwd) {
-      // 有 APP_CWD: 主动 setWorkspace 同步 explorer 根. URI 用 file:// 拼接 normalized 路径
-      // (盘符小写), 避开 opensumi URI.file/parse 在 Windows encode 盘符 (d%3A) 的问题.
-      // 关键: setWorkspace 是 async (内部 updateWorkspace → updateRoots), 必须 await —
-      // FileTreeService.init 读 workspaceService.roots promise, fire-and-forget 会导致
-      // FileTreeService 拿到空 roots → explorer 显示"无打开的文件夹"引导页 (实测).
-      const norm = cwd.replace(/\\/g, '/');
-      const driveLower = norm.replace(/^\/+/, '').match(/^([A-Za-z]):/);
-      const filePath = driveLower
-        ? '/' + driveLower[1].toLowerCase() + ':' + norm.replace(/^[A-Za-z]:/, '')
-        : norm;
-      const uriStr = `file://${filePath}`;
-      const uri = URI.parse(uriStr);
-      const stat: FileStat = {
-        uri,
-        lastModification: 0,
-        isDirectory: true,
-        name: driveLower ? driveLower[1].toLowerCase() + ':' : undefined,
-      } as any;
+    // workspace 来源: URL `?directory=` > __APP_CONFIG__.cwd (opencode /path 注入).
+    // setWorkspace 同步 explorer 根 (走 codeblitz IWorkspaceService).
+    const ws = normalizeCwdPath(getWorkspace());
+    if (!ws) return;
+    const driveLower = ws.replace(/^\/+/, '').match(/^([A-Za-z]):/);
+    const filePath = driveLower
+      ? '/' + driveLower[1].toLowerCase() + ':' + ws.replace(/^[A-Za-z]:/, '')
+      : ws;
+    const uriStr = `file://${filePath}`;
+    const uri = URI.parse(uriStr);
+    const stat: FileStat = {
+      uri,
+      lastModification: 0,
+      isDirectory: true,
+      name: driveLower ? driveLower[1].toLowerCase() + ':' : undefined,
+    } as any;
+    try {
+      await this.workspaceService.setWorkspace(stat);
+      console.log('[workspace] setWorkspace ok:', uriStr);
+      // FileTreeService.init 在 onStart 早期已 fire-and-forget 拿到空 roots;
+      // setWorkspace 更新 roots 后必须显式刷新 FileTree.
       try {
-        await this.workspaceService.setWorkspace(stat);
-        console.log('[workspace] setWorkspace ok:', uriStr);
-        // FileTreeService.init 在 onStart 早期已 fire-and-forget 拿到空 roots;
-        // setWorkspace 更新 roots 后必须显式刷新 FileTree, 让它重新拉根 (实测无 refresh 则 explorer 仍按空根渲染).
-        try {
-          await this.fileTreeService?.refresh?.();
-          console.log('[workspace] fileTreeService refreshed after setWorkspace');
-        } catch (e) {
-          console.warn('[workspace] fileTreeService refresh 失败:', e);
-        }
+        await this.fileTreeService?.refresh?.();
       } catch (e) {
-        console.error('[workspace] setWorkspace 失败:', e);
+        console.warn('[workspace] fileTreeService refresh 失败:', e);
       }
-      return;
+    } catch (e) {
+      console.error('[workspace] setWorkspace 失败:', e);
     }
-    // 无 APP_CWD: 注册 WORKSPACE view 引导去 chat 切目录
-    this.layoutService.collectViewComponent({
-      id: 'file-explorer',
-      component: WorkspaceView,
-      name: '工作空间',
-      priority: 10,
-    }, EXPLORER_CONTAINER_ID);
   }
 }
 

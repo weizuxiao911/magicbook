@@ -5,7 +5,13 @@ import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 import { PreferenceService } from '@opensumi/ide-core-browser/lib/preferences';
 import { PreferenceScope } from '@opensumi/ide-core-common/lib/preferences/preference-scope';
 
-import { getCwd, subscribeCwd, requestShowPicker } from '../../service/env';
+import { getWorkspace, subscribeWorkspace } from '../../infra/url';
+import { APP_CHAT_CONFIG } from '../../config/brand';
+
+function requestShowPicker(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('workspace:request-show'));
+}
 
 const THEME_DARK = 'opensumi-design-dark-theme';
 const THEME_LIGHT = 'opensumi-design-light-theme';
@@ -31,29 +37,26 @@ export const ActionsView: React.FC = () => {
   const [rightVisible, setRightVisible] = useState(true);
   const [isDark, setIsDark] = useState(true);
 
-  // 品牌/logo 从全局配置 (__APP_CONFIG__.chatConfig.brand) 读取, 不硬编码
-  const brand = useMemo(() => {
-    const cfg = (window as any).__APP_CONFIG__;
-    return cfg?.chatConfig?.brand || { name: 'AI 工作台', logo: '' };
-  }, []);
+  // 品牌/logo 单一来源: config/brand.ts
+  const brand = useMemo(() => APP_CHAT_CONFIG.brand, []);
 
-  // 当前工作目录: 显示在 logo 旁, 点击触发 requestShowPicker() 派 workspace:request-show → WorkspacePicker 模态.
-  // 状态跟 service/env 同步 (subscribeCwd + storage 事件, 跨 tab/选目录后均能刷新).
-  const [cwd, setCwd] = useState<string>(() => getCwd());
+  // 当前工作空间: 显示在 logo 旁, 点击触发 requestShowPicker() 派 workspace:request-show → WorkspacePicker 模态.
+  // 状态跟 service/state 同步 (subscribeWorkspace + storage 事件, 跨 tab/选目录后均能刷新).
+  const [workspace, setWorkspaceState] = useState<string>(() => getWorkspace());
   useEffect(() => {
-    const refresh = () => setCwd(getCwd());
-    const unsub = subscribeCwd(refresh);
+    const refresh = () => setWorkspaceState(getWorkspace());
+    const unsub = subscribeWorkspace(refresh);
     window.addEventListener('storage', refresh);
     return () => {
       unsub();
       window.removeEventListener('storage', refresh);
     };
   }, []);
-  const cwdName = useMemo(() => {
-    if (!cwd) return '未选择工作目录';
-    return cwd.split('/').filter(Boolean).pop() || cwd;
-  }, [cwd]);
-  const cwdFull = cwd || '';
+  const workspaceName = useMemo(() => {
+    if (!workspace) return '未选择工作空间';
+    return workspace.split('/').filter(Boolean).pop() || workspace;
+  }, [workspace]);
+  const workspaceFull = workspace || '';
 
   useEffect(() => {
     const current = preferenceService.get<string>(THEME_KEY, THEME_DARK);
@@ -223,7 +226,7 @@ export const ActionsView: React.FC = () => {
         }}
         onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--button-hoverBackground, rgba(255,255,255,0.06))'; }}
         onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
-        title={cwdFull || '点击选择工作目录'}
+        title={workspaceFull || '点击选择工作空间'}
       >
         {brand.logo ? (
           <span style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }}>{brand.logo}</span>
@@ -234,7 +237,7 @@ export const ActionsView: React.FC = () => {
         )}
         <span style={{
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 240,
-        }}>{cwdName}</span>
+        }}>{workspaceName}</span>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7, flexShrink: 0 }}>
           <polyline points="6 9 12 15 18 9" />
         </svg>

@@ -1,7 +1,7 @@
 import type { IAppRendererProps } from '@codeblitzjs/ide-core';
 import { SlotLocation } from '@opensumi/ide-core-browser';
 
-import { LayoutComponent } from './layout';
+import { LayoutComponent } from '../layout';
 
 export type Slots = Pick<
   IAppRendererProps['appConfig'],

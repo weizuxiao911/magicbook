@@ -40,6 +40,9 @@ client/.env.production
 .logs/
 .tmp/
 
+# codeblitz 运行时存储 (datas / storage / 缓存, 不入库)
+.codeblitz/
+
 # 编辑器/系统
 .DS_Store
 .idea/

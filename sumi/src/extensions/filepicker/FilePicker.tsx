@@ -19,8 +19,8 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { notification } from '@opensumi/ide-components/lib/notification';
 import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/injectable-hooks';
 
-import { normalizeCwdPath } from '../../service/env';
-import { FsToken, type IFileSystem } from '../../commands/fs';
+import { normalizeCwdPath } from '../../infra/path';
+import { FsToken, type IFileSystem } from '../../service/filesystem';
 
 interface DirEntry { name: string; path: string; type: 'file' | 'directory'; }
 
