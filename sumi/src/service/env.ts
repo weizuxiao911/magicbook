@@ -52,12 +52,17 @@ function isWindowsDrivePath(p: string): boolean {
  *  - Windows 盘符: 去前导 '/' (/D:/Work → D:/Work), 反斜杠转正斜杠 (D:\Work → D:/Work)
  *    (server 端 path.win32 能处理; 前导 '/' 会让 server 按 POSIX 根解析 → 500/错目录)
  *  - POSIX (/Users/...): 原样
+ *  - 去尾斜杠 (保留根: '/' / 盘符根 'D:'): APP_CWD 带尾 '/' 会让 effectiveCwd
+ *    和 WORKSPACE_ROOT 不一致 (constant.js 自己 strip 尾) → workspaceRel 相对转换
+ *    错位 → explorer 树不显示
  */
 export function normalizeCwdPath(p: string): string {
   if (!p) return p;
-  const s = p.replace(/\\/g, '/');
-  if (isWindowsDrivePath(s)) return s.replace(/^\/+/, '');
-  return s;
+  let s = p.replace(/\\/g, '/');
+  if (isWindowsDrivePath(s)) s = s.replace(/^\/+/, '');
+  if (s === '/' || s === '') return s;
+  if (/^[A-Za-z]:$/.test(s)) return s; // 盘符根 D: (无尾)
+  return s.replace(/\/+$/, '');
 }
 
 /** 当前有效工作目录: APP_CWD (用户选择) → __APP_CONFIG__.cwd (initRuntime 注入的 hostCwd) → '' */
