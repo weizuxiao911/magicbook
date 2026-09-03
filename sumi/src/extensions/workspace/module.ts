@@ -32,30 +32,33 @@ export class WorkspaceContribution implements CommandContribution, ClientAppCont
     // 不再注册 OPEN_FOLDER — 切工作目录入口统一在 chat 输入框底部
   }
 
-  onStart(): void {
+  async onStart(): Promise<void> {
     const cwd = localStorage.getItem('APP_CWD');
     if (cwd) {
-      // 有 APP_CWD: 已选择过工作目录, 直接进入 (opencode/fs 已由 select 启动)
-      // 同时显式 setWorkspace 让 opensumi file-tree explorer 根 = cwd (Windows 关键:
-      // App.tsx workspaceDir='/' 在 Windows = 盘符根, explorer 提示"无打开的文件夹";
-      // 主动 setWorkspace 覆盖默认 roots → explorer 跟 effectiveCwd 同步).
-      // 不走 URI.file (opensumi URI.file Windows 盘符 encode 成 d%3A, 跟 codeblitz
-      // 'file:///d:/...' URI 形态不匹配 → workspace roots 错, explorer 空).
-      // 直接拼: Windows 'D:/foo' → 'file:///d:/foo' (盘符小写, 跟 codeblitz 一致);
-      // POSIX '/Users/foo' → 'file:///Users/foo'.
+      // 有 APP_CWD: 主动 setWorkspace 同步 explorer 根. URI 用 file:// 拼接 normalized 路径
+      // (盘符小写), 避开 opensumi URI.file/parse 在 Windows encode 盘符 (d%3A) 的问题.
+      // 关键: setWorkspace 是 async (内部 updateWorkspace → updateRoots), 必须 await —
+      // FileTreeService.init 读 workspaceService.roots promise, fire-and-forget 会导致
+      // FileTreeService 拿到空 roots → explorer 显示"无打开的文件夹"引导页 (实测).
       const norm = cwd.replace(/\\/g, '/');
       const driveLower = norm.replace(/^\/+/, '').match(/^([A-Za-z]):/);
       const filePath = driveLower
         ? '/' + driveLower[1].toLowerCase() + ':' + norm.replace(/^[A-Za-z]:/, '')
         : norm;
-      const uri = URI.parse(`file://${filePath}`);
+      const uriStr = `file://${filePath}`;
+      const uri = URI.parse(uriStr);
       const stat: FileStat = {
         uri,
         lastModification: 0,
         isDirectory: true,
+        name: driveLower ? driveLower[1].toLowerCase() + ':' : undefined,
       } as any;
-      this.workspaceService.setWorkspace(stat);
-      console.log('[workspace] setWorkspace:', uri.toString());
+      try {
+        await this.workspaceService.setWorkspace(stat);
+        console.log('[workspace] setWorkspace ok:', uriStr);
+      } catch (e) {
+        console.error('[workspace] setWorkspace 失败:', e);
+      }
       return;
     }
     // 无 APP_CWD: 注册 WORKSPACE view 引导去 chat 切目录
