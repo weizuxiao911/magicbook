@@ -15,6 +15,8 @@ import { Injectable, Autowired } from '@opensumi/di';
 import { Domain, CommandContribution, CommandRegistry, BrowserModule, ClientAppContribution } from '@opensumi/ide-core-browser';
 import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 import { EXPLORER_CONTAINER_ID } from '@opensumi/ide-explorer/lib/browser/explorer-contribution';
+import { IWorkspaceService } from '@opensumi/ide-workspace/lib/common/workspace.interface';
+import { URI, FileStat } from '@opensumi/ide-core-common';
 
 import { WorkspaceView } from './WorkspaceView';
 
@@ -23,6 +25,8 @@ import { WorkspaceView } from './WorkspaceView';
 export class WorkspaceContribution implements CommandContribution, ClientAppContribution {
   @Autowired(IMainLayoutService)
   layoutService: IMainLayoutService;
+  @Autowired(IWorkspaceService)
+  workspaceService: IWorkspaceService;
 
   registerCommands(commands: CommandRegistry): void {
     // 不再注册 OPEN_FOLDER — 切工作目录入口统一在 chat 输入框底部
@@ -32,6 +36,21 @@ export class WorkspaceContribution implements CommandContribution, ClientAppCont
     const cwd = localStorage.getItem('APP_CWD');
     if (cwd) {
       // 有 APP_CWD: 已选择过工作目录, 直接进入 (opencode/fs 已由 select 启动)
+      // 同时显式 setWorkspace 让 opensumi file-tree explorer 根 = cwd (Windows 关键:
+      // App.tsx workspaceDir='/' 在 Windows = 盘符根, explorer 提示"无打开的文件夹";
+      // 主动 setWorkspace 覆盖默认 roots → explorer 跟 effectiveCwd 同步).
+      try {
+        const uri = URI.file(cwd);
+        const stat: FileStat = {
+          uri,
+          lastModification: 0,
+          isDirectory: true,
+        } as any;
+        this.workspaceService.setWorkspace(stat);
+        console.log('[workspace] setWorkspace:', uri.toString());
+      } catch (e) {
+        console.warn('[workspace] setWorkspace 失败:', (e as any)?.message);
+      }
       return;
     }
     // 无 APP_CWD: 注册 WORKSPACE view 引导去 chat 切目录
