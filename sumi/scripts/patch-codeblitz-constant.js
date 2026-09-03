@@ -43,16 +43,19 @@ function __numasWorkspaceRoot() {
     catch (e) { /* 存储不可用 → 默认 */ }
     return '/workspace';
 }
-function __numasWsNormalize(p) {
-    var s = String(p).replace(/\\\\/g, '/').replace(/\\/+$/, '');
-    // Windows 盘符 (D:/... 或 /D:/...) → codeblitz URI 形态 (前导 '/', 盘符小写):
-    //   codeblitz watch/BrowserFS 路径是 /d:/... (小写盘符), WORKSPACE_ROOT 必须同形态,
-    //   否则 workspaceRel 的 startsWith 大小写不匹配 → 路径不 strip → explorer 列错目录.
-    //   前导 '/' 必须: codeblitz workspaceDir 若无前导 '/', watch 会把相对路径拼成双份.
-    if (/^[A-Za-z]:/.test(s)) s = '/' + s;
-    s = s.replace(/^\/([A-Za-z]):/, function (_, drive) { return '/' + drive.toLowerCase() + ':'; });
-    if (s === '/' || s === '') return '/workspace';
-    return s;
+function __numasWorkspaceRoot() {
+    try {
+        if (typeof localStorage !== 'undefined') {
+            const saved = localStorage.getItem('APP_CWD') || sessionStorage.getItem('APP_CWD_FALLBACK');
+            if (saved) return saved.replace(/\\/+$/, '');
+        }
+        if (typeof window !== 'undefined' && window.__APP_CONFIG__) {
+            const c = window.__APP_CONFIG__;
+            if (c.cwd) return c.cwd.replace(/\\/+$/, '');
+        }
+    }
+    catch (e) { /* 存储不可用 → 默认 */ }
+    return '/workspace';
 }
 export const WORKSPACE_ROOT = __numasWorkspaceRoot();`;
 
@@ -88,8 +91,8 @@ function patchConstant() {
     return false;
   }
   let src = fs.readFileSync(CONST_FILE, 'utf8');
-  if (src.includes(MARKER) && src.includes('__numasWsNormalize')) {
-    console.log('[patch-codeblitz] constant.js 已 patch (新版本含 __numasWsNormalize), 跳过');
+  if (src.includes(MARKER) && src.includes("saved.replace(/\\/+$/, '')")) {
+    console.log('[patch-codeblitz] constant.js 已 patch, 跳过');
     return false;
   }
   const reverted = src.includes(MARKER)
