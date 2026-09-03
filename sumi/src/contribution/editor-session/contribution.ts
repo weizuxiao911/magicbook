@@ -8,8 +8,9 @@
  *   - 不依赖 service/fs.ts (那边已精简, 只负责 FilePicker/chat IO API)
  *
  * 数据契约:
- *   - localStorage['editor.restore.uris']: JSON.stringify([uri, ...])
- *   - localStorage['editor.restore.activeUri']: 单 uri 字符串
+ *   - localStorage['editor.restore.{ws}.uris']: JSON.stringify([uri, ...])  (ws = 工作空间目录, 按 workspace 隔离)
+ *   - localStorage['editor.restore.{ws}.activeUri']: 单 uri 字符串
+ *   - 旧全局 key (editor.restore.uris / editor.restore.activeUri): 首次启动迁移到当前 ws key 后删除
  *   - window.__SAVED_EDITOR_URIS__ / __SAVED_EDITOR_ACTIVE_URI__: 注入覆盖 (测试/特殊场景)
  *
  * DI: ClientAppContribution (BrowserModule 自动 register via contributionProvider).
@@ -20,6 +21,23 @@ import { BrowserModule, ClientAppContribution, Domain } from '@opensumi/ide-core
 import { URI } from '@opensumi/ide-core-common';
 import { IFileServiceClient } from '@opensumi/ide-file-service/lib/common';
 import { WorkbenchEditorService } from '@opensumi/ide-editor';
+
+/** 当前 workspace 目录 (URL ?directory / __APP_CONFIG__.cwd 兜底). key 维度用, 保证切换 workspace 互不污染. */
+function currentWorkspaceKey(): string {
+  try {
+    const cwd = new URL(window.location.href).searchParams.get('directory')
+      || (window as any).__APP_CONFIG__?.cwd
+      || '';
+    return cwd.replace(/^\/+|\/+$/g, '').replace(/[\\/:]/g, '_') || 'default';
+  } catch {
+    return 'default';
+  }
+}
+
+/** 读 key (带旧全局 key 迁移: 旧数据首次迁移到当前 ws key, 之后旧 key 不再写) */
+function persistedKey(suffix: 'uris' | 'activeUri'): string {
+  return `editor.restore.${currentWorkspaceKey()}.${suffix}`;
+}
 
 @Injectable()
 @Domain(ClientAppContribution)
@@ -49,37 +67,48 @@ export class EditorSessionContribution implements ClientAppContribution {
     }
   }
 
-  /** 同步当前打开的 URIs + 激活 URI 到 localStorage (无变化则跳过写) */
+  /** 同步当前打开的 URIs + 激活 URI 到 localStorage (按 workspace 隔离; 无变化则跳过写) */
   private syncPersistedUris(): void {
     try {
       const uris = this.editorService.getAllOpenedUris().map((u) => u.toString());
       const next = JSON.stringify(uris);
       const active = this.editorService.currentEditorGroup?.currentResource?.uri.toString() || '';
-      if (next === localStorage.getItem('editor.restore.uris') && active === localStorage.getItem('editor.restore.activeUri')) {
+      const urisKey = persistedKey('uris');
+      const activeKey = persistedKey('activeUri');
+      if (next === localStorage.getItem(urisKey) && active === localStorage.getItem(activeKey)) {
         return;
       }
-      localStorage.setItem('editor.restore.uris', next);
-      if (active) localStorage.setItem('editor.restore.activeUri', active);
+      localStorage.setItem(urisKey, next);
+      if (active) localStorage.setItem(activeKey, active);
     } catch {
       /* ignore */
     }
   }
 
-  /** 从 localStorage 读上次打开的 URIs, stat 校验存在 (走当前 file scheme provider),
-   *  通过的逐个 open. 最后激活原 active URI (失效则激活最后一个). */
+  /** 从 localStorage 读上次打开的 URIs (按 workspace), stat 校验存在 (走当前 file scheme provider),
+   *  通过的逐个 open. 最后激活原 active URI (失效则激活最后一个).
+   *  仅恢复属于当前 workspace 的 tab (跨 workspace 的文件不恢复, 避免污染当前工作区). */
   private async restoreOpenedEditors(): Promise<void> {
     try {
+      const cwd = (window as any).__APP_CONFIG__?.cwd || '';
+      const urisKey = persistedKey('uris');
+      const activeKey = persistedKey('activeUri');
       const uris: string[] =
         (window as any).__SAVED_EDITOR_URIS__ ||
         (() => {
-          const raw = localStorage.getItem('editor.restore.uris');
+          let raw = localStorage.getItem(urisKey);
+          // 旧全局 key 迁移: 无 ws key 且旧 key 有数据 → 用旧数据 (首轮 sync 后写回 ws key)
+          if (!raw) {
+            const legacy = localStorage.getItem('editor.restore.uris');
+            if (legacy) { raw = legacy; localStorage.setItem(urisKey, legacy); }
+          }
           if (!raw) return [];
           const arr = JSON.parse(raw);
           return Array.isArray(arr) ? arr : [];
         })();
       const activeUri: string =
         (window as any).__SAVED_EDITOR_ACTIVE_URI__ ||
-        localStorage.getItem('editor.restore.activeUri') ||
+        localStorage.getItem(activeKey) ||
         '';
       if (!uris.length) return;
       console.log('[editor-session] 恢复编辑器 tab:', uris.length, uris, 'active:', activeUri);
@@ -91,6 +120,11 @@ export class EditorSessionContribution implements ClientAppContribution {
             .getFileStat(uri)
             .then((stat) => {
               if (!stat || stat.isDirectory) return;
+              // workspace 隔离: 只恢复当前 workspace 内的文件 (旧跨 ws 数据残留也一并滤掉)
+              if (cwd && uri.startsWith('file://') && !uri.startsWith(`file://${cwd}`)) {
+                console.log('[editor-session] 跳过跨 workspace 文件:', uri);
+                return;
+              }
               alive.push(uri);
               return this.editorService
                 .open(URI.parse(uri), { backend: true, preview: false, deletedPolicy: 'skip' })
@@ -101,7 +135,7 @@ export class EditorSessionContribution implements ClientAppContribution {
         ),
       );
       if (alive.length !== uris.length) {
-        localStorage.setItem('editor.restore.uris', JSON.stringify(alive));
+        localStorage.setItem(urisKey, JSON.stringify(alive));
         console.log('[editor-session] 恢复状态自愈:', uris.filter((u) => !alive.includes(u)), '已从持久化移除');
       }
       const target =

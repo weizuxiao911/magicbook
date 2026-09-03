@@ -18,7 +18,7 @@ export function LayoutComponent(): React.ReactElement {
           <SlotRenderer
             slot={SlotLocation.left}
             isTabbar
-            defaultSize={200}
+            defaultSize={278}
             defaultCollapsed={false}
             minResize={50}
             minSize={49}

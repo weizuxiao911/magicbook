@@ -8,6 +8,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { AppRenderer, getDefaultAppConfig } from '@codeblitzjs/ide-core';
+import { SlotLocation } from '@opensumi/ide-core-browser';
 import '@codeblitzjs/ide-core/bundle/codeblitz.css';
 import '@codeblitzjs/ide-core/languages';
 
@@ -74,18 +75,17 @@ async function ensureUrlWorkspace(): Promise<boolean> {
   } catch { return false; }
 }
 
-/** 渲染前暂存上次打开的编辑器 uris（容器初始化恢复失败会清空 storage, 登录后按暂存恢复） */
+/** 渲染前暂存上次打开的编辑器 uris（容器初始化恢复失败会清空 storage, 登录后按暂存恢复）.
+ *  key 跟 contribution/editor-session 一致: 按 workspace 隔离 (editor.restore.{ws}.uris). */
 function stashSavedEditorUris(): void {
   try {
-    // 清 opensumi 保存的 layout 宽度（否则旧 size 覆盖 defaultSize; 让 defaultSize 240/396 生效）
-    localStorage.removeItem('layout');
-    localStorage.removeItem('global:/layout-global');
-    localStorage.removeItem('scoped:/workspace/:/layout');
-  } catch { /* ignore */ }
-  try {
     // 自建持久化 key（watchEditorState 维护）; 兜底旧 opensumi workbench storage
-    const raw = localStorage.getItem('editor.restore.uris');
-    const activeUri = localStorage.getItem('editor.restore.activeUri');
+    const ws = (window as any).__APP_CONFIG__?.cwd
+      || new URL(window.location.href).searchParams.get('directory')
+      || '';
+    const wsTag = ws.replace(/^\/+|\/+$/g, '').replace(/[\\/:]/g, '_') || 'default';
+    const raw = localStorage.getItem(`editor.restore.${wsTag}.uris`);
+    const activeUri = localStorage.getItem(`editor.restore.${wsTag}.activeUri`);
     if (activeUri) (window as any).__SAVED_EDITOR_ACTIVE_URI__ = activeUri;
     if (raw) {
       const arr = JSON.parse(raw) as string[];
@@ -143,6 +143,7 @@ export const App: React.FC = () => {
         // monaco worker CDN: alipay (gw.alipayobjects.com) 404 缺失 editor.worker.bundle.js
         //   → 编辑器 fallback 主线程 "现在无法访问编辑器". jsdelivr / npmmirror 有文件.
         componentCDNType: 'jsdelivr',
+        panelSizes: { [SlotLocation.left]: 276 },
         defaultPreferences: preferences,
         extensionMetadata: extensionMetadata as any,
         modules: [
