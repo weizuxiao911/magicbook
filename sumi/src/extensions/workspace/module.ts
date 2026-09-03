@@ -39,18 +39,23 @@ export class WorkspaceContribution implements CommandContribution, ClientAppCont
       // 同时显式 setWorkspace 让 opensumi file-tree explorer 根 = cwd (Windows 关键:
       // App.tsx workspaceDir='/' 在 Windows = 盘符根, explorer 提示"无打开的文件夹";
       // 主动 setWorkspace 覆盖默认 roots → explorer 跟 effectiveCwd 同步).
-      try {
-        const uri = URI.file(cwd);
-        const stat: FileStat = {
-          uri,
-          lastModification: 0,
-          isDirectory: true,
-        } as any;
-        this.workspaceService.setWorkspace(stat);
-        console.log('[workspace] setWorkspace:', uri.toString());
-      } catch (e) {
-        console.warn('[workspace] setWorkspace 失败:', (e as any)?.message);
-      }
+      // 不走 URI.file (opensumi URI.file Windows 盘符 encode 成 d%3A, 跟 codeblitz
+      // 'file:///d:/...' URI 形态不匹配 → workspace roots 错, explorer 空).
+      // 直接拼: Windows 'D:/foo' → 'file:///d:/foo' (盘符小写, 跟 codeblitz 一致);
+      // POSIX '/Users/foo' → 'file:///Users/foo'.
+      const norm = cwd.replace(/\\/g, '/');
+      const driveLower = norm.replace(/^\/+/, '').match(/^([A-Za-z]):/);
+      const filePath = driveLower
+        ? '/' + driveLower[1].toLowerCase() + ':' + norm.replace(/^[A-Za-z]:/, '')
+        : norm;
+      const uri = URI.parse(`file://${filePath}`);
+      const stat: FileStat = {
+        uri,
+        lastModification: 0,
+        isDirectory: true,
+      } as any;
+      this.workspaceService.setWorkspace(stat);
+      console.log('[workspace] setWorkspace:', uri.toString());
       return;
     }
     // 无 APP_CWD: 注册 WORKSPACE view 引导去 chat 切目录
