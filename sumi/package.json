@@ -7,11 +7,12 @@
     "dev": "node node_modules/webpack-cli/bin/cli.js serve --config webpack.config.js",
     "build": "cross-env NODE_ENV=production node node_modules/webpack-cli/bin/cli.js --config webpack.config.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "postinstall": "node scripts/patch-codeblitz-constant.js && node scripts/patch-opensumi-customeditors.js"
+    "postinstall": "node scripts/patch-codeblitz-constant.js && node scripts/patch-opensumi-customeditors.js && node scripts/patch-opensumi-filetreemodel.js"
   },
   "dependencies": {
     "@codeblitzjs/ide-core": "2.4.6",
     "@opencode-ai/sdk": "^1.18.11",
+    "@opensumi/ide-file-tree-next": "3.6.5-next-1766394426.0",
     "@opensumi/ide-terminal-next": "3.6.5-next-1766394426.0",
     "marked": "^7.0.5",
     "marked-shiki": "^1.2.1",
