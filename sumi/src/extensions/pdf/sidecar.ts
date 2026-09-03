@@ -39,11 +39,17 @@ export async function contentHash(s: string): Promise<string> {
     .join('');
 }
 
-/** IDE 相对路径 (/电子图书/.foo.annotation) → file:// URI.
- *  走 codeblitz workspace 路径 (WORKSPACE_ROOT 真实 cwd, 跟 explorer 写 .x.ts 一样),
- *  不要用绝对路径 — codeblitz IFileServiceClient 对绝对路径 hang. */
+/** sidecar 路径 → file:// URI.
+ *  传绝对文件系统路径 (含 PDF 目录前缀, 如 /Users/.../电子图书/.foo.annotation) → 直接 file://
+ *  (CustomFileSystemProvider 的 resolveFsPath 支持 cwd 外绝对路径, 用 headerPath 处理).
+ *  兼容旧相对路径 (IDE 相对 cwd 的 /电子图书/.foo.annotation) → WORKSPACE_ROOT 拼. */
 function sidecarUri(relPath: string): string {
-  return `file://${WORKSPACE_ROOT}${relPath}`;
+  const p = relPath.startsWith('file://') ? relPath.slice('file://'.length) : relPath;
+  if (p.startsWith('/Users/') || p.startsWith('/home/') || p.startsWith('C:\\') || p.startsWith('/Volumes/')
+    || (p.length > 1 && p[1] === ':')) {
+    return `file://${p}`;
+  }
+  return `file://${WORKSPACE_ROOT}${p}`;
 }
 
 /** 读取 sidecar 文件. 不存在 (404) 返空 {version:1, items:[]}, 解析失败同. */

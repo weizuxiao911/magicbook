@@ -106,6 +106,12 @@ function resolveHostPath(resource: any): string {
   return p;
 }
 
+/** file:// URI 或 (相对/绝对) 路径 → 裸绝对文件系统路径. */
+function toBarePath(p: string): string {
+  if (p.startsWith('file://')) return decodeURIComponent(p.slice('file://'.length));
+  return p;
+}
+
 async function openPdfFromBytes(bytes: Uint8Array): Promise<any> {
   return await (pdfjsLib as any).getDocument({
     data: bytes.slice(0),
@@ -176,7 +182,7 @@ async function saveCodeFile(hostPath: string, code: string, ext: string, fileSer
   return saveGeneratedFile(hostPath, '代码示例', ext, code, fileService);
 }
 
-/** 通用保存: PDF 同目录, 前缀自增不覆盖. @returns IDE 相对路径 */
+/** 通用保存: PDF 同目录, 前缀自增不覆盖. @returns 绝对路径 */
 async function saveGeneratedFile(
   hostPath: string,
   prefix: string,
@@ -184,44 +190,44 @@ async function saveGeneratedFile(
   content: string,
   fileService: IFileServiceClient,
 ): Promise<string> {
-  const wsRoot = (window as any).__APP_CONFIG__?.workspaceDir || '/workspace';
-  let rel = hostPath.startsWith(wsRoot) ? hostPath.slice(wsRoot.length) : hostPath;
-  rel = rel.replace(/^\/+/, '');
-  const parts = rel.split('/');
+  // hostPath 是宿主机绝对路径 (resolveHostPath 结果). PDF 可能不在 cwd 内, 直接用绝对路径.
+  let hp = hostPath.startsWith('file://') ? hostPath.slice('file://'.length) : hostPath;
+  const parts = hp.split('/');
   const fileName = parts.pop() || '';
   const base = fileName.replace(/\.pdf$/i, '') || 'pdf';
   const dir = parts.join('/');
   // n 自增: 列目录已有文件
   let n = 1;
   try {
-    const dirUri = `file://${WORKSPACE_ROOT}${dir ? `/${dir}` : ''}`;
+    const dirUri = `file://${dir}`;
     const stat = await fileService.getFileStat(dirUri).catch(() => null);
     const names = (stat?.children || []).map((c) => (c.uri || '').split('/').pop() || '');
     while (names.includes(`${base}-${prefix}-${n}.${ext}`)) n++;
   } catch { /* 列目录失败, 从 1 开始 */ }
-  const relPath = `${dir ? `/${dir}` : ''}/${base}-${prefix}-${n}.${ext}`;
-  const uri = `file://${WORKSPACE_ROOT}${relPath}`;
+  const uri = `file://${dir}/${base}-${prefix}-${n}.${ext}`;
   const st = await fileService.getFileStat(uri).catch(() => null);
   if (st) await fileService.setContent(st, content);
   else await fileService.createFile(uri, { content } as any);
-  console.log(`[pdf] ${prefix} 已保存:`, relPath);
-  return relPath;
+  console.log(`[pdf] ${prefix} 已保存:`, uri);
+  return uri;
 }
 
-/** 从 codeUri 拿 PDF basename + 所在目录, 拼 sidecar IDE 相对路径 `{dir}/.{basename}.annotation` (PDF 同目录). */
+/** 从 codeUri 拿 PDF basename + 所在目录, 拼 sidecar 绝对路径 `{dir}/.{basename}.annotation` (PDF 同目录).
+ *  PDF 可能不在当前 workspace (cwd) 内, 返回绝对路径由 sidecar.ts file:// 直连 (headerPath 跨 cwd). */
 function sidecarPathFromResource(resource: any): string {
   const u = resource?.uri;
   let fsPath = '';
   if (u?.codeUri?.fsPath) fsPath = String(u.codeUri.fsPath);
   else if (typeof u?.path === 'string') fsPath = u.path;
   if (!fsPath) return '';
-  // 真实路径模式: fsPath = WORKSPACE_ROOT + /rel (如 /Users/.../鲸海拾贝/电子图书/数据结构.pdf)
-  // → 返回 IDE 相对路径 /电子图书/.数据结构.pdf.annotation
-  const wsRoot = (window as any).__APP_CONFIG__?.workspaceDir || '/workspace';
-  let rel = fsPath;
-  if (rel.startsWith(wsRoot)) rel = rel.slice(wsRoot.length);
-  else if (rel.startsWith('/workspace')) rel = rel.slice('/workspace'.length);
-  const parts = rel.split(/[\\/]/).filter(Boolean);
+  // 归一化成裸绝对路径 (去 file:// 前缀)
+  let p = fsPath.startsWith('file://') ? fsPath.slice('file://'.length) : fsPath;
+  // 旧虚拟 /workspace 前缀 → 换成真实 cwd
+  const cwd = (window as any).__APP_CONFIG__?.cwd || '';
+  if (p.startsWith('/workspace')) {
+    p = cwd ? `${cwd.replace(/\/+$/, '')}${p.slice('/workspace'.length)}` : p;
+  }
+  const parts = p.split(/[\\/]/).filter(Boolean);
   const base = parts.pop() || '';
   if (!base) return '';
   const dir = parts.length > 0 ? `/${parts.join('/')}` : '';
@@ -1238,12 +1244,13 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       handlePopoverSave(annot);
       notification.info({ message: `代码示例已生成并在终端执行: ${codePath.split('/').pop()}`, type: 'info', duration: 4 });
       // 终端执行: 先环境安装, 再运行代码
-      const cwd = (window as any).__APP_CONFIG__?.cwd || '';
-      const rel = codePath.replace(/^\/+/, '');
+      const bare = toBarePath(codePath);
+      const codeDir = bare.slice(0, bare.lastIndexOf('/'));
+      const fileName = bare.split('/').pop() || '';
       const runCmd = ext === 'c'
-        ? `gcc "${rel}" -o "${rel}.out" && "${rel}.out"`
-        : `${runner} "${rel}"`;
-      const cmd = `cd "${cwd}"${install ? ` && ${install}` : ''} && ${runCmd}`;
+        ? `gcc "${fileName}" -o "${fileName}.out" && "./${fileName}.out"`
+        : `${runner} "${fileName}"`;
+      const cmd = `cd "${codeDir}"${install ? ` && ${install}` : ''} && ${runCmd}`;
       window.dispatchEvent(new CustomEvent('animbook:pdf-annot-terminal', {
         detail: { command: cmd, source: hostPath },
       }));
@@ -1313,7 +1320,7 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       handlePopoverSave(annot);
       notification.info({ message: `${labels[tool]}已生成: ${filePath.split('/').pop()}`, type: 'info', duration: 4 });
       window.dispatchEvent(new CustomEvent('animbook:pdf-annot-openfile', {
-        detail: { name: labels[tool], path: `file://${WORKSPACE_ROOT}${filePath}` },
+        detail: { name: labels[tool], path: filePath },
       }));
     } catch (e: any) {
       notification.error({ message: `${labels[tool]}生成失败: ${e?.message || e}`, type: 'error', duration: 5 });
@@ -1671,7 +1678,7 @@ function createDemoOpenBtn(htmlPath: string): HTMLButtonElement {
     ev.stopPropagation();
     ev.preventDefault();
     window.dispatchEvent(new CustomEvent('animbook:pdf-annot-openfile', {
-      detail: { name: '动画演示', path: `file://${WORKSPACE_ROOT}${htmlPath}` },
+      detail: { name: '动画演示', path: htmlPath },
     }));
   };
   return btn;
@@ -1695,10 +1702,11 @@ function createCodeRunBtn(codePath: string, runner: string, install: string): HT
   btn.onclick = (ev) => {
     ev.stopPropagation();
     ev.preventDefault();
-    const rel = codePath.replace(/^\/+/, '');
-    const cwd = (window as any).__APP_CONFIG__?.cwd || '';
-    const runCmd = /\.c$/.test(rel) ? `gcc "${rel}" -o "${rel}.out" && "${rel}.out"` : `${runner} "${rel}"`;
-    const cmd = `cd "${cwd}"${install ? ` && ${install}` : ''} && ${runCmd}`;
+    const bare = toBarePath(codePath);
+    const codeDir = bare.slice(0, bare.lastIndexOf('/'));
+    const fileName = bare.split('/').pop() || '';
+    const runCmd = /\.c$/.test(fileName) ? `gcc "${fileName}" -o "${fileName}.out" && "./${fileName}.out"` : `${runner} "${fileName}"`;
+    const cmd = `cd "${codeDir}"${install ? ` && ${install}` : ''} && ${runCmd}`;
     window.dispatchEvent(new CustomEvent('animbook:pdf-annot-terminal', {
       detail: { command: cmd, source: '' },
     }));
@@ -1749,7 +1757,7 @@ function createOpenFileBtn(label: string, filePath: string): HTMLButtonElement {
     ev.stopPropagation();
     ev.preventDefault();
     window.dispatchEvent(new CustomEvent('animbook:pdf-annot-openfile', {
-      detail: { name: label, path: `file://${WORKSPACE_ROOT}${filePath}` },
+      detail: { name: label, path: filePath },
     }));
   };
   return btn;
