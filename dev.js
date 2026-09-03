@@ -2,7 +2,8 @@
 /**
  * numas dev.js (集成模式) — npx 入口
  *
- * 流程 (3 步):
+ * 流程 (4 步):
+ *   0. 依赖安装 (sumi: npm install,  opencode: bun install;  首次/依赖变才装)
  *   1. sumi build (hash 增量) → mirror cp → opencode/packages/app/dist
  *   2. opencode build (hash 增量 + NUMAS_WEB_DIST=sumi/dist)
  *   3. 启 opencode web @ <port> --cors * --registry <url>
@@ -91,12 +92,71 @@ function sumiBuildUpToDate() {
 }
 
 // ============================================================================
-// 0. 清理占用端口的进程
+// 0. 依赖安装 (首次启动 / 依赖变更时)
+//    sumi: npm install --ignore-scripts (postinstall patch 自己跑)
+//    opencode: bun install (build 脚本用 bun,  lock 一致)
+//    缓存 marker = package.json/lock 的 sha256,  没变跳过 install (避免 dev.js 每次跑都装).
+// ============================================================================
+const sumiPkgJson = path.join(SUMI, 'package.json');
+const sumiPkgLock = path.join(SUMI, 'package-lock.json');
+const opencodePkgJson = path.join(OPENCODE_PKG, 'package.json');
+const opencodeBunLock = path.join(OPENCODE_PKG, 'bun.lockb');
+const sumiInstallMarker = path.join(SUMI, 'node_modules', '.numas-install-hash');
+const opencodeInstallMarker = path.join(OPENCODE_PKG, 'node_modules', '.numas-install-hash');
+
+function fileSha256(p) {
+  try { return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex'); } catch { return ''; }
+}
+function installHashSum() {
+  return [fileSha256(sumiPkgJson), fileSha256(sumiPkgLock), fileSha256(opencodePkgJson), fileSha256(opencodeBunLock)].join('|');
+}
+function installMarkedUpToDate() {
+  try { return fs.readFileSync(sumiInstallMarker, 'utf8').trim() === installHashSum()
+    && fs.readFileSync(opencodeInstallMarker, 'utf8').trim() === installHashSum(); } catch { return false; }
+}
+function writeInstallMarker() {
+  const h = installHashSum();
+  try { fs.mkdirSync(path.dirname(sumiInstallMarker), { recursive: true }); fs.writeFileSync(sumiInstallMarker, h); } catch { /* */ }
+  try { fs.mkdirSync(path.dirname(opencodeInstallMarker), { recursive: true }); fs.writeFileSync(opencodeInstallMarker, h); } catch { /* */ }
+}
+
+function runInstall(label, cwd, cmd, args) {
+  console.log(`[numas] ${label} install (cwd=${cwd})`);
+  const t0 = Date.now();
+  const r = spawnSync(cmd, args, { cwd, stdio: 'inherit', shell: isWin });
+  if (r.status !== 0) {
+    console.error(`[numas] ${label} install 失败 (status=${r.status})`);
+    process.exit(1);
+  }
+  console.log(`[numas] ${label} install 完成 (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+}
+
+if (FORCE_BUILD) {
+  // --force-build 强制重 install + 重 build
+  runInstall('sumi', SUMI, npmCmd, ['install', '--ignore-scripts', '--no-audit', '--no-fund']);
+  runInstall('opencode', OPENCODE_PKG, bunCmd, ['install', '--no-save']);
+  writeInstallMarker();
+} else if (installMarkedUpToDate()) {
+  console.log('[numas] 依赖 hash 未变, 跳过 install');
+} else {
+  const needSumi = !fs.existsSync(path.join(SUMI, 'node_modules'));
+  const needOpencode = !fs.existsSync(path.join(OPENCODE_PKG, 'node_modules'));
+  if (needSumi || needOpencode) {
+    if (needSumi) runInstall('sumi', SUMI, npmCmd, ['install', '--ignore-scripts', '--no-audit', '--no-fund']);
+    if (needOpencode) runInstall('opencode', OPENCODE_PKG, bunCmd, ['install', '--no-save']);
+    writeInstallMarker();
+  } else {
+    console.log('[numas] node_modules 都已存在, 跳过 install (hash 检查未匹配,  但依赖完整;  跑 --force-build 触发重装)');
+  }
+}
+
+// ============================================================================
+// 0.5. 清理占用端口的进程
 //    必须在 build 之前: Windows 上产物 exe 被运行中进程占用时无法删除 (rm 会报 Operation not permitted)
 // ============================================================================
 killPort(PORT);
 
-console.log(`[numas] step 1/3: sumi build (cwd=${SUMI})`);
+console.log(`[numas] step 1/4: sumi build (cwd=${SUMI})`);
 if (FAST) {
   console.log('[numas] --fast: 跳过 sumi build (复用 dist)');
 } else if (sumiBuildUpToDate()) {
@@ -209,7 +269,7 @@ function opencodeBuildUpToDate() {
   try { return fs.readFileSync(opencodeBuildMarker, 'utf8').trim() === opencodeBuildHash(); } catch { return false; }
 }
 
-console.log(`[numas] step 2/3: opencode build (cwd=${OPENCODE_PKG})`);
+console.log(`[numas] step 2/4: opencode build (cwd=${OPENCODE_PKG})`);
 if (FAST) {
   console.log('[numas] --fast: 跳过 opencode build (复用二进制)');
 } else if (opencodeBuildUpToDate()) {
@@ -273,7 +333,7 @@ function killPort(port) {
 }
 
 
-console.log(`[numas] step 3/3: 启 opencode web (hostname=0.0.0.0, port=${PORT}, cors=*, registry=${REGISTRY})`);
+console.log(`[numas] step 3/4: 启 opencode web (hostname=0.0.0.0, port=${PORT}, cors=*, registry=${REGISTRY})`);
 killPort(PORT);
 
 console.log(`[numas]   bin: ${finalBin}`);
