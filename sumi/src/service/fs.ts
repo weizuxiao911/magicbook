@@ -24,6 +24,7 @@ import { IFileServiceClient } from '@opensumi/ide-file-service/lib/common';
 import { IFileTreeService } from '@opensumi/ide-file-tree-next/lib/common';
 import { WorkbenchEditorService } from '@opensumi/ide-editor';
 import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
+import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 import type { FsEntry, FileMeta, IFileSystem } from '../commands/fs';
 import { FsToken } from '../commands/fs';
@@ -839,18 +840,26 @@ export class FileSystemServiceImpl implements IFileSystem {
 
   async list(idePath: string): Promise<FsEntry[]> {
     console.log('[fs.list] IN', { idePath });
-    // /api/fs/list 直连: 返回 [{path, type, size?, mtime?}]
+    // 走 SDK c.file.list ({ path, directory }) — 跟 web 一致, 走稳定的 /file 老端点.
+    // server handler (opencode/packages/opencode/src/.../handlers/file.ts:66-94) 内部
+    // 调 path.basename(item.path) 拿干净 name, 兼容 Windows path.sep '\\'.
+    // 写操作仍走直 fetch /api/fs (sumi 新加的 v2 端点, explorer 不用).
     const norm = !idePath || idePath === '/' ? '/' : idePath.replace(/\/+$/, '');
     const queryPath = norm === '/' ? '.' : norm.replace(/^\/+/, '');
-    // 目录可能已删除 (外部删/刷新竞态) → 返回空数组, 不抛错 (否则 explorer 刷新中断, 残留节点)
+    const cwd = effectiveCwd();
+    // 目录可能已删除 → 返回空数组, 不抛错
     try {
-      const data = await fsApiGet<Array<{ path: string; type: 'file' | 'directory' }>>(`/api/fs/list?path=${encodeURIComponent(queryPath)}`);
-      const entries: FsEntry[] = Array.isArray(data) ? data.map((e) => ({
-        name: pathBase(e.path),
+      const c = this.ensureClient();
+      const { data, error } = await c.file.list({ path: queryPath, directory: cwd });
+      if (error) {
+        console.log('[fs.list] ERR', { idePath, error: (error as any)?.message || error });
+        return [];
+      }
+      const entries: FsEntry[] = (data || []).map((e) => ({
+        name: e.name,
         type: e.type === 'directory' ? 'directory' : 'file',
-      })) : [];
+      }));
       console.log('[fs.list] OUT', { idePath, count: entries.length, names: entries.map(e => e.name) });
-      // 回填 stat 缓存 (meta 直接命中, 避免重复 list)
       this.listCache.set(norm, entries);
       return entries;
     } catch (e) {
@@ -874,9 +883,24 @@ export class FileSystemServiceImpl implements IFileSystem {
    *   为什么不用 meta 之前 read 全文拿长度: 读整个文件只为长度, 网络开销远大于一次 stat.
    *   缓存: statCache (path → {size,mtimeMs}), 写/外部修改 invalidateStat 清.
    */
-  private listCache = new Map<string, FsEntry[]>();
+   private listCache = new Map<string, FsEntry[]>();
+  /** SDK client (懒建) — list 走 SDK c.file.list (跟 web 一致, 走稳定的 /file 老端点,
+   *  绕开我新加的 /api/fs/* 在 Windows server 端的兼容性陷阱). 写仍走直 fetch /api/fs. */
+   private fsClient: ReturnType<typeof createOpencodeClient> | null = null;
+   private ensureClient(): ReturnType<typeof createOpencodeClient> {
+     if (this.fsClient) return this.fsClient;
+     const base = appBaseUrl();
+     if (!base) throw new Error('fs sdk: app base url not ready');
+     this.fsClient = createOpencodeClient({
+       baseUrl: base,
+       headers: cwdHeader(),
+       responseStyle: 'fields',
+       throwOnError: true,
+     });
+     return this.fsClient;
+   }
 
-  async meta(idePath: string): Promise<FileMeta> {
+   async meta(idePath: string): Promise<FileMeta> {
     const norm = idePath === '/' ? '/' : idePath.replace(/\/+$/, '');
     const base = norm.includes('/') ? norm.slice(0, norm.lastIndexOf('/')) || '/' : '/';
     const name = norm === '/' ? '' : norm.slice(norm.lastIndexOf('/') + 1);
