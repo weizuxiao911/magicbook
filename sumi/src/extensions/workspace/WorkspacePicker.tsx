@@ -1,13 +1,13 @@
 /**
  * WorkspacePicker — 工作目录选择器 (web/src/extensions/workspace/WorkspacePicker)
  *
- * 薄适配层: 监听 workspace:request-show (chat 触发) → 打开通用 filepicker (mode:'directories'),
- * 选目录后调 IStateService.setCwd + reload (唯一工作目录变更入口, DI 单例).
+ * 薄适配层: 监听 workspace:request-show (chat 触发) → 打开通用 filepicker (mode:'open' 打开目录),
+ * 底部「打开」返回当前浏览目录 → 调 IStateService.setWorkspace + reload (唯一工作目录变更入口).
  *
  * 事件链:
  *   [chat 输入框] --workspace:request-show--> [WorkspacePicker]
- *   [WorkspacePicker] --filepicker:request {mode:'directories'}--> [FilePicker]
- *   [FilePicker.onPick] --> [IStateService.setCwd] -> reload
+ *   [WorkspacePicker] --filepicker:request {mode:'open'}--> [FilePicker]
+ *   [FilePicker.onPick] --> [IStateService.setWorkspace] -> reload
  */
 
 import React, { useEffect } from 'react';
@@ -23,9 +23,11 @@ export const WorkspacePicker: React.FC = () => {
     const h = () => {
       const cwd = effectiveCwd();
       requestFilePicker({
-        mode: 'directories',
+        mode: 'open',
         initialPath: cwd || '/',
-        onPick: (dir) => {
+        onPick: (items) => {
+          const dir = items[0];
+          if (!dir) return;
           // 唯一变更入口 (写 URL ?directory + APP_CWD + recent + 派 workspace:changed + reload)
           state.setWorkspace(dir.path);
         },
