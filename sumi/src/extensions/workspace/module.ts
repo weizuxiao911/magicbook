@@ -33,7 +33,7 @@ export class WorkspaceContribution implements CommandContribution, ClientAppCont
   }
 
   async onStart(): Promise<void> {
-    // workspace 来源: URL `?directory=` > __APP_CONFIG__.cwd (opencode /path 注入).
+    // workspace 来源: URL `?directory=` (source-of-truth).
     // setWorkspace 同步 explorer 根 (走 codeblitz IWorkspaceService).
     const ws = normalizeCwdPath(getWorkspace());
     if (!ws) return;

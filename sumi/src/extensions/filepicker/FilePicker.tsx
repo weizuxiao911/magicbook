@@ -20,6 +20,7 @@ import { notification } from '@opensumi/ide-components/lib/notification';
 import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/injectable-hooks';
 
 import { normalizeCwdPath } from '../../infra/path';
+import { getWorkspace } from '../../infra/url';
 import { FsToken, type IFileSystem } from '../../service/filesystem';
 
 interface DirEntry { name: string; path: string; type: 'file' | 'directory'; }
@@ -140,7 +141,7 @@ export const FilePicker: React.FC = () => {
         // 必须 normalizeCwdPath: Windows 历史 APP_CWD 可能是 '/D:/...' 错误形态,
         // 直接当浏览起点 → listDir header '/D:/...' → server 按 POSIX 根解析 → 500
         const stored = (() => { try { return normalizeCwdPath(localStorage.getItem('APP_CWD') || ''); } catch { return ''; } })();
-        const fallback = normalizeCwdPath((window as any).__APP_CONFIG__?.cwd || '');
+        const fallback = normalizeCwdPath(getWorkspace());
         const start = normalizeCwdPath(cfg.initialPath || '') || stored || fallback || '/';
         doBrowse(withinRoot(start) ? start : (rootRef.current || start));
       }, 100);

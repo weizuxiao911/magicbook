@@ -15,6 +15,7 @@ import { useInjectable } from '@opensumi/ide-core-browser';
 import { IFileServiceClient } from '@opensumi/ide-file-service';
 import { notification } from '@opensumi/ide-components/lib/notification';
 import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
+import { getWorkspace } from '../../infra/url';
 
 // @ts-ignore — pdfjs-dist v4 ships ESM types, loose import
 import * as pdfjsLib from 'pdfjs-dist';
@@ -61,17 +62,13 @@ interface Props {
 }
 
 /**
- * 解析 OpenSumi 虚拟路径 → 宿主机绝对路径.
+ * 解析 OpenSumi 路径 → 宿主机绝对路径.
  *
- * codeblitz 框架 hardcode `WORKSPACE_ROOT = '/workspace'`, codeUri.fsPath 形如
- * `/workspace/数据结构.pdf`. numas `__APP_CONFIG__.cwd` 是 user 选的真实工作目录
- * (如 `/Users/.../运营阵地/`), 文件实际在 cwd 下的 workspace/ 子目录
- * (如 `/Users/.../运营阵地/workspace/数据结构.pdf`).
+ * WORKSPACE_ROOT patch (codeblitz constant.js) 后 codeUri.fsPath 已是真实绝对路径
+ * (如 /Users/.../数据结构.pdf). 兼容旧虚拟 `/workspace/...` 前缀: 剥掉换成当前
+ * 工作目录 (getWorkspace = URL ?directory). 返回宿主机绝对路径 (不带 file://).
  *
- * 真实路径 = `__APP_CONFIG__.cwd + codeUri.path` (直接拼, codeblitz 的 /workspace/
- * 段就是 cwd 下的子目录, 不能再剥). 给 `__APP_FS__.readBinary` 内部 `absPath = cwd + '/' + rel` 用.
- *
- * fallback: 拿不到 cwd 时用 localStorage APP_CWD; 再不行扫描 hostPath 找 /workspace/ 段.
+ * fallback: 拿不到目录时直接用原路径 (真实路径模式).
  */
 function resolveHostPath(resource: any): string {
   const uri = resource?.uri;
@@ -86,11 +83,8 @@ function resolveHostPath(resource: any): string {
     else p = s;
   }
   if (!p) return '';
-  // 拿 numas 真实 cwd
-  const cwd = (window as any).__APP_FS__?.getWorkspaceDir?.()
-    || (window as any).__APP_CONFIG__?.cwd
-    || (() => { try { return window.localStorage.getItem('APP_CWD') || ''; } catch { return ''; } })()
-    || '';
+  // 拿当前工作目录 (URL ?directory source-of-truth)
+  const cwd = getWorkspace();
   if (cwd) {
     const cwdNorm = cwd.replace(/\/+$/, '');
     // codeblitz 根路径 (WORKSPACE_ROOT 运行时取真实 cwd; 兼容旧虚拟 /workspace) 才拼 cwd
@@ -223,7 +217,7 @@ function sidecarPathFromResource(resource: any): string {
   // 归一化成裸绝对路径 (去 file:// 前缀)
   let p = fsPath.startsWith('file://') ? fsPath.slice('file://'.length) : fsPath;
   // 旧虚拟 /workspace 前缀 → 换成真实 cwd
-  const cwd = (window as any).__APP_CONFIG__?.cwd || '';
+  const cwd = getWorkspace();
   if (p.startsWith('/workspace')) {
     p = cwd ? `${cwd.replace(/\/+$/, '')}${p.slice('/workspace'.length)}` : p;
   }
@@ -320,9 +314,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       try {
         const fileServiceApi = fileService as any;
         const u: any = resource?.uri;
-        const cwd = (window as any).__APP_CONFIG__?.cwd || '';
+        const cwd = getWorkspace();
         console.log('[pdf] resource.uri.toString(true):', u?.toString?.(true));
-        console.log('[pdf] __APP_CONFIG__.cwd:', cwd);
 
         // 候选 URI: codeblitz 原生 file://{WORKSPACE_ROOT}/... (真实路径) 或旧虚拟 file:///workspace/...
         // 注意: fsPath 已是绝对路径 (真实路径模式) 时不能再拼 cwd (会重复拼接成不存在路径)

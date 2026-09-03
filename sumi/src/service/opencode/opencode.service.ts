@@ -38,7 +38,7 @@ export class OpencodeServiceImpl implements IOpencodeService, ClientAppContribut
 
   /**
    * 初始化 runtime: 探 opencode /global/health + /path + /pty/shells,
-   * 注入 cwd/defaultShell 到 __APP_CONFIG__, 派发 runtime-ready, 建 SDK client.
+   * 注入 defaultShell 到 __APP_CONFIG__, 派发 runtime-ready, 建 SDK client.
    * 幂等: 已初始化则直接返回.
    */
   async initRuntime(): Promise<void> {
@@ -116,10 +116,12 @@ export class OpencodeServiceImpl implements IOpencodeService, ClientAppContribut
       }
     }
 
-    // 注入全局配置 (env / fs-uri / terminal 读这里)
+    // 注入全局配置 (env / fs-uri / terminal 读这里).
+    // 注意: 不注入 cwd — 工作目录唯一 source-of-truth 是 URL ?directory (getWorkspace),
+    // __APP_CONFIG__.cwd 是 opencode 进程启动 workdir, 切 workspace 不更新 (stale), 曾导致
+    // editor 恢复/PDF sidecar 等按错目录操作. 需要当前目录一律走 infra/url getWorkspace().
     (window as any).__APP_CONFIG__ = {
       ...((window as any).__APP_CONFIG__ || {}),
-      cwd: this._runtime.workspace,
       defaultShell: this._runtime.defaultShell,
     };
 

@@ -2,9 +2,8 @@
  * infra/url.ts — URL / URI helpers
  *
  * 工作空间 (workspace) + opencode baseUrl + secure URL 升级 + workspace 订阅等小工具集中.
- * 跨平台 workspace 来源优先级: URL `?directory=` > localStorage APP_CWD > __APP_CONFIG__.cwd.
- *
- * 注: 这些函数不直接依赖 OS, workspace / baseUrl 都是字符串.
+ * 工作目录唯一 source-of-truth = URL `?directory=` (不读 __APP_CONFIG__.cwd —
+ * 它是 opencode 进程启动 workdir, 切 workspace 不更新会 stale).
  */
 
 import { normalizeCwdPath } from './path';
@@ -33,14 +32,11 @@ export function urlWorkspace(): string {
   }
 }
 
-/** 当前工作空间 (workspace) 路径: URL `?directory=` (显式) > __APP_CONFIG__.cwd (opencode /path 注入) > ''
- *  URL 是 source-of-truth: 用户用 ?directory= 直接打开, 跨 tab/复制/历史一致.
- *  注: 无 localStorage 兜底, 避免 stale 干扰 (持久化全靠 URL). */
+/** 当前工作空间 (workspace) 路径: 仅 URL `?directory=` (source-of-truth, 切 workspace 即变).
+ *  不读 __APP_CONFIG__.cwd (opencode 进程启动 workdir, 切目录不更新 → stale).
+ *  URL 缺失 (首启 splash 阶段) 返回 '' — 由 ensureUrlWorkspace/initRuntime 探测后补 URL + reload. */
 export function getWorkspace(): string {
-  if (typeof window === 'undefined') return '';
-  const fromUrl = urlWorkspace();
-  if (fromUrl) return fromUrl;
-  return normalizeCwdPath((window as any).__APP_CONFIG__?.cwd || '');
+  return urlWorkspace();
 }
 
 /** @deprecated 历史别名, 新代码用 getWorkspace. */

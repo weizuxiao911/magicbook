@@ -200,7 +200,7 @@ export const Chat: React.FC = () => {
 
   // chat 可用性: 只看 opencode SDK 是否已初始化 (agent runtime 派发 runtime-ready 后
   // 把 client 挂到 window.__APP_OPENCODE__). 不依赖 APP_CWD —— 选了工作目录只是影响
-  // SDK 请求里的 x-opencode-directory header, 没选时 SDK 走 __APP_CONFIG__.cwd (hostCwd) 兜底.
+  // SDK 请求里的 x-opencode-directory header (工作目录一律来自 URL ?directory).
   const client = (window as any).__APP_OPENCODE__;
   const isReady = () => isAiReady();
   useEffect(() => {

@@ -44,27 +44,24 @@ function SplashScreen(): React.JSX.Element {
 
 /**
  * 探测真实 workspace 并同步到 URL (source-of-truth).
- * 优先级: URL `?directory=`(已有) → __APP_CONFIG__.cwd (opencode /path 注入)
- *        → 调 opencode `/path` 拿 directory。 拿到后 replaceState 补 URL。
+ * 流程: URL `?directory=` 已有 → 直接用; 没有 → 调 opencode `/path` 拿 directory 补 URL。
  * 返回 true 表示已补好 URL (调用方应 reload); false 表示无可补 (交给 initRuntime 兜底)。
  */
 async function ensureUrlWorkspace(): Promise<boolean> {
   if (typeof window === 'undefined') return false;
   try {
     if (urlWorkspace()) return false; // URL 已有, 无需处理
-    let ws = getWorkspace(); // __APP_CONFIG__.cwd
-    if (!ws) {
-      // 主动探 opencode /path 拿 workdir
-      const base = appBaseUrl();
-      if (base) {
-        try {
-          const res = await fetch(`${base.replace(/\/+$/, '')}/path`, {
-            headers: { Accept: 'application/json' },
-          });
-          const json = await res.json();
-          ws = json?.directory || json?.worktree || '';
-        } catch { /* ignore */ }
-      }
+    // 主动探 opencode /path 拿 workdir
+    let ws = '';
+    const base = appBaseUrl();
+    if (base) {
+      try {
+        const res = await fetch(`${base.replace(/\/+$/, '')}/path`, {
+          headers: { Accept: 'application/json' },
+        });
+        const json = await res.json();
+        ws = json?.directory || json?.worktree || '';
+      } catch { /* ignore */ }
     }
     if (!ws) return false;
     const u = new URL(window.location.href);
@@ -80,9 +77,7 @@ async function ensureUrlWorkspace(): Promise<boolean> {
 function stashSavedEditorUris(): void {
   try {
     // 自建持久化 key（watchEditorState 维护）; 兜底旧 opensumi workbench storage
-    const ws = (window as any).__APP_CONFIG__?.cwd
-      || new URL(window.location.href).searchParams.get('directory')
-      || '';
+    const ws = getWorkspace();
     const wsTag = ws.replace(/^\/+|\/+$/g, '').replace(/[\\/:]/g, '_') || 'default';
     const raw = localStorage.getItem(`editor.restore.${wsTag}.uris`);
     const activeUri = localStorage.getItem(`editor.restore.${wsTag}.activeUri`);

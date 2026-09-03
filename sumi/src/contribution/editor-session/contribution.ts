@@ -22,12 +22,13 @@ import { URI } from '@opensumi/ide-core-common';
 import { IFileServiceClient } from '@opensumi/ide-file-service/lib/common';
 import { WorkbenchEditorService } from '@opensumi/ide-editor';
 
-/** 当前 workspace 目录 (URL ?directory / __APP_CONFIG__.cwd 兜底). key 维度用, 保证切换 workspace 互不污染. */
+import { getWorkspace } from '../../infra/url';
+
+/** 当前 workspace 目录 (getWorkspace = URL ?directory, source-of-truth).
+ *  key 维度用, 保证切换 workspace 互不污染. */
 function currentWorkspaceKey(): string {
   try {
-    const cwd = new URL(window.location.href).searchParams.get('directory')
-      || (window as any).__APP_CONFIG__?.cwd
-      || '';
+    const cwd = getWorkspace() || '';
     return cwd.replace(/^\/+|\/+$/g, '').replace(/[\\/:]/g, '_') || 'default';
   } catch {
     return 'default';
@@ -90,7 +91,9 @@ export class EditorSessionContribution implements ClientAppContribution {
    *  仅恢复属于当前 workspace 的 tab (跨 workspace 的文件不恢复, 避免污染当前工作区). */
   private async restoreOpenedEditors(): Promise<void> {
     try {
-      const cwd = (window as any).__APP_CONFIG__?.cwd || '';
+      // 当前工作目录基准 = URL ?directory (source-of-truth), 不能依赖 __APP_CONFIG__ 注入的
+      // cwd (opencode 进程启动 workdir, 切 workspace 不更新 → stale → 恢复全被过滤).
+      const cwd = getWorkspace() || '';
       const urisKey = persistedKey('uris');
       const activeKey = persistedKey('activeUri');
       const uris: string[] =
