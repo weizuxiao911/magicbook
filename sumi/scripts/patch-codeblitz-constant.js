@@ -35,7 +35,7 @@ function __numasWorkspaceRoot() {
         if (typeof window !== 'undefined' && window.location) {
             const dir = new URL(window.location.href).searchParams.get('directory');
             console.log('[numas-patch] __numasWorkspaceRoot: dir=' + dir);
-            if (dir) return dir.replace(/\\\\/+$/, '');
+            if (dir) return dir.replace(/\\/+$/, '');
         }
         if (typeof window !== 'undefined' && window.__APP_CONFIG__) {
             const c = window.__APP_CONFIG__;

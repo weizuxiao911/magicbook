@@ -149,7 +149,7 @@ const FTSERVICE_NEW = `        this.toDispose.push(this.corePreferences.onPrefer
             const __numasRoot = new file_tree_node_define_1.Directory(this, undefined, __numasUri, __numasUri.displayName, __numasRoots[0], this.fileTreeAPI.getReadableTooltip(__numasUri));
             this.root = __numasRoot;
             // 触发 explorer 重新拉根 (fireFilesChange 也行, refresh 走内部 _changeEventDispatchQueue)
-            this.fileService.fireFilesChange({ changes: [{ uri: __numasUri.toString(), type: 1 }] });
+            this.fileServiceClient.fireFilesChange({ changes: [{ uri: __numasUri.toString(), type: 1 }] });
             if (typeof window !== 'undefined') {
                 window.__numasInit = window.__numasInit || {};
                 window.__numasInit.fired = true;
