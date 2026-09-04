@@ -156,25 +156,27 @@ if (this.sdk) {
   private async createPty(launchConfig: IShellLaunchConfig, cwd: string): Promise<{ id: string; pid: number; command: string }> {
     const command = defaultShell() || launchConfig.executable || '/bin/bash';
     const c = this.ensureSdk();
-    // numas: only send `directory` (the workspace dir). Do NOT send body `cwd` —
-    // the server enforces header-only workspace resolution and always uses the
-    // instance dir for the PTY's actual cwd, so body `cwd` is ignored anyway and
-    // risks sending a wrong (e.g. codeblitz-garbled) value.
+    // numas: `directory` 只作 workspace selector (SDK 注入 x-opencode-directory header,
+    // 决定 session 归属的 instance); body `cwd` 才是 shell 真正工作目录 (右键
+    // 「在终端中打开」传目标目录的宿主机绝对路径, server 校验须位于工作区内).
+    // 注意 cwd 是 resolveLaunchCwd 已转好的 hostPath, 绝不传 codeblitz 虚拟路径.
     const { data, error } = await c.pty.create({
-      directory: cwd,
+      directory: effectiveCwd(),
       command,
       args: (launchConfig.args as string[]) || undefined,
+      cwd,
     });
     if (error || !data) throw new Error(`pty create ${(error as any)?.message || 'failed'}`);
     return data as { id: string; pid: number; command: string };
   }
 
-  private wsUrl(ptyId: string, cwd: string): string {
-    // numas fork: 铁律 8 — workspace 路径统一走 header. WS URL ?directory= 用 encodeURI 形态
-    // (浏览器 fetch/WS 对 URL 路径/查询无 ISO-8859-1 限制, 但 server 端仍走 header 解析;
-    // 这里 encodeURI 是为中文路径 URL 安全, server workspace-routing 默认忽略 query).
+  private wsUrl(ptyId: string, workspace: string): string {
+    // numas fork: 铁律 8 — connect 的 ?directory= 必须与 create 的 x-opencode-directory
+    // header 一致 (session 归属的 instance = header 的工作区根, 而非 shell 的 cwd),
+    // 否则 server 在错误 location 里查 session → WS 404. 浏览器 WebSocket 无法带 header,
+    // 只能靠 query; 这里传工作区根 (effectiveCwd), encodeURI 保 URL 安全.
     const wsBase = secureUrl(appBaseUrl()).replace(/^http/, 'ws');
-    return `${wsBase}/pty/${ptyId}/connect?directory=${encodeURI(cwd)}`;
+    return `${wsBase}/pty/${ptyId}/connect?directory=${encodeURI(workspace)}`;
   }
 
   async create2(id: string, _cols: number, _rows: number, launchConfig: IShellLaunchConfig): Promise<IPtyProcessProxy | undefined> {
@@ -184,7 +186,7 @@ if (this.sdk) {
       await this.ensureDefaultShell();
       const cwd = await this.resolveLaunchCwd(launchConfig);
       const info = await this.createPty(launchConfig, cwd);
-      const ws = new WebSocket(this.wsUrl(info.id, cwd));
+      const ws = new WebSocket(this.wsUrl(info.id, effectiveCwd()));
       if (ws.readyState !== WebSocket.OPEN) {
         await new Promise<void>((resolve) => {
           const timer = setTimeout(() => { ws.removeEventListener('open', onOpen); resolve(); }, 3000);

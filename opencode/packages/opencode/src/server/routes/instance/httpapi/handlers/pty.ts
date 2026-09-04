@@ -9,6 +9,7 @@ import { PtyTicket } from "@opencode-ai/core/pty/ticket"
 import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/location-services"
 import { Location } from "@opencode-ai/core/location"
 import { AbsolutePath } from "@opencode-ai/core/schema"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Shell } from "@opencode-ai/core/shell"
 import { CorsConfig, isAllowedRequestOrigin, type CorsOptions } from "@opencode-ai/server/cors"
 import {
@@ -18,7 +19,7 @@ import {
 } from "@/server/shared/pty-ticket"
 import { Effect, Layer, Option, Queue, Schema } from "effect"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { HttpApiBuilder } from "effect/unstable/httpapi"
+import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import * as Socket from "effect/unstable/socket/Socket"
 import { InstanceHttpApi } from "../api"
 import * as ApiError from "../errors"
@@ -69,10 +70,15 @@ export const ptyHandlers = HttpApiBuilder.group(InstanceHttpApi, "pty", (handler
     })
 
     const create = Effect.fn("PtyHttpApi.create")(function* (ctx: { payload: typeof Pty.CreateInput.Type }) {
-      // numas: the PTY's working dir is always the instance's directory (resolved
-      // from x-opencode-directory header). Body `cwd` is ignored — the client
-      // SDK sends only `directory` and the workspace dir is the only valid cwd.
-      const cwd = (yield* InstanceState.context).directory
+      // numas: PTY 工作目录支持 body `cwd` (右键「在终端中打开」指定目录), 但必须位于
+      // 本 instance (x-opencode-directory header) 目录之内, 防越界; 缺省 = instance 目录.
+      const instanceDir = (yield* InstanceState.context).directory
+      if (ctx.payload.cwd) {
+        const resolvedCwd = FSUtil.resolve(ctx.payload.cwd)
+        if (!FSUtil.contains(FSUtil.resolve(instanceDir), resolvedCwd))
+          return yield* new HttpApiError.BadRequest({})
+      }
+      const cwd = ctx.payload.cwd ? FSUtil.resolve(ctx.payload.cwd) : instanceDir
       const shell = yield* plugin.trigger("shell.env", { cwd }, { env: {} as Record<string, string> })
       const info = yield* pty(
         Pty.Service.use((service) =>
