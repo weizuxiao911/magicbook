@@ -1,5 +1,6 @@
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-services"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 import { Effect, Layer } from "effect"
@@ -26,12 +27,21 @@ export function response<A, E, R>(data: Effect.Effect<A, E, R>) {
   })
 }
 
+/** Defensive: strip a leading "/" from Windows drive paths (e.g. "/D:/projects" -> "D:/projects").
+ *  Some codeblitz/opensumi paths surface a leading slash on Windows; without this the server
+ *  treats the value as a POSIX root and resolves the wrong directory. */
+function normalizeDirectory(value: string): string {
+  if (!value) return value
+  return FSUtil.windowsPath(value)
+}
+
 function ref(request: HttpServerRequest.HttpServerRequest): Location.Ref {
   const query = new URL(request.url, "http://localhost").searchParams
   const workspaceID = query.get("location[workspace]") || request.headers["x-opencode-workspace"]
-  const directory =
+  const rawDirectory =
     query.get("location[directory]") ||
     (request.headers["x-opencode-directory"] ? decode(request.headers["x-opencode-directory"]) : process.cwd())
+  const directory = normalizeDirectory(rawDirectory)
   return Location.Ref.make({
     directory: AbsolutePath.make(directory),
     workspaceID: workspaceID ? WorkspaceV2.ID.make(workspaceID) : undefined,
