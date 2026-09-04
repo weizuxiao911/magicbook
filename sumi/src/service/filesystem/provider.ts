@@ -40,7 +40,7 @@ import { FileSystemError } from '@opensumi/ide-file-service/lib/common/files';
 
 import { appBaseUrl, cwdHeader, effectiveCwd, secureUrl } from '../../infra/url';
 import { apiGet, apiPost, apiReadBytes, bytesToBase64 } from '../../infra/http';
-import { rewriteCodeblitzHome } from '../../infra/path';
+import { isWindowsDrive, normalizeCwdPath, rewriteCodeblitzHome } from '../../infra/path';
 
 // ---- helpers ----
 
@@ -59,18 +59,23 @@ function resolveFsPath(uri: import('@opensumi/ide-core-common').Uri): { relPath:
   if (!fsPath) return null;
   // /home/.codeblitz → ${homeOfCwd}/.codeblitz (macOS socket mount 兼容)
   fsPath = rewriteCodeblitzHome(fsPath, effectiveCwd());
-  const cwd = effectiveCwd();
+  // 反斜杠转正斜杠 + Windows 盘符去前导 '/', 避免 server 端 windowsPath 处理边界 case
+  // (codeblitz on Windows 可能给 'D:\\...' 或 '/D:/...' 混合格式, header 出去前先归一化)
+  const normalize = (p: string) => normalizeCwdPath(p);
+  const cwd = normalize(effectiveCwd());
   if (!cwd) {
-    const norm = fsPath.replace(/\/+$/, '');
-    const idx = norm.lastIndexOf('/');
-    return { relPath: idx >= 0 ? norm.slice(idx + 1) : norm, headerPath: idx >= 1 ? norm.slice(0, idx) : '/' };
+    const n = normalize(fsPath);
+    const idx = n.lastIndexOf('/');
+    return { relPath: idx >= 0 ? n.slice(idx + 1) : n, headerPath: idx >= 1 ? n.slice(0, idx) : '/' };
   }
-  const a = fsPath.replace(/\/+$/, '');
-  const c = cwd.replace(/\/+$/, '');
+  const a = normalize(fsPath);
+  const c = cwd;
   if (a === c) return { relPath: '.' };
   if (a.startsWith(c + '/')) return { relPath: a.slice(c.length + 1) };
+  // file outside cwd: 用 containing dir 作为 header, basename 作为 path
+  // (server 端 x-opencode-directory 严格只信 header, 任意绝对父目录都能解析)
   const idx = a.lastIndexOf('/');
-  const parent = idx >= 1 ? a.slice(0, idx) : '/';
+  const parent = idx >= 1 ? a.slice(0, idx) : isWindowsDrive(a) ? a : '/';
   const name = idx >= 0 ? a.slice(idx + 1) : a;
   return { relPath: name || '.', headerPath: parent };
 }

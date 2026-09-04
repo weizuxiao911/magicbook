@@ -780,6 +780,27 @@ const scenarios: Scenario[] = [
     .at((ctx) => ({ path: "/api/pty", headers: ctx.headers(), body: controlledPtyInput("HTTP API V2 PTY") }))
     .json(200, locationData(object)),
   http.protected
+    .post("/api/pty", "v2.pty.create ignores body cwd")
+    .mutating()
+    .at((ctx) => ({
+      path: "/api/pty",
+      headers: ctx.headers(),
+      // numas: client may send a (possibly garbled) cwd in the body, but the
+      // server must ignore it and use the instance dir from x-opencode-directory.
+      body: { ...controlledPtyInput("HTTP API V2 PTY ignore body cwd"), cwd: "/some/garbled/cwd" },
+    }))
+    .json(200, locationData(object)),
+  http.protected
+    .post("/api/pty", "v2.pty.create ignores ?directory= query")
+    .mutating()
+    .at((ctx) => ({
+      // numas: ?directory= query must be ignored; only x-opencode-directory header matters.
+      path: "/api/pty?directory=%2Fsome%2Fwrong%2Fpath",
+      headers: ctx.headers(),
+      body: controlledPtyInput("HTTP API V2 PTY ignore query dir"),
+    }))
+    .json(200, locationData(object)),
+  http.protected
     .get("/api/pty/{ptyID}", "v2.pty.get")
     .at((ctx) => ({ path: route("/api/pty/{ptyID}", { ptyID: "pty_httpapi_missing" }), headers: ctx.headers() }))
     .json(404, object, "status"),

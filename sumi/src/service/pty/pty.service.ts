@@ -156,11 +156,14 @@ export class RemoteTerminalService implements ITerminalNodeService {
   private async createPty(launchConfig: IShellLaunchConfig, cwd: string): Promise<{ id: string; pid: number; command: string }> {
     const command = defaultShell() || launchConfig.executable || '/bin/bash';
     const c = this.ensureSdk();
+    // numas: only send `directory` (the workspace dir). Do NOT send body `cwd` —
+    // the server enforces header-only workspace resolution and always uses the
+    // instance dir for the PTY's actual cwd, so body `cwd` is ignored anyway and
+    // risks sending a wrong (e.g. codeblitz-garbled) value.
     const { data, error } = await c.pty.create({
       directory: cwd,
       command,
       args: (launchConfig.args as string[]) || undefined,
-      cwd,
     });
     if (error || !data) throw new Error(`pty create ${(error as any)?.message || 'failed'}`);
     return data as { id: string; pid: number; command: string };

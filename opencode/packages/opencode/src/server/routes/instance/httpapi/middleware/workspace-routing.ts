@@ -84,9 +84,12 @@ function selectedV2WorkspaceID(
   return workspaceID.value
 }
 
-function defaultDirectory(request: HttpServerRequest.HttpServerRequest, url: URL): string {
-  const raw =
-    url.searchParams.get("directory") || request.headers["x-opencode-directory"] || process.cwd()
+function defaultDirectory(request: HttpServerRequest.HttpServerRequest, _url: URL): string {
+  // numas: only honor the x-opencode-directory header. ?directory= and other query
+  // overrides are ignored on purpose — the client (cwdHeader / workspaceHeader) is
+  // the single source of truth, and falling back to query risks stale or wrong values.
+  const raw = request.headers["x-opencode-directory"]
+  if (!raw) return process.cwd()
   return FSUtil.windowsPath(raw)
 }
 

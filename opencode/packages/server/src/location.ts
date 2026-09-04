@@ -36,12 +36,15 @@ function normalizeDirectory(value: string): string {
 }
 
 function ref(request: HttpServerRequest.HttpServerRequest): Location.Ref {
+  // numas: workspace dir is the x-opencode-directory header only. Query overrides
+  // (?location[directory], ?directory) are intentionally dropped — the client SDK
+  // normalizes the header from the URL ?directory= source-of-truth, and accepting
+  // query overrides would let stale / conflicting values reach the instance.
+  const header = request.headers["x-opencode-directory"]
+  const rawDirectory = header ? decode(header) : process.cwd()
+  const directory = normalizeDirectory(rawDirectory)
   const query = new URL(request.url, "http://localhost").searchParams
   const workspaceID = query.get("location[workspace]") || request.headers["x-opencode-workspace"]
-  const rawDirectory =
-    query.get("location[directory]") ||
-    (request.headers["x-opencode-directory"] ? decode(request.headers["x-opencode-directory"]) : process.cwd())
-  const directory = normalizeDirectory(rawDirectory)
   return Location.Ref.make({
     directory: AbsolutePath.make(directory),
     workspaceID: workspaceID ? WorkspaceV2.ID.make(workspaceID) : undefined,
