@@ -4,6 +4,7 @@ import { PositiveInt, RelativePath } from "@opencode-ai/schema/schema"
 import { Schema } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
 import { LocationQuery, locationQueryOpenApi } from "./location"
+import { FileNotFoundError } from "../errors"
 
 const ListQuery = Schema.Struct({
   ...LocationQuery.fields,
@@ -59,6 +60,7 @@ export const FileSystemGroup = HttpApiGroup.make("server.fs")
     HttpApiEndpoint.get("fs.read", "/api/fs/read/*", {
       query: LocationQuery,
       success: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
+      error: [FileNotFoundError],
     })
       .annotateMerge(locationQueryOpenApi)
       .annotateMerge(
@@ -73,6 +75,7 @@ export const FileSystemGroup = HttpApiGroup.make("server.fs")
     HttpApiEndpoint.get("fs.list", "/api/fs/list", {
       query: ListQuery,
       success: Location.response(Schema.Array(FileSystem.Entry)),
+      error: [FileNotFoundError],
     })
       .annotateMerge(locationQueryOpenApi)
       .annotateMerge(
@@ -101,6 +104,7 @@ export const FileSystemGroup = HttpApiGroup.make("server.fs")
     HttpApiEndpoint.get("fs.stat", "/api/fs/stat", {
       query: StatQuery,
       success: Location.response(FileSystem.Entry),
+      error: [FileNotFoundError],
     })
       .annotateMerge(locationQueryOpenApi)
       .annotateMerge(
@@ -116,6 +120,7 @@ export const FileSystemGroup = HttpApiGroup.make("server.fs")
       query: LocationQuery,
       payload: WritePayload,
       success: HttpApiSchema.NoContent,
+      error: [FileNotFoundError],
     })
       .annotateMerge(locationQueryOpenApi)
       .annotateMerge(
@@ -146,6 +151,7 @@ export const FileSystemGroup = HttpApiGroup.make("server.fs")
       query: LocationQuery,
       payload: RemovePayload,
       success: HttpApiSchema.NoContent,
+      error: [FileNotFoundError],
     })
       .annotateMerge(locationQueryOpenApi)
       .annotateMerge(
@@ -161,6 +167,7 @@ export const FileSystemGroup = HttpApiGroup.make("server.fs")
       query: LocationQuery,
       payload: RenamePayload,
       success: HttpApiSchema.NoContent,
+      error: [FileNotFoundError],
     })
       .annotateMerge(locationQueryOpenApi)
       .annotateMerge(

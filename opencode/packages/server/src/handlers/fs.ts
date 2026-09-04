@@ -4,16 +4,32 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Location } from "@opencode-ai/core/location"
 import { RelativePath } from "@opencode-ai/core/schema"
 import path from "path"
-import { Effect, Queue, Ref, Stream } from "effect"
+import { Cause, Effect, Queue, Ref, Stream } from "effect"
 import { HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { WatchEvent } from "@opencode-ai/protocol/groups/fs"
+import { FileNotFoundError } from "@opencode-ai/protocol/errors"
+import { PlatformError } from "effect/PlatformError"
 import { Api } from "../api"
 import { response } from "../location"
 
 const DEBOUNCE_MS = 200
 const TICK_MS = 100
+
+/** Map filesystem NotFound (surfaced as a die via `Effect.orDie` in core) to a typed 404. */
+const fileSystem = <A, R>(self: Effect.Effect<A, never, R>) =>
+  self.pipe(
+    Effect.catchCause((cause) => {
+      const die = cause.reasons.find(Cause.isDieReason)
+      const error = die?.defect
+      if (error instanceof PlatformError && error.reason._tag === "NotFound") {
+        const p = typeof error.reason.pathOrDescriptor === "string" ? error.reason.pathOrDescriptor : ""
+        return Effect.fail(new FileNotFoundError({ path: p, message: error.message }))
+      }
+      return Effect.failCause(cause)
+    }),
+  )
 
 export const FileSystemHandler = HttpApiBuilder.group(Api, "server.fs", (handlers) =>
   Effect.gen(function* () {
@@ -26,14 +42,14 @@ export const FileSystemHandler = HttpApiBuilder.group(Api, "server.fs", (handler
             ),
           })
           return HttpServerResponse.uint8Array(file.content, { contentType: file.mime })
-        }),
+        }).pipe(fileSystem),
       )
       .handle("fs.list", (ctx) =>
         response(
           Effect.gen(function* () {
             const fs = yield* FileSystem.Service
             return yield* fs.list(ctx.query)
-          }),
+          }).pipe(fileSystem),
         ),
       )
       .handle("fs.find", (ctx) =>
@@ -49,7 +65,7 @@ export const FileSystemHandler = HttpApiBuilder.group(Api, "server.fs", (handler
           Effect.gen(function* () {
             const fs = yield* FileSystem.Service
             return yield* fs.stat({ path: ctx.query.path })
-          }),
+          }).pipe(fileSystem),
         ),
       )
       .handle("fs.write", (ctx) =>
@@ -58,7 +74,7 @@ export const FileSystemHandler = HttpApiBuilder.group(Api, "server.fs", (handler
           const { path, content, mode } = ctx.payload
           const bytes = new Uint8Array(Buffer.from(content, "base64"))
           yield* fs.write({ path, content: bytes, mode })
-        }),
+        }).pipe(fileSystem),
       )
       .handle("fs.mkdir", (ctx) =>
         Effect.gen(function* () {
@@ -70,13 +86,13 @@ export const FileSystemHandler = HttpApiBuilder.group(Api, "server.fs", (handler
         Effect.gen(function* () {
           const fs = yield* FileSystem.Service
           yield* fs.remove(ctx.payload)
-        }),
+        }).pipe(fileSystem),
       )
       .handle("fs.rename", (ctx) =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.Service
           yield* fs.rename(ctx.payload)
-        }),
+        }).pipe(fileSystem),
       )
       .handleRaw("fs.watch", (ctx) =>
         Effect.gen(function* () {

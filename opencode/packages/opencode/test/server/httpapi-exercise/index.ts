@@ -761,6 +761,18 @@ const scenarios: Scenario[] = [
     .seeded((ctx) => ctx.file("hello.txt", "hello\n"))
     .at((ctx) => ({ path: "/api/fs/find?query=hello&type=file", headers: ctx.headers() }))
     .json(200, locationData(array)),
+  http.protected
+    .get("/api/fs/read/*", "v2.fs.read missing")
+    .at((ctx) => ({ path: "/api/fs/read/definitely-missing.txt", headers: ctx.headers() }))
+    .status(404),
+  http.protected
+    .get("/api/fs/stat", "v2.fs.stat missing")
+    .at((ctx) => ({ path: `/api/fs/stat?path=${encodeURIComponent("definitely-missing.txt")}`, headers: ctx.headers() }))
+    .status(404),
+  http.protected
+    .get("/api/fs/list", "v2.fs.list missing")
+    .at((ctx) => ({ path: `/api/fs/list?path=${encodeURIComponent("definitely-missing-dir")}`, headers: ctx.headers() }))
+    .status(404),
   http.protected.get("/api/pty", "v2.pty.list").json(200, locationData(array)),
   http.protected
     .post("/api/pty", "v2.pty.create")
