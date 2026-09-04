@@ -91,6 +91,42 @@ export async function apiReadBytes(relPath: string, headerPath?: string): Promis
   return new Uint8Array(await res.arrayBuffer());
 }
 
+/** 只读前 maxBytes 字节 (流式, 读满即 cancel, 避免为二进制嗅探下载整个大文件).
+ *  走 path-style /api/fs/read/<encoded>; 404 抛 Error('not found'). */
+export async function apiReadHeadBytes(relPath: string, maxBytes: number, headerPath?: string): Promise<Uint8Array> {
+  const base = appBaseUrl();
+  if (!base) throw new Error('opencode api: app base url not ready');
+  const url = `${base.replace(/\/+$/, '')}/api/fs/read/${encodeURIComponent(relPath)}`;
+  const anchored = anchorHeaderPath(headerPath);
+  const headers: Record<string, string> = anchored
+    ? { 'x-opencode-directory': encodeURI(anchored) }
+    : cwdHeader();
+  const res = await fetch(url, { headers });
+  if (res.status === 404) throw new Error('not found');
+  if (!res.ok || !res.body) {
+    throw new HttpError(res.status, '/api/fs/read/' + relPath, await res.text().catch(() => ''));
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    while (received < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      const need = Math.min(value.length, maxBytes - received);
+      chunks.push(value.subarray(0, need));
+      received += need;
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+  const out = new Uint8Array(received);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
 /** Uint8Array / string → base64 (浏览器端, 分块避免栈溢出). */
 export function bytesToBase64(input: Uint8Array | string): string {
   if (typeof input === 'string') {

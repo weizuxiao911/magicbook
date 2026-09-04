@@ -27,23 +27,41 @@
  */
 
 import { Injectable, Autowired } from '@opensumi/di';
-import { BrowserModule, ClientAppContribution, Domain, Emitter, URI } from '@opensumi/ide-core-browser';
+import { BrowserModule, ClientAppContribution, Domain, Emitter, URI, registerLocalizationBundle } from '@opensumi/ide-core-browser';
 import {
+  BinaryBuffer,
+  detectEncodingFromBuffer,
   FileChangeEvent,
   FileChangeType,
   FileType,
+  FileUri,
   Schemes,
 } from '@opensumi/ide-core-common';
 import type { FileStat, FileSystemProvider } from '@opensumi/ide-core-common/lib/types/file';
 import { IFileServiceClient } from '@opensumi/ide-file-service/lib/common';
 import { FileSystemError } from '@opensumi/ide-file-service/lib/common/files';
+import { EXT_LIST_IMAGE, EXT_LIST_VIDEO } from '@opensumi/ide-file-service/lib/common/file-ext';
 
 import { appBaseUrl, cwdHeader, effectiveCwd, secureUrl, subscribeWorkspace } from '../../infra/url';
-import { apiGet, apiPost, apiReadBytes, bytesToBase64 } from '../../infra/http';
+import { apiGet, apiPost, apiReadBytes, apiReadHeadBytes, bytesToBase64 } from '../../infra/http';
 import { isWindowsDrive, normalizeCwdPath, toHostPath } from '../../infra/path';
 import { whenHostAnchors } from '../../infra/host';
 
 // ---- helpers ----
+
+/** 常见二进制扩展名兜底 (读字节失败 / 文件头无 NUL 时用). 图片/视频由 EXT_LIST_* 先行判定. */
+const BINARY_EXT = new Set([
+  // 归档/压缩
+  'zip', 'gz', 'gzip', 'tar', 'tgz', 'bz2', 'xz', '7z', 'rar', 'jar', 'war', 'apk', 'dmg', 'iso',
+  // 可执行/库/字节码
+  'exe', 'dll', 'so', 'dylib', 'bin', 'wasm', 'class', 'pyc', 'o', 'a', 'lib', 'msi', 'app',
+  // office (OLE / OOXML)
+  'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
+  // 数据库/结构化二进制
+  'db', 'sqlite', 'sqlite3', 'dat',
+  // 音频
+  'mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma',
+]);
 
 /** 解析 URI 路径 → opencode 调用所需信息.
  *  返回 { relPath, headerPath } 二选一:
@@ -226,6 +244,37 @@ export class CustomFileSystemProvider implements FileSystemProvider {
       }
       throw FileSystemError.Unknown(uri.toString());
     }
+  }
+
+  /**
+   * 判断文件类型 — 供 opensumi file-scheme resolver 决定打开方式:
+   *   image/video → 原生预览组件; binary → 二进制遮罩 (不 push code); text → 文本编辑器.
+   * FSC 传入的是 uri 字符串 (file-service-client.js:378 provider.getFileType(uri)).
+   * 判定 (同 VSCode/opensumi): 扩展名先判图片/视频; 否则读前 512 字节, 含 NUL 且非
+   * UTF-16 → binary; 再用常见归档/可执行/office 二进制扩展名兜底; 其余 text.
+   */
+  async getFileType(uri: string | import('@opensumi/ide-core-common').Uri): Promise<'image' | 'video' | 'binary' | 'text' | undefined> {
+    const fsPath = typeof uri === 'string' ? FileUri.fsPath(uri) : ((uri as any).fsPath || '');
+    const ext = fsPath.includes('.') ? fsPath.slice(fsPath.lastIndexOf('.') + 1).toLowerCase() : '';
+    if (EXT_LIST_IMAGE.has(ext)) return 'image';
+    if (EXT_LIST_VIDEO.has(ext)) return 'video';
+
+    const uriObj = typeof uri === 'string' ? ({ fsPath } as import('@opensumi/ide-core-common').Uri) : uri;
+    const r = await resolveFsPath(uriObj);
+    if (!r) return 'text';
+    const rel = r.relPath === '/' || r.relPath === '.' ? '' : r.relPath;
+    try {
+      const head = await apiReadHeadBytes(rel, 512, r.headerPath);
+      const detected = detectEncodingFromBuffer(BinaryBuffer.wrap(head), false);
+      if (detected.seemsBinary) return 'binary';
+    } catch {
+      // 读不到 (404/无权限) → 退回扩展名判定, 不阻塞打开
+      if (BINARY_EXT.has(ext)) return 'binary';
+      return 'text';
+    }
+    // 纯文本嗅探通过, 但归档/office/可执行等二进制扩展名仍按 binary (其文件头可能无 NUL)
+    if (BINARY_EXT.has(ext)) return 'binary';
+    return 'text';
   }
 
   async writeFile(
@@ -554,6 +603,18 @@ export class CustomFsProviderContribution implements ClientAppContribution {
   onStart(): Promise<void> {
     const provider = new CustomFileSystemProvider();
     CustomFsProviderContribution.provider = provider;
+
+    // 覆写 opensumi 原生二进制遮罩 (ide-file-scheme BinaryEditorComponent) 文案为 numas 版本.
+    // 遮罩本身由原生 resolver 在 getFileType()='binary' 时自动弹出, 这里只改字.
+    registerLocalizationBundle({
+      languageId: 'zh-CN',
+      languageName: 'Chinese (Simplified)',
+      localizedLanguageName: '简体中文',
+      contents: {
+        'editor.cannotOpenBinary': '此文件是二进制文件或使用了不受支持的文本编码,所以无法在文本编辑器中显示。',
+        'editor.file.prevent.stillOpen': '仍然打开',
+      },
+    });
 
     const client = this.fileServiceClient as any;
     // 强制移除 codeblitz 默认注册的 'file' scheme provider
