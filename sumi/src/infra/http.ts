@@ -45,7 +45,7 @@ async function apiFetch<T = any>(path: string, init: RequestInit = {}, headerPat
   const url = `${base.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
   const anchored = anchorHeaderPath(headerPath);
   const headers: Record<string, string> = anchored
-    ? { 'x-opencode-directory': anchored }
+    ? { 'x-opencode-directory': encodeURI(anchored) }
     : cwdHeader();
   if (init.body) headers['Content-Type'] = 'application/json';
   const res = await fetch(url, { ...init, headers });
@@ -83,7 +83,7 @@ export async function apiReadBytes(relPath: string, headerPath?: string): Promis
   const url = `${base.replace(/\/+$/, '')}/api/fs/read/${encodeURIComponent(relPath)}`;
   const anchored = anchorHeaderPath(headerPath);
   const headers: Record<string, string> = anchored
-    ? { 'x-opencode-directory': anchored }
+    ? { 'x-opencode-directory': encodeURI(anchored) }
     : cwdHeader();
   const res = await fetch(url, { headers });
   if (res.status === 404) throw new Error('not found');

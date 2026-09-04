@@ -88,7 +88,7 @@ AI 给方案推荐 + 备选时, **必须** 用 `question` 工具让用户点选,
   - `absToRel(abs, ws)`: 宿主机绝对路径 → workspace 相对路径
   - `toHostPath(idePath, anchors)`: codeblitz 虚拟路径 → opencode 宿主路径 (来自 `infra/path.ts:toHostPath`, 不自造)
 - **禁止 `/D:/...` 形态直接传给 server**: 走 `normalizeCwdPath` 规范化. 否则 server `path.win32` 按 POSIX 根解析 → 500/错目录
-- **HTTP header 路径 raw 形式 + server 端 decode 防御**: `x-opencode-directory` header 走 raw path (无 `encodeURI`);server 端读 header 时 `decodeURIComponent` 防御性处理. 详细见 [铁律 8](#8-opencode-跨进程通信约定)
+- **HTTP header 路径走 `encodeURI` (浏览器 fetch 强制要求)**: `x-opencode-directory` header 值必须 ISO-8859-1 (Latin-1), 客户端**必须** `encodeURI` 后再发 (中文/非 ASCII 路径直发会抛 `String contains non ISO-8859-1 code point`);server 端 `defaultDirectory` 防御性 `decodeURIComponent` 还原. 详细见 [铁律 8](#8-opencode-跨进程通信约定)
 
 **正确示例**:
 ```ts
@@ -98,8 +98,8 @@ const p = (segments[0]?.includes(':') ? '' : '/') + segments.slice(0, i + 1).joi
 // 路径规范化
 const safe = normalizeCwdPath(userInput);   // 'D:/projects' 而非 '/D:/projects'
 
-// server 请求前: header 用 raw path (无 encodeURI, 详见铁律 8)
-headers: { 'x-opencode-directory': workspace }
+// server 请求前: header 走 encodeURI (兼容 fetch ISO-8859-1, 详见铁律 8)
+headers: { 'x-opencode-directory': encodeURI(workspace) }
 
 // server 端 defaultDirectory: 取 header 后防御性 decode
 const raw = request.headers["x-opencode-directory"]
@@ -123,14 +123,14 @@ const dir = raw ? decodeURIComponent(raw) : process.cwd()
 
 **禁令**:
 - **禁止 client 把 header 写进 query**: numas fork 的 `@opencode-ai/sdk/v2/client` 的 request rewrite **只保留 header, 不写 `?directory=` query**. 已加 numas 增量 patch (`v2/client.ts` 后续修改需保留该 patch)
-- **禁止 client 对 header path 做 `encodeURI`**: `x-opencode-directory` 走 raw path, server 端防御性 `decodeURIComponent` 处理 (历史 encode 是 bug 源)
+- **强制 client 对 header path 做 `encodeURI`**: 浏览器 fetch API 限制 header 值必须 ISO-8859-1, raw path 含中文/非 ASCII 字符直发会 throw `String contains non ISO-8859-1 code point` → 整个 fetch 失败. server 端 `defaultDirectory` 防御性 `decodeURIComponent` 兼容两端. (历史 `client.ts` 写"raw path + server decode"是基于错误前提, 已被 2026-09 实际报错修订)
 - **禁止 `WorkspaceRoutingMiddleware` 兜底到 `process.cwd()` 后无声 fallback**: 若 `x-opencode-directory` 缺失或 decode 失败, 应显式报错或 400 (而不是静默用 server 启动 workdir 替代)
 
 **正确示例**:
 ```ts
-// client: 发送请求时 header 用 raw path
+// client: 发送请求时 header 用 encodeURI 形态
 const ws = normalizeCwdPath(getWorkspace());
-fetch(url, { headers: { 'x-opencode-directory': ws } });
+fetch(url, { headers: { 'x-opencode-directory': encodeURI(ws) } });
 
 // server: defaultDirectory 取 header 防御性 decode
 function defaultDirectory(request, _url) {

@@ -42,12 +42,14 @@ export function getWorkspace(): string {
 /** @deprecated 历史别名, 新代码用 getWorkspace. */
 export const effectiveCwd = getWorkspace;
 
-/** x-opencode-directory header: per-request 工作空间切换 (铁律 8: 走 raw path, 不 encodeURI).
- *  server 端 defaultDirectory 防御性 decodeURIComponent (防御旧 client / 中间代理 encode).
+/** x-opencode-directory header: per-request 工作空间切换.
+ *  必须 encodeURI — 浏览器 fetch API 限制 header 值必须 ISO-8859-1, 中文/非 ASCII 路径
+ *  直发会抛 "String contains non ISO-8859-1 code point". server 端 defaultDirectory
+ *  防御性 decodeURIComponent 可对接 (workspace-routing.ts).
  *  Windows 路径绝不带 '/' 前缀 (server 端按 POSIX 根解析会 500/错目录). */
 export function workspaceHeader(): Record<string, string> {
   const ws = normalizeCwdPath(getWorkspace());
-  return ws ? { 'x-opencode-directory': ws } : {};
+  return ws ? { 'x-opencode-directory': encodeURI(ws) } : {};
 }
 
 /** @deprecated cwdHeader 别名 (新代码用 workspaceHeader). */

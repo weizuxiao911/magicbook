@@ -159,10 +159,11 @@ export class RemoteTerminalService implements ITerminalNodeService {
   }
 
   private wsUrl(ptyId: string, cwd: string): string {
-    // numas fork: 铁律 8 — workspace 路径统一走 header. WS URL ?directory= 用 raw path
-    // (无 encodeURI), 服务端 WorkspaceRoutingMiddleware 读 raw query 解析 workspace.
+    // numas fork: 铁律 8 — workspace 路径统一走 header. WS URL ?directory= 用 encodeURI 形态
+    // (浏览器 fetch/WS 对 URL 路径/查询无 ISO-8859-1 限制, 但 server 端仍走 header 解析;
+    // 这里 encodeURI 是为中文路径 URL 安全, server workspace-routing 默认忽略 query).
     const wsBase = secureUrl(appBaseUrl()).replace(/^http/, 'ws');
-    return `${wsBase}/pty/${ptyId}/connect?directory=${cwd}`;
+    return `${wsBase}/pty/${ptyId}/connect?directory=${encodeURI(cwd)}`;
   }
 
   async create2(id: string, _cols: number, _rows: number, launchConfig: IShellLaunchConfig): Promise<IPtyProcessProxy | undefined> {

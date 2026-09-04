@@ -34,11 +34,13 @@ export function createOpencodeClient(config?: Config & { directory?: string; exp
     }
   }
 
-  // numas fork: header 走 raw path (铁律 8). server defaultDirectory 防御性 decodeURIComponent.
+  // numas fork: header 走 encodeURI 形态 (铁律 8 + 兼容 fetch ISO-8859-1).
+  //   raw path 含中文等非 ASCII 字符会 throw "String contains non ISO-8859-1 code point".
+  //   server defaultDirectory 防御性 decodeURIComponent, 含非 ASCII 路径两端兼容.
   if (config?.directory) {
     config.headers = {
       ...config.headers,
-      "x-opencode-directory": config.directory,
+      "x-opencode-directory": encodeURI(config.directory),
     }
   }
 
