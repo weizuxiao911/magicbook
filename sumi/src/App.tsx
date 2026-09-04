@@ -139,7 +139,13 @@ export const App: React.FC = () => {
         //   → 编辑器 fallback 主线程 "现在无法访问编辑器". jsdelivr / npmmirror 有文件.
         componentCDNType: 'jsdelivr',
         useSimplifyExplorerPanel: true, // 去掉 explorer 容器里的「打开的编辑器」「大纲」section
-        panelSizes: { [SlotLocation.left]: 276 },
+        // 槽位尺寸单一事实源 (SlotRenderer 上的 defaultSize/minSize 等 prop 已被外层忽略,
+        //   见 sumi/src/layout.tsx 注释)
+        panelSizes: {
+          [SlotLocation.left]: 268,   // explorer
+          [SlotLocation.right]: 468,  // chat (sumi/src/extensions/chat/module.ts: SlotLocation.right)
+          [SlotLocation.bottom]: 200,  // terminal / output / markers
+        },
         defaultPreferences: preferences,
         extensionMetadata: extensionMetadata as any,
         modules: [

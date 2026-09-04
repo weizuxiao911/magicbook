@@ -7,6 +7,15 @@ import { IMainLayoutService } from '@opensumi/ide-main-layout/lib/common';
 import { WorkspacePicker } from './extensions/workspace/WorkspacePicker';
 import { FilePicker } from './extensions/filepicker/FilePicker';
 
+/**
+ * 布局组件.
+ *
+ * 注意: SlotRenderer 上的 defaultSize / minResize / minSize / defaultCollapsed /
+ *       overflow 等尺寸/状态 prop 对外层 codeblitz panelSizes 是无效的
+ *       (外层 AppRenderer appConfig.panelSizes 才是真正生效的入口,
+ *        见 sumi/src/App.tsx: panelSizes 配置). 此处只描述 split 子节点的
+ *       比例 (flex) 与槽位行为 (isTabbar), 不再写尺寸.
+ */
 export function LayoutComponent(): React.ReactElement {
   useInjectable<IMainLayoutService>(IMainLayoutService);
 
@@ -14,20 +23,16 @@ export function LayoutComponent(): React.ReactElement {
     <React.Fragment>
       <BoxPanel direction="top-to-bottom">
         <SlotRenderer slot="top" />
-        <SplitPanel overflow="hidden" id="main-horizontal" flex={1}>
+        <SplitPanel id="main-horizontal" flex={1}>
           <SlotRenderer
             slot={SlotLocation.left}
             isTabbar
-            defaultSize={278}
-            defaultCollapsed={false}
-            minResize={50}
-            minSize={49}
           />
           <SplitPanel id="main-vertical" minResize={300} flexGrow={1} direction="top-to-bottom">
             <SlotRenderer flex={2} flexGrow={1} minResize={200} slot={SlotLocation.main} />
-            <SlotRenderer flex={1} minResize={160} slot={SlotLocation.bottom} isTabbar defaultSize={200} defaultCollapsed={true} />
+            <SlotRenderer flex={1} slot={SlotLocation.bottom} isTabbar />
           </SplitPanel>
-          <SlotRenderer slot={SlotLocation.right} isTabbar defaultSize={448} minResize={240} minSize={49} />
+          <SlotRenderer slot={SlotLocation.right} isTabbar />
         </SplitPanel>
       </BoxPanel>
       <WorkspacePicker />
