@@ -38,7 +38,7 @@ import type { FileStat, FileSystemProvider } from '@opensumi/ide-core-common/lib
 import { IFileServiceClient } from '@opensumi/ide-file-service/lib/common';
 import { FileSystemError } from '@opensumi/ide-file-service/lib/common/files';
 
-import { appBaseUrl, cwdHeader, effectiveCwd, secureUrl } from '../../infra/url';
+import { appBaseUrl, cwdHeader, effectiveCwd, secureUrl, subscribeWorkspace } from '../../infra/url';
 import { apiGet, apiPost, apiReadBytes, bytesToBase64 } from '../../infra/http';
 import { isWindowsDrive, normalizeCwdPath, toHostPath } from '../../infra/path';
 import { whenHostAnchors } from '../../infra/host';
@@ -105,6 +105,19 @@ interface FsEntry {
   path?: string;
 }
 
+/** server /api/fs/watch 返回 (WatchEvent): {path, type, timestamp} — path 为 workspace 相对路径 */
+interface FsWatchEvent {
+  path: string;
+  type: 'add' | 'change' | 'unlink';
+  timestamp: number;
+}
+
+/** sha256 (hex) — 浏览器 Web Crypto, 用于写入回声检测防同步循环 */
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes as any);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 // ---- CustomFileSystemProvider ----
 
 /**
@@ -127,9 +140,32 @@ export class CustomFileSystemProvider implements FileSystemProvider {
   private sse: EventSource | null = null;
   private sseReady: Promise<void> | null = null;
 
+  /** 写入回声检测 (防双写同步循环): 自己 writeFile 的内容 hash.
+   *  SSE add/change 事件回来时 read 回比对 — hash 一致 = 自己写入的回声 → 抑制 fire;
+   *  不一致 = 宿主机/外部真改了 → fire 给 codeblitz. */
+  private writeHashes = new Map<string, { hash: string; at: number }>();
+  /** 非内容操作 (delete/mkdir/rename) 的回声路径时间窗, 窗口内同名事件抑制 */
+  private echoPaths = new Map<string, { at: number }>();
+  private static readonly ECHO_WINDOW_MS = 5000;
+
   constructor() {
     if (typeof window !== 'undefined') {
       (window as any).__APP_FS_PROVIDER__ = this;
+      // 切 workspace 后旧 SSE 绑的还是旧目录的 watch root, 必须重连
+      subscribeWorkspace(() => {
+        console.log('[fs-provider] workspace changed, 重连 fs/watch SSE');
+        this.stopSse();
+        this.writeHashes.clear();
+        this.echoPaths.clear();
+        this.ensureSse();
+      });
+      // 无条件启动 SSE: 文件树的 FileSystemWatcher 订阅的是 FileServiceClient 全局
+      // onFilesChanged (watcher.js:18 按 root uri 前缀过滤), 不依赖框架是否调用本
+      // provider 的 watch(). 且框架在我们 onStart 替换 'file' provider 前就已对旧
+      // provider 建过 root watcher, 替换时旧 watcher 被 dispose 但不会对新 provider
+      // 重新 watch (console: Starting watching → Stopping watching, 之后无重建) —
+      // 若只在 watch() 里起 SSE, SSE 永不连接, 宿主机变更无法同步到文件树.
+      this.ensureSse();
     }
   }
 
@@ -212,6 +248,12 @@ export class CustomFileSystemProvider implements FileSystemProvider {
     }
     try {
       await apiPost('/api/fs/write', { path: r.relPath, content: b64 }, r.headerPath);
+      // 防回环: 记录自己写入的内容 hash, SSE 回声回来时比对一致则抑制 fire
+      try {
+        const hash = await sha256Hex(content);
+        this.writeHashes.set(r.relPath, { hash, at: Date.now() });
+        this.echoPaths.set(r.relPath, { at: Date.now() });
+      } catch { /* hash 失败不影响写入 */ }
     } catch (e: any) {
       const msg = (e?.message || '').toString();
       if (/exists|EEXIST/i.test(msg)) {
@@ -268,6 +310,8 @@ export class CustomFileSystemProvider implements FileSystemProvider {
     }
     try {
       await apiPost('/api/fs/remove', { path: r.relPath, recursive: options.recursive !== false }, r.headerPath);
+      // 防回环: 自己删的, 抑制 SSE unlink 回声
+      this.echoPaths.set(r.relPath, { at: Date.now() });
     } catch (e: any) {
       throw FileSystemError.Unknown(e?.message || 'delete failed');
     }
@@ -279,6 +323,8 @@ export class CustomFileSystemProvider implements FileSystemProvider {
     if (r.headerPath) await this.ensureHeaderBase(r.headerPath).catch(() => null);
     try {
       await apiPost('/api/fs/mkdir', { path: r.relPath, recursive: false }, r.headerPath);
+      // 防回环: 自己建的目录, 抑制 SSE add 回声
+      this.echoPaths.set(r.relPath, { at: Date.now() });
     } catch (e: any) {
       const msg = (e?.message || '').toString();
       if (/exists|FileExists|EEXIST/i.test(msg)) {
@@ -302,6 +348,10 @@ export class CustomFileSystemProvider implements FileSystemProvider {
     }
     try {
       await apiPost('/api/fs/rename', { from: from.relPath, to: to.relPath }, from.headerPath);
+      // 防回环: rename 在 server 端表现为 from=unlink + to=add 两个事件, 都抑制
+      const now = Date.now();
+      this.echoPaths.set(from.relPath, { at: now });
+      this.echoPaths.set(to.relPath, { at: now });
     } catch (e: any) {
       const msg = (e?.message || '').toString();
       if (/exists|EEXIST/i.test(msg)) {
@@ -368,44 +418,28 @@ export class CustomFileSystemProvider implements FileSystemProvider {
     if (!base) return;
     this.sseReady = new Promise<void>((resolve) => {
       try {
-        // numas: EventSource API 不支持自定义 header; 走 ?directory= query 让 server
-        // workspace-routing middleware 解析 workspace 上下文 (铁律 8 兼容).
+        // numas: 用 opencode /api/fs/watch SSE (per-location, 200ms debounce, 事件 path 为
+        // workspace 相对路径). EventSource 不能发 header, 走 ?directory= query (server
+        // packages/server/src/location.ts header → query fallback). 不再用 /global/event —
+        // 那是全局总线, 含所有 instance 的绝对路径事件, 噪音大且依赖客户端 startsWith 过滤.
         const cwd = effectiveCwd();
         const params = new URLSearchParams();
         if (cwd) params.set('directory', cwd);
-        const url = secureUrl(`${base}/global/event?${params.toString()}`);
+        const url = secureUrl(`${base}/api/fs/watch?${params.toString()}`);
         const es = new EventSource(url, { withCredentials: false });
         this.sse = es;
         es.onopen = () => {
-          console.log('[fs-provider] SSE open');
+          console.log('[fs-provider] fs/watch SSE open, cwd =', cwd);
           resolve();
         };
         es.onmessage = (msg) => {
+          // heartbeat (": heartbeat") 不触发 onmessage; 数据帧才到这里
           try {
-            const raw = JSON.parse(msg.data);
-            // V1 payload 包裹: {payload: {type, data}}; V2 顶层: {type, data}
-            const ev = (raw && raw.payload) || raw;
-            const t = ev?.type;
-            if (t !== 'file.watcher.updated') return;
-            const props = ev?.data || ev?.properties || {};
-            const e: string = props.event;
-            const p: string = props.file;
-            if (!e || !p) return;
-            // 跨 location 隔离: 跳过非当前 cwd 事件
-            const cwd = effectiveCwd();
-            if (cwd && !p.startsWith(cwd)) return;
-            let rel: string;
-            if (p === cwd) rel = '/';
-            else if (cwd && p.startsWith(cwd + '/')) rel = p.slice(cwd.length);
-            else rel = p;
-            const uriStr = relToUri(rel);
-            const type = e === 'add' || e === 'rename'
-              ? FileChangeType.ADDED
-              : e === 'unlink'
-                ? FileChangeType.DELETED
-                : FileChangeType.UPDATED;
-            this._onDidChangeFile.fire([{ uri: uriStr, type }]);
-          } catch { /* ignore bad frame */ }
+            const ev = JSON.parse(msg.data) as Partial<FsWatchEvent>;
+            if (ev?.path && ev.type) {
+              void this.handleWatchEvent(ev.path, ev.type);
+            }
+          } catch (err) { console.warn('[fs-provider] bad watch frame:', err); }
         };
         es.onerror = () => { /* EventSource 自动重连 */ };
         // onopen 未必触发 (某些浏览器 SSE 实现), 兜底 resolve
@@ -415,6 +449,78 @@ export class CustomFileSystemProvider implements FileSystemProvider {
         resolve();
       }
     });
+  }
+
+  /** 处理一条 /api/fs/watch 事件 (relPath 为 workspace 相对路径).
+   *  防双写循环: 自己写入产生的回声事件, hash 比对一致则抑制, 不 fire 给 codeblitz. */
+  private async handleWatchEvent(relPath: string, type: 'add' | 'change' | 'unlink'): Promise<void> {
+    const now = Date.now();
+    const normRel = relPath.replace(/^\/+/, '');
+
+    if (type === 'unlink') {
+      const echo = this.echoPaths.get(normRel);
+      if (echo && now - echo.at < CustomFileSystemProvider.ECHO_WINDOW_MS) {
+        this.echoPaths.delete(normRel);
+        this.writeHashes.delete(normRel);
+        console.log('[fs-provider] 抑制回声 unlink:', normRel);
+        return;
+      }
+    } else {
+      // add / change: 内容 hash 权威判定 (文件), echoPaths 兜底目录 (mkdir)
+      const written = this.writeHashes.get(normRel);
+      if (written && now - written.at < CustomFileSystemProvider.ECHO_WINDOW_MS) {
+        try {
+          const bytes = await apiReadBytes(normRel);
+          const current = await sha256Hex(bytes);
+          if (current === written.hash) {
+            this.writeHashes.delete(normRel);
+            this.echoPaths.delete(normRel);
+            console.log('[fs-provider] 抑制回声 write:', normRel);
+            return;
+          }
+          // hash 不一致 = 自己写后外部又改了 → 当作外部变更继续 fire
+          console.log('[fs-provider] hash 不一致, 按外部变更 fire:', normRel);
+        } catch {
+          // read 失败 (文件可能转瞬删了) → 信任 echoPaths 时间窗
+          const echo = this.echoPaths.get(normRel);
+          if (echo && now - echo.at < CustomFileSystemProvider.ECHO_WINDOW_MS) {
+            this.writeHashes.delete(normRel);
+            this.echoPaths.delete(normRel);
+            return;
+          }
+        }
+      } else {
+        const echo = this.echoPaths.get(normRel);
+        if (echo && now - echo.at < CustomFileSystemProvider.ECHO_WINDOW_MS) {
+          this.echoPaths.delete(normRel);
+          console.log('[fs-provider] 抑制回声 mkdir/rename:', normRel);
+          return;
+        }
+      }
+    }
+
+    // 懒清理过期回声记录
+    if (this.writeHashes.size > 64) {
+      for (const [k, v] of this.writeHashes) if (now - v.at > CustomFileSystemProvider.ECHO_WINDOW_MS) this.writeHashes.delete(k);
+    }
+    if (this.echoPaths.size > 64) {
+      for (const [k, v] of this.echoPaths) if (now - v.at > CustomFileSystemProvider.ECHO_WINDOW_MS) this.echoPaths.delete(k);
+    }
+
+    const changeType = type === 'add'
+      ? FileChangeType.ADDED
+      : type === 'unlink'
+        ? FileChangeType.DELETED
+        : FileChangeType.UPDATED;
+    const uriStr = relToUri(normRel);
+    this._onDidChangeFile.fire([{ uri: uriStr, type: changeType }]);
+    // 目录变更同时 fire 父目录, 让 codeblitz 文件树重新列目录 (新增/删除文件时树要刷新 children)
+    if (type !== 'change') {
+      const slash = normRel.lastIndexOf('/');
+      const parentRel = slash >= 0 ? normRel.slice(0, slash) : '';
+      this._onDidChangeFile.fire([{ uri: relToUri(parentRel), type: FileChangeType.UPDATED }]);
+    }
+    console.log('[fs-provider] fire 外部变更:', normRel, type);
   }
 
   private stopSse(): void {
