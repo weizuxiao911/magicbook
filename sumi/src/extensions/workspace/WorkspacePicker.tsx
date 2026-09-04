@@ -1,8 +1,9 @@
 /**
  * WorkspacePicker — 工作目录选择器 (web/src/extensions/workspace/WorkspacePicker)
  *
- * 薄适配层: 监听 workspace:request-show (chat 触发) → 打开通用 filepicker (mode:'open' 打开目录),
- * 底部「打开」返回当前浏览目录 → 调 IStateService.setWorkspace + reload (唯一工作目录变更入口).
+ * 薄适配层: 监听 workspace:request-show (chat 触发) → 打开通用 filepicker (mode:'open' 只列子目录):
+ * 单击目录=选中 (再点=取消), 双击=进入; 底部「打开」: 有选中 → 返回选中目录,
+ * 无选中 → 返回当前浏览目录; 结果调 IStateService.setWorkspace + reload (唯一工作目录变更入口).
  *
  * 事件链:
  *   [chat 输入框] --workspace:request-show--> [WorkspacePicker]

@@ -4,8 +4,9 @@
  * 参考系统文件选择器弹窗 (macOS NSOpenPanel / VS Code Open Folder) 交互:
  *
  * mode:
- *   - 'open'   打开模式: 列表只列子目录, 单击目录=进入浏览;
- *              底部「打开」= 当前所在目录 (不是列表选中项), 返回该目录路径.
+ *   - 'open'   打开模式: 列表只列子目录; 单击目录=选中 (再点同一目录=取消),
+ *              双击目录=进入浏览; 底部「打开」: 有选中子目录 → 返回选中目录,
+ *              无选中 → 返回当前所在目录 (文件不参与, 列表不显示文件).
  *   - 'select' 选择模式: 列出当前目录子目录+文件 (filter 控制显示);
  *              单击条目=勾选/取消 (多选累积, 跨目录保留); 双击目录=进入下钻;
  *              底部「选择 (n)」= 返回全部勾选条目路径.
@@ -15,7 +16,8 @@
  *   - 'files'      列文件 (目录仍显示供双击下钻, 不可勾选)
  *   - 'none'       目录 + 文件都可勾选
  *
- * 顶部路径导航 (面包屑): 点击某段 = 切到该目录浏览.
+ * 顶部路径导航 (面包屑): 点击某段 = 切到该目录浏览; 右侧搜索框对当前列表
+ * (按名称, 大小写不敏感) 实时过滤, 两种模式通用.
  *
  * 事件链:
  *   [调用方] --filepicker:request {config}--> [FilePicker]
@@ -66,6 +68,10 @@ export const FilePicker: React.FC = () => {
   const [active, setActive] = useState(0);
   /** select 模式: 勾选集合 (跨目录累积). open 模式恒空. */
   const [checked, setChecked] = useState<Map<string, DirEntry>>(new Map());
+  /** open 模式: 选中的子目录 (单选, 仅当前列表视图内有效; 导航/切换目录即清空). select 模式恒空. */
+  const [openPick, setOpenPick] = useState<DirEntry | null>(null);
+  /** 面包屑右侧搜索词: 对当前列表按名称实时过滤 (两种模式通用, 切换目录时保留) */
+  const [query, setQuery] = useState('');
   const fs = useInjectable<any>(FsToken as any);
   const configRef = useRef<FilePickerConfig | null>(null);
   const inputRef = useRef<HTMLDivElement>(null);
@@ -76,6 +82,7 @@ export const FilePicker: React.FC = () => {
 
   const cfg = configRef.current;
   const mode: FilePickerMode = cfg?.mode || 'open';
+  // open 模式: 只列目录; select 模式按调用方 filter
   const filter: FilePickerFilter = mode === 'open' ? 'directory' : (cfg?.filter || 'none');
   /** root 绝对路径 (浏览上限, config.root 传入) */
   const rootRef = useRef<string>('');
@@ -100,6 +107,7 @@ export const FilePicker: React.FC = () => {
       setCurrentPath(r.path);
       setEntries(r.entries);
       setActive(0);
+      setOpenPick(null); // open 模式: 进入其它目录后旧选中作废 (选中仅当前列表视图有效)
     } catch (e: any) {
       notifyError(e?.message || '读取失败');
     } finally {
@@ -115,7 +123,7 @@ export const FilePicker: React.FC = () => {
       configRef.current = cfg;
       rootRef.current = cfg.root || '';
       setOpen(true);
-      setEntries([]); setChecked(new Map());
+      setEntries([]); setChecked(new Map()); setOpenPick(null); setQuery('');
       setTimeout(() => {
         // 初始目录: config.initialPath 优先, 否则当前工作目录 (均在 root 内)
         // 必须 normalizeCwdPath: Windows 历史 APP_CWD 可能是 '/D:/...' 错误形态,
@@ -140,15 +148,17 @@ export const FilePicker: React.FC = () => {
     });
   }, []);
 
-  /** open 模式确认: 返回当前浏览目录 */
+  /** open 模式确认: 有选中的子目录 → 打开选中目录; 无选中 → 打开当前所在目录 */
   const handleOpenPick = useCallback(() => {
     const cfg = configRef.current;
     if (!cfg || !currentPath) return;
     configRef.current = null;
     setOpen(false);
-    const parts = currentPath.split('/').filter(Boolean);
-    cfg.onPick([{ name: parts[parts.length - 1] || currentPath, path: currentPath, type: 'directory' }]);
-  }, [currentPath]);
+    const target = openPick;
+    const path = target ? target.path : currentPath;
+    const parts = path.split('/').filter(Boolean);
+    cfg.onPick([{ name: target ? target.name : (parts[parts.length - 1] || path), path, type: 'directory' }]);
+  }, [currentPath, openPick]);
 
   /** select 模式确认: 返回勾选项 */
   const handleSelectPick = useCallback(() => {
@@ -170,7 +180,7 @@ export const FilePicker: React.FC = () => {
     if (entry.type === 'directory') doBrowse(entry.path);
   }, [doBrowse]);
 
-  /** 条目是否显示: 目录恒显示 (供进入/勾选); 文件按 filter */
+  /** 条目是否显示: 目录恒显示 (供进入/勾选/选中); 文件按 filter */
   const entryVisible = useCallback((entry: DirEntry, f: FilePickerFilter): boolean => {
     if (entry.type === 'directory') return true;
     if (f === 'directory') return false;
@@ -186,8 +196,15 @@ export const FilePicker: React.FC = () => {
   if (!open) return null;
 
   const segments = currentPath ? currentPath.split('/').filter(Boolean) : [];
-  const visible = entries.filter((entry) => entryVisible(entry, filter));
-  const titleName = mode === 'open' ? '打开文件夹'
+  const searching = query.trim().length > 0;
+  const q = query.trim().toLowerCase();
+  // 过滤顺序: mode/filter 显示规则 → 搜索词按名称匹配 (大小写不敏感)
+  const visible = entries.filter((entry) => {
+    if (!entryVisible(entry, filter)) return false;
+    if (!searching) return true;
+    return entry.name.toLowerCase().includes(q);
+  });
+  const titleName = mode === 'open' ? '选择目录'
     : filter === 'directory' ? '选择目录'
     : filter === 'files' ? '选择文件'
     : '选择文件或目录';
@@ -206,31 +223,47 @@ export const FilePicker: React.FC = () => {
           </div>
           <button className="fp-x" onClick={handleCancel} title="关闭">✕</button>
         </div>
-        {/* 路径导航 (面包屑): 点击段 = 切到该目录 */}
-        <div className="fp-nav" ref={inputRef}>
-          <span className="fp-nav-icon">📁</span>
-          {segments.length === 0 && <span className="fp-nav-item fp-nav-item--cur">/</span>}
-          {segments.map((seg, i) => {
-            const p = '/' + segments.slice(0, i + 1).join('/');
-            const root = rootRef.current;
-            const inRoot = !root || p === root.replace(/\/+$/, '') || p.startsWith(root.replace(/\/+$/, '') + '/');
-            const last = i === segments.length - 1;
-            return (
-              <React.Fragment key={p}>
-                {i > 0 && <span className="fp-nav-sep">›</span>}
-                {inRoot ? (
-                  <button className={`fp-nav-item${last ? ' fp-nav-item--cur' : ''}`} onClick={() => doBrowse(p)}>{seg}</button>
-                ) : (
-                  <span className="fp-nav-item fp-nav-item--locked">{seg}</span>
-                )}
-              </React.Fragment>
-            );
-          })}
+        {/* 路径导航 (面包屑): 点击段 = 切到该目录; 右侧搜索框实时过滤当前列表 */}
+        <div className="fp-nav">
+          <div className="fp-nav-path" ref={inputRef}>
+            <span className="fp-nav-icon">📁</span>
+            {segments.length === 0 && <span className="fp-nav-item fp-nav-item--cur">/</span>}
+            {segments.map((seg, i) => {
+              const p = '/' + segments.slice(0, i + 1).join('/');
+              const root = rootRef.current;
+              const inRoot = !root || p === root.replace(/\/+$/, '') || p.startsWith(root.replace(/\/+$/, '') + '/');
+              const last = i === segments.length - 1;
+              return (
+                <React.Fragment key={p}>
+                  {i > 0 && <span className="fp-nav-sep">›</span>}
+                  {inRoot ? (
+                    <button className={`fp-nav-item${last ? ' fp-nav-item--cur' : ''}`} onClick={() => doBrowse(p)}>{seg}</button>
+                  ) : (
+                    <span className="fp-nav-item fp-nav-item--locked">{seg}</span>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </div>
+          <div className="fp-search">
+            <svg className="fp-search-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.5" y2="16.5" /></svg>
+            <input
+              className="fp-search-input"
+              type="text"
+              placeholder="搜索当前目录…"
+              value={query}
+              spellCheck={false}
+              onChange={(e) => { setQuery(e.target.value); setActive(0); }}
+            />
+            {searching && (
+              <button className="fp-search-clear" title="清空搜索" onClick={() => setQuery('')}>✕</button>
+            )}
+          </div>
         </div>
         <div className="fp-body">
           <div className="fp-main">
             {loading && <div className="fp-loading">加载中…</div>}
-            {!loading && visible.length === 0 && <div className="fp-empty">空目录</div>}
+            {!loading && visible.length === 0 && <div className="fp-empty">{searching ? `无匹配「${query.trim()}」的结果` : '空目录'}</div>}
             {!loading && visible.length > 0 && (
               <div className="fp-list">
                 {visible.map((entry, idx) => {
@@ -239,14 +272,16 @@ export const FilePicker: React.FC = () => {
                   const checkableEntry = mode === 'select' && entryCheckable(entry, filter);
                   const isChecked = checked.has(entry.path);
                   const showCheck = mode === 'select';
+                  const isPicked = openPick?.path === entry.path;
                   return (
                     <button
                       key={entry.path}
                       type="button"
-                      className={`fp-item${i === active ? ' highlight' : ''}${isChecked ? ' checked' : ''}`}
+                      className={`fp-item${i === active ? ' highlight' : ''}${isChecked ? ' checked' : ''}${isPicked ? ' selected' : ''}`}
                       onClick={() => {
                         if (mode === 'open') {
-                          if (isDir) enterDir(entry); // 打开模式: 单击目录=进入
+                          // 打开模式: 单击目录=选中 (再点同一目录=取消); 双击=进入
+                          setOpenPick((prev) => (prev?.path === entry.path ? null : entry));
                           return;
                         }
                         // select 模式
@@ -279,7 +314,7 @@ export const FilePicker: React.FC = () => {
           </div>
         </div>
         <div className="fp-foot">
-          {mode === 'open' && <div className="fp-foot-path">📁 {currentPath || '尚未选择'}</div>}
+          {mode === 'open' && <div className="fp-foot-path">📁 {(openPick ? openPick.path : currentPath) || '尚未选择'}</div>}
           {mode === 'select' && <div className="fp-foot-hint">{footHint}</div>}
           <button type="button" className="fp-cancel" onClick={handleCancel}>取消</button>
           {mode === 'open' ? (
@@ -313,8 +348,17 @@ const STYLES = `
 .fp-title-sub{font-size:11.5px;color:var(--ai-fg-muted,#9ca3af);font-weight:400;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:400px}
 .fp-x{width:30px;height:30px;background:transparent;border:none;color:var(--ai-fg-muted,#9ca3af);cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:7px;flex-shrink:0;transition:all .12s}
 .fp-x:hover{background:var(--ai-hover,rgba(255,255,255,0.06));color:var(--ai-fg,#e5e7eb)}
-.fp-nav{display:flex;align-items:center;gap:2px;font-size:12.5px;padding:8px 20px 6px;flex-shrink:0;overflow-x:auto;border-bottom:1px solid var(--ai-divider,rgba(255,255,255,0.05))}
+.fp-nav{display:flex;align-items:center;gap:10px;font-size:12.5px;padding:8px 20px 6px;flex-shrink:0;border-bottom:1px solid var(--ai-divider,rgba(255,255,255,0.05))}
+.fp-nav-path{display:flex;align-items:center;gap:2px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}
+.fp-nav-path::-webkit-scrollbar{display:none}
 .fp-nav-icon{color:var(--ai-fg-muted,#6b7280);margin-right:4px;flex-shrink:0;font-size:12px}
+.fp-search{position:relative;display:flex;align-items:center;flex-shrink:0}
+.fp-search-icon{position:absolute;left:8px;color:var(--ai-fg-muted,#6b7280);pointer-events:none;flex-shrink:0}
+.fp-search-input{width:200px;height:28px;background:rgba(127,127,127,0.12);border:1px solid var(--ai-divider,rgba(255,255,255,0.1));border-radius:8px;color:var(--ai-fg,#e5e7eb);font-size:12px;padding:0 24px 0 26px;outline:none;transition:all .15s;box-sizing:border-box}
+.fp-search-input::placeholder{color:var(--ai-fg-muted,#6b7280)}
+.fp-search-input:focus{border-color:var(--ai-accent,#6366f1);background:rgba(99,102,241,0.08)}
+.fp-search-clear{position:absolute;right:5px;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;background:none;border:none;color:var(--ai-fg-muted,#6b7280);cursor:pointer;border-radius:4px;font-size:11px;padding:0;line-height:1}
+.fp-search-clear:hover{background:var(--ai-hover,rgba(255,255,255,0.08));color:var(--ai-fg,#e5e7eb)}
 .fp-nav-item{background:none;border:none;color:var(--ai-fg-muted,#9ca3af);cursor:pointer;padding:2px 5px;border-radius:4px;white-space:nowrap;font-size:12.5px;transition:all .12s;flex-shrink:0}
 .fp-nav-item--cur{color:var(--ai-fg,#e5e7eb);font-weight:600}
 .fp-nav-item--locked{opacity:.4;cursor:default}
@@ -331,6 +375,9 @@ const STYLES = `
 .fp-item.checked{background:var(--ai-active,rgba(99,102,241,0.16));color:var(--ai-fg,#fff)}
 .fp-item.checked svg{opacity:1}
 .fp-item:hover{background:var(--ai-hover,rgba(255,255,255,0.06))}
+.fp-item.selected{background:var(--ai-accent,#6366f1);color:#fff}
+.fp-item.selected svg{opacity:1}
+.fp-item.selected:hover{background:var(--ai-accent-strong,#4f52d9)}
 .fp-check{width:16px;height:16px;border:1px solid var(--ai-fg-muted,#6b7280);border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;color:#fff;flex-shrink:0;background:transparent;transition:all .12s}
 .fp-check--on{background:var(--ai-accent,#6366f1);border-color:var(--ai-accent,#6366f1)}
 .fp-item-name{font-weight:500;flex-shrink:0;font-size:13px;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
