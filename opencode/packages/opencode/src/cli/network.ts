@@ -2,6 +2,22 @@ import type { Argv, InferredOptionTypes } from "yargs"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import type { Config } from "@/config/config"
 import { Effect } from "effect"
+import { statSync } from "node:fs"
+
+/** --web-ui 启动校验: 必须是已存在的目录.
+ *  指向 index.html 等文件会被 serve 层当目录解析而全部 miss (静默回退内嵌),
+ *  故启动即报错提示. */
+export function validateWebUIOption(webUI: string | undefined): string | null {
+  if (!webUI) return null
+  let stat
+  try {
+    stat = statSync(webUI)
+  } catch {
+    return `--web-ui 目录不存在: ${webUI}`
+  }
+  if (!stat.isDirectory()) return `--web-ui 必须是目录 (收到文件: ${webUI}); 请传 index.html 所在的目录`
+  return null
+}
 
 const options = {
   port: {
