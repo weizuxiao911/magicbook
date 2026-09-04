@@ -141,8 +141,10 @@ export const PortsPanel: React.FC = () => {
     try {
       const list = await ports.scan();
       setEntries(list);
+      return list;
     } catch (e: any) {
       notification.error({ message: `端口扫描失败: ${e?.message || e}`, type: 'error', duration: 3 });
+      return [];
     }
   }, [ports]);
 
@@ -306,12 +308,15 @@ export const PortsPanel: React.FC = () => {
     } catch (e: any) {
       notification.warn({ message: `已转发 :${port} 但本地记录失败: ${e?.message || e}`, type: 'warning', duration: 3 });
     }
-    await refresh();
-    notification.info({
-      message: `已转发 :${port}${name ? ` [${name}]` : ''}`,
-      type: 'info',
-      duration: 2,
-    });
+    const cur = await refresh();
+    // 若端口已存在于服务端 entries (SSE 已通知过 "检测到服务"), 跳过重复通知
+    if (!cur.some((p) => p.port === port)) {
+      notification.info({
+        message: `已转发 :${port}${name ? ` [${name}]` : ''}`,
+        type: 'info',
+        duration: 2,
+      });
+    }
   }, [portInput, nameInput, selectedIcon, ports, fileService, refresh]);
 
   const beginEditName = useCallback((port: number, current: string) => {
