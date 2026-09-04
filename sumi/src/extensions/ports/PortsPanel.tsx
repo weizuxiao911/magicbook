@@ -30,16 +30,24 @@ import {
 
 const STYLES = `
 .pf{display:flex;flex-direction:column;height:100%;background:transparent;color:var(--ai-fg,#d1d5db);font-size:12.5px;min-height:0}
-.pf-toolbar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--ai-divider,rgba(255,255,255,0.06));flex-shrink:0;flex-wrap:wrap}
+.pf-toolbar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--ai-divider,rgba(255,255,255,0.06));flex-shrink:0;flex-wrap:nowrap}
 .pf-title{font-size:12px;color:var(--ai-fg-muted,#9ca3af);font-weight:600;display:inline-flex;align-items:center;gap:6px;flex-shrink:0;min-width:48px}
 .pf-title-icon{color:var(--ai-accent,#818cf8);display:inline-flex}
 .pf-count{font-size:11px;color:var(--ai-fg-muted,#6b7280);background:var(--ai-hover,rgba(255,255,255,0.04));padding:1px 6px;border-radius:8px;margin-left:2px}
 
-.pf-icons{display:inline-flex;align-items:center;gap:2px;padding:2px;background:rgba(255,255,255,0.03);border:1px solid var(--ai-divider,rgba(255,255,255,0.06));border-radius:8px;flex-shrink:0}
+/* icon 触发按钮 (单按钮) + 下拉 popover */
+.pf-icon-trigger{position:relative;height:28px;min-width:32px;padding:0 6px;display:inline-flex;align-items:center;justify-content:center;gap:2px;background:rgba(255,255,255,0.04);border:1px solid var(--ai-divider,rgba(255,255,255,0.1));border-radius:7px;color:var(--ai-fg,#e5e7eb);font-size:15px;cursor:pointer;flex-shrink:0;transition:all .12s;line-height:1}
+.pf-icon-trigger:hover{background:rgba(99,102,241,0.1);border-color:var(--ai-accent,#6366f1)}
+.pf-icon-trigger--open{background:rgba(99,102,241,0.12);border-color:var(--ai-accent,#6366f1)}
+.pf-icon-trigger-caret{font-size:9px;color:var(--ai-fg-muted,#6b7280);margin-left:1px}
 .pf-icon{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;font-size:15px;background:transparent;border:none;color:var(--ai-fg-muted,#9ca3af);cursor:pointer;border-radius:6px;transition:all .12s;line-height:1;padding:0}
 .pf-icon:hover{background:rgba(255,255,255,0.08);color:var(--ai-fg,#e5e7eb)}
-.pf-icon--sel{background:var(--ai-accent,#6366f1);color:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.2)}
-.pf-icon--sel:hover{background:var(--ai-accent-strong,#4f52d9);color:#fff}
+.pf-icon--sel{background:var(--ai-accent,#6366f1) !important;color:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.2)}
+.pf-icon--sel:hover{background:var(--ai-accent-strong,#4f52d9) !important;color:#fff}
+.pf-icon-popover{position:absolute;top:calc(100% + 4px);left:0;z-index:100;display:grid;grid-template-columns:repeat(6,32px);gap:2px;padding:6px;background:var(--ai-bg-elevated,#1f2028);border:1px solid var(--ai-divider,rgba(255,255,255,0.12));border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4)}
+.pf-icon-popover .pf-icon{background:transparent}
+.pf-icon-popover .pf-icon:hover{background:rgba(255,255,255,0.08);color:var(--ai-fg,#e5e7eb)}
+.pf-icon-popover .pf-icon--sel{background:var(--ai-accent,#6366f1);color:#fff}
 
 .pf-input-wrap{position:relative;display:flex;align-items:center;min-width:120px}
 .pf-input-wrap--port{flex:0 0 110px}
@@ -120,8 +128,12 @@ export const PortsPanel: React.FC = () => {
   const [editingPort, setEditingPort] = useState<number | null>(null);
   const editingValueRef = useRef<string>('');
   const [editingIconPort, setEditingIconPort] = useState<number | null>(null);
+  const [iconPopoverOpen, setIconPopoverOpen] = useState(false);
+  const iconTriggerRef = useRef<HTMLDivElement>(null);
   const portInputRef = useRef<HTMLInputElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  /** 已通知过的端口 (跨 effect 重订阅保留, 避免 React 18 StrictMode / forwards 变更触发重复订阅时弹 2 个通知). */
+  const notifiedRef = useRef<Set<number>>(new Set());
   /** 标记 mount 首次同步是否完成 (避免 init 期间 UI 抖动). */
   const initRef = useRef(false);
 
@@ -174,15 +186,46 @@ export const PortsPanel: React.FC = () => {
     return () => { cancelled = true; };
   }, [fileService, refresh, syncForwardsToServer]);
 
+  /** 关闭 icon 下拉 (点击外部). */
+  useEffect(() => {
+    if (!iconPopoverOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (iconTriggerRef.current && !iconTriggerRef.current.contains(e.target as Node)) {
+        setIconPopoverOpen(false);
+      }
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIconPopoverOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [iconPopoverOpen]);
+
   /** 订阅 SSE: 仅 ports.detected / ports.closed. */
   useEffect(() => {
     const un = ports.subscribe((e) => {
       if (e.type === 'ports.detected') {
-        setEntries((prev) => {
-          if (prev.some((p) => p.port === e.port)) return prev;
-          return [...prev, { port: e.port, process: e.process, detectedAt: Date.now() }]
-            .sort((a, b) => a.port - b.port);
-        });
+        // 全局跨订阅 dedup: 同一端口 panel 生命周期内只弹一次通知
+        if (notifiedRef.current.has(e.port)) {
+          setEntries((prev) =>
+            prev.some((p) => p.port === e.port)
+              ? prev
+              : [...prev, { port: e.port, process: e.process, detectedAt: Date.now() }]
+                  .sort((a, b) => a.port - b.port),
+          );
+          return;
+        }
+        notifiedRef.current.add(e.port);
+        setEntries((prev) =>
+          prev.some((p) => p.port === e.port)
+            ? prev
+            : [...prev, { port: e.port, process: e.process, detectedAt: Date.now() }]
+                .sort((a, b) => a.port - b.port),
+        );
         const fr = forwards[e.port];
         const label = fr?.name || (e.process ? `${e.process}` : '');
         notification.info({
@@ -196,6 +239,7 @@ export const PortsPanel: React.FC = () => {
         });
       } else if (e.type === 'ports.closed') {
         setEntries((prev) => prev.filter((p) => p.port !== e.port));
+        notifiedRef.current.delete(e.port);
       }
     });
     return un;
@@ -356,18 +400,33 @@ export const PortsPanel: React.FC = () => {
           {merged.length > 0 && <span className="pf-count">{merged.length}</span>}
         </span>
 
-        <div className="pf-icons" role="radiogroup" aria-label="选择图标">
-          {PRESET_ICONS.map((ic) => (
-            <button
-              key={ic}
-              type="button"
-              role="radio"
-              aria-checked={selectedIcon === ic}
-              className={'pf-icon' + (selectedIcon === ic ? ' pf-icon--sel' : '')}
-              onClick={() => setSelectedIcon(ic)}
-              title={ic}
-            >{ic}</button>
-          ))}
+        <div ref={iconTriggerRef} style={{ position: 'relative', flexShrink: 0 }}>
+          <button
+            type="button"
+            className={'pf-icon-trigger' + (iconPopoverOpen ? ' pf-icon-trigger--open' : '')}
+            onClick={() => setIconPopoverOpen((v) => !v)}
+            aria-haspopup="listbox"
+            aria-expanded={iconPopoverOpen}
+            title="选择图标"
+          >
+            <span>{selectedIcon}</span>
+            <span className="pf-icon-trigger-caret">▾</span>
+          </button>
+          {iconPopoverOpen && (
+            <div className="pf-icon-popover" role="radiogroup" aria-label="选择图标">
+              {PRESET_ICONS.map((ic) => (
+                <button
+                  key={ic}
+                  type="button"
+                  role="radio"
+                  aria-checked={selectedIcon === ic}
+                  className={'pf-icon' + (selectedIcon === ic ? ' pf-icon--sel' : '')}
+                  onClick={() => { setSelectedIcon(ic); setIconPopoverOpen(false); }}
+                  title={ic}
+                >{ic}</button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="pf-input-wrap pf-input-wrap--port">
@@ -448,7 +507,7 @@ export const PortsPanel: React.FC = () => {
           return (
             <div className="pf-row" key={m.port}>
               {isIconEditing ? (
-                <div className="pf-icons" style={{ gridColumn: '1 / -1' }} role="radiogroup" aria-label="选择图标">
+                <div className="pf-icon-popover" style={{ position: 'static', boxShadow: 'none', border: '1px solid var(--ai-divider,rgba(255,255,255,0.08))' }} role="radiogroup" aria-label="选择图标">
                   {PRESET_ICONS.map((ic) => (
                     <button
                       key={ic}
