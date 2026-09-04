@@ -261,6 +261,11 @@ export namespace FSUtil {
       .replace(/^\/([a-zA-Z])(?:\/|$)/, (_, drive) => `${drive.toUpperCase()}:/`)
       .replace(/^\/cygdrive\/([a-zA-Z])(?:\/|$)/, (_, drive) => `${drive.toUpperCase()}:/`)
       .replace(/^\/mnt\/([a-zA-Z])(?:\/|$)/, (_, drive) => `${drive.toUpperCase()}:/`)
+      // numas patch: bare drive letter (e.g. "D:") is a Windows "drive-relative" path
+      // that path.win32.resolve turns into the drive's per-drive CWD, not the drive root.
+      // Normalize to "D:\" so resolve() / defaultDirectory() treat it as the drive root.
+      // Drive-relative forms like "D:foo" / "D:." / "D:.." are left untouched on purpose.
+      .replace(/^([A-Za-z]):$/, (_, drive) => `${drive.toUpperCase()}:\\`)
   }
 
   export function overlaps(a: string, b: string) {
