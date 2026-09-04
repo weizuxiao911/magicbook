@@ -699,14 +699,10 @@ export const Chat: React.FC = () => {
     };
   }, [ready, loadMessages, refreshSessionStatuses]);
 
-  // busy 兜底看门狗: 事件流异常时防止 busy 卡死 (仅当前会话)
-  useEffect(() => {
-    if (!busy) return;
-    const t = setTimeout(() => {
-      setBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
-    }, 120000);
-    return () => clearTimeout(t);
-  }, [busy, sessionID]);
+  // busy 状态只反映 server 真实状态 (事件流 busy/idle 事件 + 下方 15s 对账全量校准).
+  // 历史版本曾有「120s 强制复位 busy」的假看门狗: 长任务 (>120s) 时 UI 周期性假空闲
+  // (停止按钮消失/工具卡折叠成完成/可误发同会话消息) — 已删除, 不再凭空改 UI.
+  // 事件流丢 idle 事件时由 15s 对账兜底; 对账失败保持现状 (诚实, 不假装空闲).
 
   // busy 定时对账: 每 15s 校准一次, 覆盖事件丢失/连接抖动
   useEffect(() => {
