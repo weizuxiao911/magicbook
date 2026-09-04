@@ -232,7 +232,7 @@ export const PortsPanel: React.FC = () => {
         const label = fr?.name || (e.process ? `${e.process}` : '');
         notification.info({
           message: `检测到服务 :${e.port}${label ? ` [${label}]` : ''}`,
-          description: '点击通知, 经 opencode 打开服务',
+          description: '点击访问应用',
           type: 'info',
           duration: 8,
           onClick: () => {
@@ -560,7 +560,7 @@ export const PortsPanel: React.FC = () => {
                     {m.process ? `${m.process}${m.pid ? ` · ${m.pid}` : ''}` : '手动转发'}
                   </span>
                   <div className="pf-row-op">
-                    <button className="pf-opbtn pf-opbtn--open" onClick={() => openPort(m.port)} title="通过 opencode 反代打开">打开</button>
+                    <button className="pf-opbtn pf-opbtn--open" onClick={() => openPort(m.port)} title="在浏览器中打开应用">打开</button>
                     <button className="pf-opbtn" onClick={() => void copyUrl(m.port)} title="复制反代 URL">复制</button>
                     <button className="pf-opbtn pf-opbtn--del" onClick={() => void removePort(m.port)} title="从列表移除">✕</button>
                   </div>
