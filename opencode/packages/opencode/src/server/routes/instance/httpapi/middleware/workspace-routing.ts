@@ -85,20 +85,34 @@ function selectedV2WorkspaceID(
 }
 
 function defaultDirectory(request: HttpServerRequest.HttpServerRequest, _url: URL): string {
-  // numas: only honor the x-opencode-directory header (铁律 8). ?directory= and other query
-  // overrides are ignored on purpose — the client (cwdHeader / workspaceHeader) is
-  // the single source of truth, and falling back to query risks stale or wrong values.
-  const raw = request.headers["x-opencode-directory"]
-  if (!raw) return process.cwd()
-  // 防御性 decode: client SDK 已按 raw path 发送 (铁律 8), 但旧 client / 中间代理可能 encode;
-  // decode 后无法用作 path 时回退 raw 字符串.
-  let decoded = raw
-  try {
-    decoded = decodeURIComponent(raw)
-  } catch {
-    decoded = raw
+  // numas: workspace source-of-truth is x-opencode-directory header (铁律 8).
+  //   - Header: client SDK / fetch 路径都发 header (默认).
+  //   - Query fallback: 浏览器 WebSocket / EventSource API 不能发 header, 必须走
+  //     ?directory= query 拿 workspace 上下文. sumi 端 pty.service.ts wsUrl() 拼 query,
+  //     filesystem/provider.ts EventSource 拼 query, 都依赖这个 fallback.
+  //   - 顺序: header 优先 (raw path, server 防御性 decode), 缺失再回退 query,
+  //     最后 process.cwd() (numas 进程启动 workdir).
+  const headerRaw = request.headers["x-opencode-directory"]
+  if (headerRaw) {
+    let decoded = headerRaw
+    try {
+      decoded = decodeURIComponent(headerRaw)
+    } catch {
+      decoded = headerRaw
+    }
+    return FSUtil.windowsPath(decoded)
   }
-  return FSUtil.windowsPath(decoded)
+  const queryRaw = _url.searchParams.get("directory")
+  if (queryRaw) {
+    let decoded = queryRaw
+    try {
+      decoded = decodeURIComponent(queryRaw)
+    } catch {
+      decoded = queryRaw
+    }
+    return FSUtil.windowsPath(decoded)
+  }
+  return process.cwd()
 }
 
 function shouldStayOnControlPlane(request: HttpServerRequest.HttpServerRequest, url: URL): boolean {
