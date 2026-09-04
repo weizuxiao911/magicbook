@@ -144,6 +144,11 @@ const rootApiRoutes = HttpApiBuilder.layer(RootHttpApi).pipe(
   Layer.provide([controlHandlers, controlPlaneHandlers, globalHandlers]),
   Layer.provide(schemaErrorLayer),
   Layer.provide(httpApiAuthLayer),
+  // numas: /global/event SSE 路径需要 workspace routing middleware 拿 x-opencode-directory header,
+  // 让 server 端 InstanceContext 拿到正确 directory, fs watcher 监听 URL ?directory= 目录.
+  // 不然 SSE 没 header → defaultDirectory fallback process.cwd() (numas) → 切 workspace 后
+  // file.watcher.updated 收不到变化.
+  Layer.provide([workspaceRoutingLive, instanceContextLayer]),
 )
 const eventApiRoutes = HttpApiBuilder.layer(EventApi).pipe(
   Layer.provide(eventHandlers),

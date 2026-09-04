@@ -7,6 +7,7 @@ import "@/server/event"
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiError, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
 import semver from "semver"
+import { WorkspaceRoutingQuery } from "../middleware/workspace-routing"
 import { described } from "./metadata"
 
 const GlobalHealth = Schema.Struct({
@@ -86,6 +87,9 @@ export const GlobalApi = HttpApi.make("global").add(
         }),
       ),
       HttpApiEndpoint.get("event", GlobalPaths.event, {
+        // numas: SSE 路径需要 ?directory= query 拿 workspace 上下文 (铁律 8 兼容).
+        //   browser EventSource 不能发 header, middleware 通过 query 解析 directory.
+        query: WorkspaceRoutingQuery,
         success: GlobalEventSchema,
       }).annotateMerge(
         OpenApi.annotations({

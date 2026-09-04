@@ -368,7 +368,12 @@ export class CustomFileSystemProvider implements FileSystemProvider {
     if (!base) return;
     this.sseReady = new Promise<void>((resolve) => {
       try {
-        const url = secureUrl(`${base}/global/event`);
+        // numas: EventSource API 不支持自定义 header; 走 ?directory= query 让 server
+        // workspace-routing middleware 解析 workspace 上下文 (铁律 8 兼容).
+        const cwd = effectiveCwd();
+        const params = new URLSearchParams();
+        if (cwd) params.set('directory', cwd);
+        const url = secureUrl(`${base}/global/event?${params.toString()}`);
         const es = new EventSource(url, { withCredentials: false });
         this.sse = es;
         es.onopen = () => {
