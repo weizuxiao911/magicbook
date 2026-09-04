@@ -229,7 +229,9 @@ export const FilePicker: React.FC = () => {
             <span className="fp-nav-icon">📁</span>
             {segments.length === 0 && <span className="fp-nav-item fp-nav-item--cur">/</span>}
             {segments.map((seg, i) => {
-              const p = '/' + segments.slice(0, i + 1).join('/');
+              // 绝对路径拼接: Windows drive 首段 (含 ':') 直接作为根, POSIX 补前导 '/'.
+              // 之前无条件加 '/' 导致 Windows 路径渲染成 '/D:/...' 多余前缀.
+              const p = (segments[0]?.includes(':') ? '' : '/') + segments.slice(0, i + 1).join('/');
               const root = rootRef.current;
               const inRoot = !root || p === root.replace(/\/+$/, '') || p.startsWith(root.replace(/\/+$/, '') + '/');
               const last = i === segments.length - 1;
