@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>最短路径规划动画演示</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: #fafafa;
+      color: #222;
+      padding: 30px 20px;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    h1 { text-align: center; margin-bottom: 8px; font-size: 28px; font-weight: 700; }
+    .subtitle { text-align: center; color: #666; margin-bottom: 30px; font-size: 14px; }
+    .grid-wrapper {
+      display: flex;
+      justify-content: center;
+      margin: 10px 0 20px;
+    }
+    .grid {
+      display: grid;
+      gap: 2px;
+      background: #e0e0e0;
+      padding: 2px;
+      border-radius: 4px;
+      max-width: 900px;
+      width: 100%;
+    }
+    .cell {
+      aspect-ratio: 1;
+      background: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 600;
+      color: #555;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.2s;
+      user-select: none;
+      position: relative;
+    }
+    .cell:hover { transform: scale(1.05); z-index: 1; }
+    .cell.wall    { background: #2c2c2c; color: #2c2c2c; }
+    .cell.start   { background: #4CAF50; color: white; font-size: 11px; }
+    .cell.end     { background: #E91E63; color: white; font-size: 11px; }
+    .cell.visited { background: #B3E5FC; animation: pop 0.3s ease-out; }
+    .cell.frontier{ background: #FFF59D; }
+    .cell.path    { background: #FF9800; color: white; animation: pathGlow 0.5s ease-out; }
+    .cell.current { background: #F44336; color: white; transform: scale(1.1); }
+    @keyframes pop {
+      0%   { transform: scale(0.5); }
+      100% { transform: scale(1); }
+    }
+    @keyframes pathGlow {
+      0%   { transform: scale(1); box-shadow: 0 0 0 0 #FF9800; }
+      50%  { transform: scale(1.15); box-shadow: 0 0 12px 4px #FF9800; }
+      100% { transform: scale(1); box-shadow: 0 0 0 0 #FF9800; }
+    }
+
+    .legend {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin: 16px 0;
+      font-size: 12px;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-swatch {
+      width: 16px; height: 16px;
+      border-radius: 3px;
+      border: 1px solid #999;
+    }
+    .l-wall     { background: #2c2c2c; }
+    .l-start    { background: #4CAF50; }
+    .l-end      { background: #E91E63; }
+    .l-frontier { background: #FFF59D; }
+    .l-visited  { background: #B3E5FC; }
+    .l-path     { background: #FF9800; }
+
+    .status {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin: 16px 0;
+      font-size: 13px;
+      flex-wrap: wrap;
+    }
+    .status-item {
+      padding: 5px 12px;
+      background: #f5f5f5;
+      border-radius: 6px;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+    }
+    .status-item strong { color: #1976D2; }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      flex-wrap: wrap;
+      align-items: center;
+      margin: 20px 0;
+    }
+    .mode-group {
+      display: inline-flex;
+      border: 2px solid #ddd;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .mode-group button {
+      border-radius: 0;
+      border: none;
+      border-right: 1px solid #ddd;
+      background: #fff;
+      color: #666;
+      padding: 8px 14px;
+    }
+    .mode-group button:last-child { border-right: none; }
+    .mode-group button.active { background: #1976D2; color: white; }
+    .controls input[type="range"] { width: 120px; }
+    .speed-label { font-size: 12px; color: #666; min-width: 40px; }
+    button {
+      padding: 9px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+    button:active { transform: translateY(1px); }
+    .btn-run     { background: #4CAF50; color: white; }
+    .btn-run:hover     { background: #388E3C; }
+    .btn-random  { background: #FF9800; color: white; }
+    .btn-random:hover  { background: #F57C00; }
+    .btn-clear   { background: #f5f5f5; color: #666; }
+    .btn-clear:hover   { background: #e0e0e0; }
+    .btn-reset   { background: #f5f5f5; color: #666; }
+    .btn-reset:hover   { background: #e0e0e0; }
+
+    .log {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 14px 16px;
+      border-radius: 6px;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      font-size: 12.5px;
+      max-height: 180px;
+      overflow-y: auto;
+      margin-top: 16px;
+    }
+    .log .entry { padding: 3px 0; border-bottom: 1px solid #2a2a2a; }
+    .log .entry:last-child { border-bottom: none; }
+    .log .entry.info    { color: #B1B1B1; font-style: italic; }
+    .log .entry.success { color: #B6D7A8; font-weight: bold; }
+    .log .entry.error   { color: #E69191; }
+    .log .entry.path    { color: #FFCB85; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>最短路径规划 动画演示</h1>
+    <p class="subtitle">Dijkstra 算法 · 网格寻路 · 点击设置起点 / 终点 / 墙</p>
+
+    <div class="grid-wrapper">
+      <div class="grid" id="grid"></div>
+    </div>
+
+    <div class="legend">
+      <div class="legend-item"><span class="legend-swatch l-start"></span>起点 Start</div>
+      <div class="legend-item"><span class="legend-swatch l-end"></span>终点 End</div>
+      <div class="legend-item"><span class="legend-swatch l-wall"></span>墙 Wall</div>
+      <div class="legend-item"><span class="legend-swatch l-frontier"></span>前沿 Frontier</div>
+      <div class="legend-item"><span class="legend-swatch l-visited"></span>已访问 Visited</div>
+      <div class="legend-item"><span class="legend-swatch l-path"></span>最短路径 Path</div>
+    </div>
+
+    <div class="status">
+      <div class="status-item">访问ddd: <strong id="visitedCount">0</strong></div>
+      <div class="status-item">路径长度: <strong id="pathLength">-</strong></div>
+      <div class="status-item">起点: (<span id="startPos">1,1</span>)</div>
+      <div class="status-item">终点: (<span id="endPos">8,14</span>)</div>
+    </div>
+
+    <div class="controls">
+      <div class="mode-group">
+        <button id="modeWall"  class="active" onclick="setMode('wall')">墙 Wall</button>
+        <button id="modeStart" onclick="setMode('start')">起点 Start</button>
+        <button id="modeEnd"   onclick="setMode('end')">终点 End</button>
+      </div>
+      <button class="btn-run"    onclick="runDijkstra()">▶ 运行 Dijkstra</button>
+      <button class="btn-random" onclick="generateRandom()">随机迷宫</button>
+      <button class="btn-clear"  onclick="clearWalls()">清除墙</button>
+      <button class="btn-reset"  onclick="reset()">重置</button>
+      <label class="speed-label">速度</label>
+      <input type="range" id="speedSlider" min="0.3" max="3" step="0.1" value="1">
+      <span class="speed-label" id="speedLabel">1.0x</span>
+    </div>
+
+    <div class="log" id="log"></div>
+  </div>
+
+  <script>
+    const ROWS = 10;
+    const COLS = 16;
+    let grid = [];
+    let start = { r: 1, c: 1 };
+    let end   = { r: ROWS - 2, c: COLS - 2 };
+    let isAnimating = false;
+    let mode = 'wall';
+    let speed = 1;
+
+    function initGrid() {
+      grid = [];
+      for (let r = 0; r < ROWS; r++) {
+        const row = [];
+        for (let c = 0; c < COLS; c++) {
+          row.push({
+            type: 'empty', dist: Infinity, prev: null,
+            visited: false, inPath: false
+          });
+        }
+        grid.push(row);
+      }
+      grid[start.r][start.c].type = 'start';
+      grid[end.r][end.c].type   = 'end';
+    }
+
+    function render() {
+      const gridEl = document.getElementById('grid');
+      gridEl.innerHTML = '';
+      gridEl.style.gridTemplateColumns = 'repeat(' + COLS + ', 1fr)';
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const cell = grid[r][c];
+          const div = document.createElement('div');
+          div.className = 'cell ' + cell.type;
+          if (cell.dist !== Infinity && (cell.type === 'visited' || cell.type === 'frontier' || cell.type === 'path')) {
+            div.textContent = cell.dist;
+          }
+          if (cell.type === 'start' || cell.type === 'end') {
+            div.textContent = cell.type === 'start' ? 'S' : 'E';
+          }
+          div.addEventListener('click', () => onCellClick(r, c));
+          gridEl.appendChild(div);
+        }
+      }
+      document.getElementById('startPos').textContent = start.r + ',' + start.c;
+      document.getElementById('endPos').textContent   = end.r + ',' + end.c;
+    }
+
+    function onCellClick(r, c) {
+      if (isAnimating) return;
+      const cell = grid[r][c];
+      if (mode === 'wall') {
+        if (cell.type === 'start' || cell.type === 'end') return;
+        cell.type = cell.type === 'wall' ? 'empty' : 'wall';
+        if (cell.type === 'wall') cell.dist = Infinity;
+      } else if (mode === 'start') {
+        if (cell.type === 'end' || cell.type === 'wall') return;
+        grid[start.r][start.c].type = 'empty';
+        start = { r, c };
+        cell.type = 'start';
+      } else if (mode === 'end') {
+        if (cell.type === 'start' || cell.type === 'wall') return;
+        grid[end.r][end.c].type = 'empty';
+        end = { r, c };
+        cell.type = 'end';
+      }
+      clearPath();
+      render();
+    }
+
+    function setMode(m) {
+      if (isAnimating) return;
+      mode = m;
+      document.getElementById('modeWall').classList.toggle('active', m === 'wall');
+      document.getElementById('modeStart').classList.toggle('active', m === 'start');
+      document.getElementById('modeEnd').classList.toggle('active', m === 'end');
+    }
+
+    function clearPath() {
+      let visitedCount = 0;
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const cell = grid[r][c];
+          if (cell.type === 'visited' || cell.type === 'frontier' || cell.type === 'path') {
+            cell.type = 'empty';
+          }
+          cell.dist = Infinity;
+          cell.prev = null;
+          cell.visited = false;
+          cell.inPath = false;
+        }
+      }
+      grid[start.r][start.c].type = 'start';
+      grid[end.r][end.c].type   = 'end';
+      document.getElementById('visitedCount').textContent = '0';
+      document.getElementById('pathLength').textContent = '-';
+    }
+
+    function clearWalls() {
+      if (isAnimating) return;
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const cell = grid[r][c];
+          if (cell.type === 'wall') cell.type = 'empty';
+        }
+      }
+      clearPath();
+      render();
+    }
+
+    function generateRandom(density) {
+      if (isAnimating) return;
+      density = density || 0.28;
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const cell = grid[r][c];
+          if (cell.type === 'start' || cell.type === 'end') continue;
+          cell.type = Math.random() < density ? 'wall' : 'empty';
+        }
+      }
+      clearPath();
+      render();
+    }
+
+    function log(msg, type) {
+      type = type || 'info';
+      const logEl = document.getElementById('log');
+      const entry = document.createElement('div');
+      entry.className = 'entry ' + type;
+      entry.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    const sleep = ms => new Promise(r => setTimeout(r, ms / speed));
+
+    async function runDijkstra() {
+      if (isAnimating) return;
+      clearPath();
+      isAnimating = true;
+      log('▶ 开始 Dijkstra 算法', 'info');
+
+      grid[start.r][start.c].dist = 0;
+      const frontier = [{ r: start.r, c: start.c, dist: 0 }];
+      let visitedCount = 0;
+      let found = false;
+
+      while (frontier.length > 0) {
+        frontier.sort((a, b) => a.dist - b.dist);
+        const cur = frontier.shift();
+        const cell = grid[cur.r][cur.c];
+        if (cell.visited) continue;
+        if (cell.type === 'wall') continue;
+
+        cell.visited = true;
+        if (cell.type !== 'start' && cell.type !== 'end') {
+          cell.type = 'visited';
+        }
+        visitedCount++;
+        document.getElementById('visitedCount').textContent = visitedCount;
+        render();
+        await sleep(80);
+
+        if (cur.r === end.r && cur.c === end.c) { found = true; break; }
+
+        const neighbors = [
+          { r: cur.r - 1, c: cur.c },
+          { r: cur.r + 1, c: cur.c },
+          { r: cur.r, c: cur.c - 1 },
+          { r: cur.r, c: cur.c + 1 }
+        ];
+        for (const n of neighbors) {
+          if (n.r < 0 || n.r >= ROWS || n.c < 0 || n.c >= COLS) continue;
+          const nc = grid[n.r][n.c];
+          if (nc.type === 'wall' || nc.visited) continue;
+          const newDist = cur.dist + 1;
+          if (newDist < nc.dist) {
+            nc.dist = newDist;
+            nc.prev = { r: cur.r, c: cur.c };
+            frontier.push({ r: n.r, c: n.c, dist: newDist });
+            if (nc.type === 'empty') nc.type = 'frontier';
+          }
+        }
+        render();
+        await sleep(20);
+      }
+
+      if (!found) {
+        log('✗ 终点不可达 — 没有路径', 'error');
+      } else {
+        const path = [];
+        let c = end;
+        while (c.r !== start.r || c.c !== start.c) {
+          path.push(c);
+          c = grid[c.r][c.c].prev;
+        }
+        path.reverse();
+        log('✓ 找到最短路径,长度 = ' + path.length, 'success');
+        document.getElementById('pathLength').textContent = path.length;
+        for (const p of path) {
+          if (grid[p.r][p.c].type !== 'end') grid[p.r][p.c].type = 'path';
+          render();
+          await sleep(100);
+        }
+      }
+      isAnimating = false;
+    }
+
+    function reset() {
+      if (isAnimating) return;
+      initGrid();
+      document.getElementById('log').innerHTML = '';
+      log('已重置网格', 'info');
+      render();
+    }
+
+    document.getElementById('speedSlider').addEventListener('input', e => {
+      speed = parseFloat(e.target.value);
+      document.getElementById('speedLabel').textContent = speed.toFixed(1) + 'x';
+    });
+
+    initGrid();
+    render();
+  </script>
+</body>
+</html>
+
+<!-- watcher-test-1788273615 -->
