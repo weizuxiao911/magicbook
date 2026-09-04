@@ -3,6 +3,7 @@ import React from 'react';
 /**
  * PermissionModal — 工具权限请求弹层 (AI 调用 bash/webfetch/edit 等工具时询问)
  * 固定在输入框上方, 与 QuestionModal 同风格; 回复: once(允许一次) / always(始终允许) / reject(拒绝)
+ * 注: reject 在 Chat 层转为 abort 整个对话 (拒绝 = 停止当前任务)
  */
 export const PermissionModal: React.FC<{
   permission: any;

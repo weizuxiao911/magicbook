@@ -24,12 +24,12 @@ export const PartRenderer: React.FC<{
   done?: boolean;
   sessionID: string;
   onReply: (sid: string, rid: string, answers: string[][]) => Promise<void>;
-  onIgnoreQuestion?: (rid: string) => void;
+  onAbortSession?: (sid: string) => void;
   preferredQuestionRequestID?: string;
   preferredQuestionQuestions?: any[];
   /** 对话是否正忙: 仅 busy 时显示提交按钮等交互 */
   busy?: boolean;
-}> = ({ part, streaming, done, sessionID, onReply, onIgnoreQuestion, preferredQuestionRequestID, preferredQuestionQuestions, busy }) => {
+}> = ({ part, streaming, done, sessionID, onReply, onAbortSession, preferredQuestionRequestID, preferredQuestionQuestions, busy }) => {
   if (!part || part.synthetic || part.ignored) return null;
 
   switch (part.type) {
@@ -73,7 +73,8 @@ export const PartRenderer: React.FC<{
               part={part}
               sessionID={sessionID}
               onReply={onReply}
-              onIgnore={onIgnoreQuestion}
+              onAbort={onAbortSession}
+              streaming={streaming}
               preferredRequestID={preferredQuestionRequestID}
               busy={busy}
             />

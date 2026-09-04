@@ -8,9 +8,10 @@ export const MessageRow: React.FC<{
   done?: boolean;
   sessionID: string;
   onReplyQuestion: (sid: string, rid: string, answers: string[][]) => Promise<void>;
-  onIgnoreQuestion?: (rid: string) => void;
+  /** question 卡片「取消」: abort 当前会话对话 */
+  onAbortSession?: (sid: string) => void;
   busy?: boolean;
-}> = ({ row, streaming, done, sessionID, onReplyQuestion, onIgnoreQuestion, busy }) => {
+}> = ({ row, streaming, done, sessionID, onReplyQuestion, onAbortSession, busy }) => {
   if (row.role === 'user') {
     const text = extractText(row.parts);
     const copy = () => navigator.clipboard?.writeText(text);
@@ -74,7 +75,7 @@ export const MessageRow: React.FC<{
               done={done}
               sessionID={sessionID}
               onReply={onReplyQuestion}
-              onIgnoreQuestion={onIgnoreQuestion}
+              onAbortSession={onAbortSession}
               preferredQuestionRequestID={questionMeta?.requestID}
               busy={busy}
             />

@@ -60,10 +60,14 @@ export const QuestionCard: React.FC<{
   part: any;
   sessionID: string;
   onReply: (sid: string, rid: string, answers: string[][]) => Promise<void>;
-  onIgnore?: (rid: string) => void;
+  /** 底部「取消」: abort 整个对话 (提问随之取消).
+   *  仅当此卡片是当前正在进行的提问 (最后一条消息) 且会话 busy 时显示. */
+  onAbort?: (sid: string) => void;
+  /** 会话 busy 且本消息为最后一条进行中消息 (Chat 层由 busy && role assistant && id===最后一条 计算) */
+  streaming?: boolean;
   preferredRequestID?: string;
   busy?: boolean;
-}> = ({ part, sessionID, onReply, onIgnore, preferredRequestID, busy }) => {
+}> = ({ part, sessionID, onReply, onAbort, streaming, preferredRequestID, busy }) => {
   const questions = useMemo(() => extractQuestions(part), [part]);
   const localRid = useMemo(() => extractRequestId(part), [part]);
   const requestId = preferredRequestID || localRid;
@@ -214,9 +218,11 @@ export const QuestionCard: React.FC<{
             <div className="q__foot">
               <div className="q__foot-start">
                 {qi === 0 ? (
-                  <button className="q__nav q__cancel" onClick={() => onIgnore?.(requestId)} disabled={submitting}>
-                    取消
-                  </button>
+                  streaming && (
+                    <button className="q__nav q__cancel" onClick={() => onAbort?.(sessionID)} disabled={submitting}>
+                      取消
+                    </button>
+                  )
                 ) : (
                   <button className="q__nav" onClick={() => setActiveIdx(qi - 1)}>
                     上一个
@@ -238,9 +244,11 @@ export const QuestionCard: React.FC<{
           ) : busy && (
             <div className="q__foot">
               <div className="q__foot-start">
-                <button className="q__nav q__cancel" onClick={() => onIgnore?.(requestId)} disabled={submitting}>
-                  取消
-                </button>
+                {streaming && (
+                  <button className="q__nav q__cancel" onClick={() => onAbort?.(sessionID)} disabled={submitting}>
+                    取消
+                  </button>
+                )}
               </div>
               <div className="q__foot-end">
                 <button className="q__submit" onClick={submit} disabled={submitting}>

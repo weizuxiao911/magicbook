@@ -13,7 +13,6 @@ import {
   aiSwitchAgent,
   aiCompactSession,
   aiReplyQuestion,
-  aiRejectQuestion,
   aiReplyPermission,
   aiListModels,
   aiListProviders,
@@ -1222,9 +1221,16 @@ export const Chat: React.FC = () => {
   }, [loadMessages]);
 
   const onReplyPermission = useCallback(async (permissionID: string, response: 'once' | 'always' | 'reject') => {
+    const sid = sessionID;
     try {
-      await aiReplyPermission(sessionID, permissionID, response);
-      const psid = sessionID;
+      if (response === 'reject') {
+        // 拒绝 = abort 对话 (停止当前任务, 权限请求作废)
+        try { await aiReplyPermission(sid, permissionID, 'reject'); } catch { /* ignore */ }
+        await onAbort(sid);
+        return;
+      }
+      await aiReplyPermission(sid, permissionID, response);
+      const psid = sid;
       setInteractions((prev) => {
         const cur = prev[psid];
         if (!cur?.permission || cur.permission.id !== permissionID) return prev;
@@ -1232,16 +1238,7 @@ export const Chat: React.FC = () => {
         return { ...prev, [psid]: next };
       });
     } catch (e) { console.warn('[ai] reply permission:', e); }
-  }, [sessionID]);
-
-  const onIgnoreQuestion = useCallback(async (rid: string) => {
-    try {
-      await aiRejectQuestion(sessionID, rid);
-      if (sessionID) { try { await loadMessages(sessionID); } catch { /* ignore */ } }
-      // 忽略: 清 store 避免重复提示待回答
-      clearQuestion(sessionID);
-    } catch (e) { console.warn('[ai] reject question:', e); }
-  }, [sessionID, loadMessages]);
+  }, [sessionID, onAbort]);
 
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (showCommands && filteredCommands.length > 0) {
@@ -1498,7 +1495,7 @@ export const Chat: React.FC = () => {
               done={!busy}
               sessionID={sessionID}
               onReplyQuestion={onReplyQuestion}
-              onIgnoreQuestion={onIgnoreQuestion}
+              onAbortSession={onAbort}
               busy={busy}
             />
           ))
