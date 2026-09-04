@@ -25,6 +25,7 @@ import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 
 import { appBaseUrl, cwdHeader, effectiveCwd, secureUrl } from '../../infra/url';
 import { isMac } from '../../infra/os';
+import { isWindowsDrive, normalizeCwdPath } from '../../infra/path';
 
 import { pickShell } from './shell-ops';
 
@@ -115,10 +116,12 @@ export class RemoteTerminalService implements ITerminalNodeService {
         if (base) return rel ? `${base.replace(/\/+$/, '')}/${rel}` : base;
         return s;
       }
-      // 3) 已经是真实宿主绝对路径 (e.g. /Users/.../numas 或其子目录): 直接用, 不要再拼 base
-      //    (此前误当相对路径 → base + '/' + rel, 导致 cwd 拼接两次, pty 500)
-      if (s.startsWith('/')) {
-        return s.replace(/\/+$/, '') || base || s;
+      // 3) 已经是真实宿主绝对路径:
+      //    - POSIX: '/Users/.../numas' 或其子目录
+      //    - Windows: 'D:/...' / 'D:\...' / '/D:/...' (codeblitz 在 Windows 给的形态)
+      //    不要再拼 base, 此前误当相对路径 → base + '/' + rel, 导致 cwd 拼接两次, pty 500
+      if (s.startsWith('/') || isWindowsDrive(s)) {
+        return normalizeCwdPath(s) || base || s;
       }
       // 4) 真·相对路径 → base/rel
       const rel = s.replace(/^\/+/, '');
