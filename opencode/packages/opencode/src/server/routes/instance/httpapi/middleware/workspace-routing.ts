@@ -85,12 +85,20 @@ function selectedV2WorkspaceID(
 }
 
 function defaultDirectory(request: HttpServerRequest.HttpServerRequest, _url: URL): string {
-  // numas: only honor the x-opencode-directory header. ?directory= and other query
+  // numas: only honor the x-opencode-directory header (铁律 8). ?directory= and other query
   // overrides are ignored on purpose — the client (cwdHeader / workspaceHeader) is
   // the single source of truth, and falling back to query risks stale or wrong values.
   const raw = request.headers["x-opencode-directory"]
   if (!raw) return process.cwd()
-  return FSUtil.windowsPath(raw)
+  // 防御性 decode: client SDK 已按 raw path 发送 (铁律 8), 但旧 client / 中间代理可能 encode;
+  // decode 后无法用作 path 时回退 raw 字符串.
+  let decoded = raw
+  try {
+    decoded = decodeURIComponent(raw)
+  } catch {
+    decoded = raw
+  }
+  return FSUtil.windowsPath(decoded)
 }
 
 function shouldStayOnControlPlane(request: HttpServerRequest.HttpServerRequest, url: URL): boolean {
