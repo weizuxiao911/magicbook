@@ -548,12 +548,23 @@ const Endpoint10_6 = (raw: RawClient["server.fs"]) => (input: Endpoint10_6Input)
     Effect.mapError(mapClientError),
   )
 
-type Endpoint10_7Request = Parameters<RawClient["server.fs"]["fs.watch"]>[0]
+type Endpoint10_7Request = Parameters<RawClient["server.fs"]["fs.copy"]>[0]
 type Endpoint10_7Input = {
   readonly location?: Endpoint10_7Request["query"]["location"]
-  readonly path?: Endpoint10_7Request["query"]["path"]
+  readonly from: Endpoint10_7Request["payload"]["from"]
+  readonly to: Endpoint10_7Request["payload"]["to"]
 }
-const Endpoint10_7 = (raw: RawClient["server.fs"]) => (input?: Endpoint10_7Input) =>
+const Endpoint10_7 = (raw: RawClient["server.fs"]) => (input: Endpoint10_7Input) =>
+  raw["fs.copy"]({ query: { location: input["location"] }, payload: { from: input["from"], to: input["to"] } }).pipe(
+    Effect.mapError(mapClientError),
+  )
+
+type Endpoint10_8Request = Parameters<RawClient["server.fs"]["fs.watch"]>[0]
+type Endpoint10_8Input = {
+  readonly location?: Endpoint10_8Request["query"]["location"]
+  readonly path?: Endpoint10_8Request["query"]["path"]
+}
+const Endpoint10_8 = (raw: RawClient["server.fs"]) => (input?: Endpoint10_8Input) =>
   Stream.unwrap(
     raw["fs.watch"]({ query: { location: input?.["location"], path: input?.["path"] } }).pipe(
       Effect.mapError(mapClientError),
@@ -569,7 +580,8 @@ const adaptGroup10 = (raw: RawClient["server.fs"]) => ({
   mkdir: Endpoint10_4(raw),
   remove: Endpoint10_5(raw),
   rename: Endpoint10_6(raw),
-  watch: Endpoint10_7(raw),
+  copy: Endpoint10_7(raw),
+  watch: Endpoint10_8(raw),
 })
 
 type Endpoint11_0Request = Parameters<RawClient["server.command"]["command.list"]>[0]

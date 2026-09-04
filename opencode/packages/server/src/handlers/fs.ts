@@ -94,6 +94,12 @@ export const FileSystemHandler = HttpApiBuilder.group(Api, "server.fs", (handler
           yield* fs.rename(ctx.payload)
         }).pipe(fileSystem),
       )
+      .handle("fs.copy", (ctx) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.Service
+          yield* fs.copy(ctx.payload)
+        }).pipe(fileSystem),
+      )
       .handleRaw("fs.watch", (ctx) =>
         Effect.gen(function* () {
           const fs = yield* FSUtil.Service

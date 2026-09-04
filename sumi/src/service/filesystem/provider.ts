@@ -410,6 +410,35 @@ export class CustomFileSystemProvider implements FileSystemProvider {
     }
   }
 
+  /** 复制文件/目录树 (explorer 粘贴 COPY 走 fileServiceClient.copy → 此方法).
+   *  server /api/fs/copy 用 fs.cp 整树复制; 目标 add 回声抑制, 由 explorer 端 addNode. */
+  async copy(
+    sourceUri: import('@opensumi/ide-core-common').Uri,
+    targetUri: import('@opensumi/ide-core-common').Uri,
+    _options: { overwrite: boolean },
+  ): Promise<void> {
+    const from = await resolveFsPath(sourceUri);
+    const to = await resolveFsPath(targetUri);
+    if (!from || !to) throw FileSystemError.FileNotFound(sourceUri.toString());
+    if (from.headerPath !== to.headerPath) {
+      throw FileSystemError.Unknown('copy across different cwd not supported');
+    }
+    if (from.relPath === to.relPath) {
+      throw FileSystemError.Unknown('cannot copy onto itself');
+    }
+    try {
+      await apiPost('/api/fs/copy', { from: from.relPath, to: to.relPath }, from.headerPath);
+      // 防回环: 复制产物是自己建的, 抑制 SSE add 回声 (explorer 已手动 addNode)
+      this.echoPaths.set(to.relPath, { at: Date.now() });
+    } catch (e: any) {
+      const msg = (e?.message || '').toString();
+      if (/not\s*found|404/i.test(msg)) {
+        throw FileSystemError.FileNotFound(sourceUri.toString());
+      }
+      throw FileSystemError.Unknown(msg || 'copy failed');
+    }
+  }
+
   /** codeblitz 框架会调: 检查 URI 可达性 (F_OK = 0 存在性, R_OK/W_OK/X_OK 权限).
    *  我们用 stat 兜底: 文件/目录存在 → true, 不存在或 stat 异常 → false. */
   async access(uri: import('@opensumi/ide-core-common').Uri, _mode = 0): Promise<boolean> {

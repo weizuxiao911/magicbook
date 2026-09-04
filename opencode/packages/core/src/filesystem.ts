@@ -76,6 +76,12 @@ export const RenameInput = Schema.Struct({
 })
 export type RenameInput = typeof RenameInput.Type
 
+export const CopyInput = Schema.Struct({
+  from: RelativePath,
+  to: RelativePath,
+})
+export type CopyInput = typeof CopyInput.Type
+
 export const Event = FileSystem.Event
 
 export interface Interface {
@@ -89,6 +95,7 @@ export interface Interface {
   readonly mkdir: (input: MkdirInput) => Effect.Effect<void>
   readonly remove: (input: RemoveInput) => Effect.Effect<void>
   readonly rename: (input: RenameInput) => Effect.Effect<void>
+  readonly copy: (input: CopyInput) => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/FileSystem") {}
@@ -218,6 +225,13 @@ const baseLayer = Layer.effect(
         yield* fs.rename(from.absolute, to.absolute).pipe(Effect.orDie)
         yield* events.publish(FileSystem.Event.Renamed, { from: from.absolute, to: to.absolute })
         yield* events.publish(Watcher.Event.Updated, { file: from.absolute, event: "unlink" })
+        yield* events.publish(Watcher.Event.Updated, { file: to.absolute, event: "add" })
+      }),
+      copy: Effect.fn("FileSystem.copy")(function* (input) {
+        const from = yield* resolve(input.from)
+        const to = yield* resolveTarget(input.to)
+        // effect FileSystem.copy = `cp -r` (目录整树); overwrite 与 rename 覆盖语义一致
+        yield* fs.copy(from.absolute, to.absolute, { overwrite: true }).pipe(Effect.orDie)
         yield* events.publish(Watcher.Event.Updated, { file: to.absolute, event: "add" })
       }),
     })

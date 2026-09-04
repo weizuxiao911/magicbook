@@ -82,6 +82,10 @@ export type PermissionNotFoundError = {
 export const isPermissionNotFoundError = (value: unknown): value is PermissionNotFoundError =>
   typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "PermissionNotFoundError"
 
+export type FileNotFoundError = { readonly _tag: "FileNotFoundError"; readonly path: string; readonly message: string }
+export const isFileNotFoundError = (value: unknown): value is FileNotFoundError =>
+  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "FileNotFoundError"
+
 export type PtyNotFoundError = { readonly _tag: "PtyNotFoundError"; readonly ptyID: string; readonly message: string }
 export const isPtyNotFoundError = (value: unknown): value is PtyNotFoundError =>
   typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "PtyNotFoundError"
@@ -2570,6 +2574,16 @@ export type FilesRenameInput = {
 }
 
 export type FilesRenameOutput = void
+
+export type FilesCopyInput = {
+  readonly location?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+  }["location"]
+  readonly from: { readonly from: string; readonly to: string }["from"]
+  readonly to: { readonly from: string; readonly to: string }["to"]
+}
+
+export type FilesCopyOutput = void
 
 export type FilesWatchInput = {
   readonly location?: {

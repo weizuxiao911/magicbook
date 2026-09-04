@@ -44,6 +44,11 @@ const RenamePayload = Schema.Struct({
   to: RelativePath,
 })
 
+const CopyPayload = Schema.Struct({
+  from: RelativePath,
+  to: RelativePath,
+})
+
 const WatchQuery = Schema.Struct({
   ...LocationQuery.fields,
   path: RelativePath.pipe(Schema.optional),
@@ -175,6 +180,22 @@ export const FileSystemGroup = HttpApiGroup.make("server.fs")
           identifier: "v2.fs.rename",
           summary: "Rename path",
           description: "Rename a path to a new path, both relative to the location.",
+        }),
+      ),
+  )
+  .add(
+    HttpApiEndpoint.post("fs.copy", "/api/fs/copy", {
+      query: LocationQuery,
+      payload: CopyPayload,
+      success: HttpApiSchema.NoContent,
+      error: [FileNotFoundError],
+    })
+      .annotateMerge(locationQueryOpenApi)
+      .annotateMerge(
+        OpenApi.annotations({
+          identifier: "v2.fs.copy",
+          summary: "Copy path",
+          description: "Copy a path (file or directory tree) to a new path, both relative to the location.",
         }),
       ),
   )
