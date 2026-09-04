@@ -81,7 +81,12 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FSUtil.Service
     const location = yield* Location.Service
-    const locationRoot = yield* fs.realPath(location.directory)
+    // 基目录不存在时回退声明目录 (构建期 realPath 失败会拖垮整个 location 服务 → 裸 500).
+    // locationRoot 仅用于 contains/relative 判断, 回退声明值语义一致;
+    // 具体文件 NotFound 仍在 handler 层转 404.
+    const locationRoot = yield* fs.realPath(location.directory).pipe(
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(location.directory)),
+    )
 
     function notFound<A>(effect: Effect.Effect<A, FSUtil.Error>) {
       return effect.pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(undefined)))

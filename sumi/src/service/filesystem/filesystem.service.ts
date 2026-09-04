@@ -13,7 +13,8 @@ import { BrowserModule } from '@opensumi/ide-core-browser';
 
 import { apiGet, apiPost } from '../../infra/http';
 import { effectiveCwd } from '../../infra/url';
-import { relForApi, normalizeSep, pathBase } from '../../infra/path';
+import { relForApi, normalizeSep, pathBase, toHostPath } from '../../infra/path';
+import { whenHostAnchors } from '../../infra/host';
 
 import type { IFileSystem, FsEntry, FileMeta } from './filesystem.interface';
 import { FsToken } from './filesystem.interface';
@@ -176,8 +177,11 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   async listDir(absPath: string): Promise<FsEntry[]> {
+    const anchors = await whenHostAnchors();
+    const host = toHostPath(absPath, anchors);
+    if (!host) return [];
     try {
-      const data = await apiGet<Array<{ path: string; type: 'file' | 'directory' }>>('/api/fs/list?path=.', absPath);
+      const data = await apiGet<Array<{ path: string; type: 'file' | 'directory' }>>('/api/fs/list?path=.', host);
       const list = Array.isArray(data) ? data : [];
       return list.map((e) => ({
         name: pathBase(e.path),
@@ -190,8 +194,12 @@ export class FileSystemServiceImpl implements IFileSystem {
   }
 
   async mkdirAbs(absPath: string): Promise<boolean> {
-    const parent = absPath.replace(/\/+$/, '');
-    const name = parent.split('/').pop() || '';
+    const normalized = absPath.replace(/\/+$/, '');
+    const name = normalized.split('/').pop() || '';
+    const parentRaw = normalized.slice(0, normalized.length - name.length).replace(/\/+$/, '');
+    const anchors = await whenHostAnchors();
+    const parent = parentRaw ? toHostPath(parentRaw, anchors) : anchors.home;
+    if (!parent) return false;
     try {
       await apiPost('/api/fs/mkdir', { path: name, recursive: true }, parent);
       return true;

@@ -21,11 +21,11 @@ import {
   type ITerminalServiceClient,
 } from '@opensumi/ide-terminal-next/lib/common';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
-import { WORKSPACE_ROOT } from '@codeblitzjs/ide-core';
 
 import { appBaseUrl, cwdHeader, effectiveCwd, secureUrl } from '../../infra/url';
 import { isMac } from '../../infra/os';
-import { isWindowsDrive, normalizeCwdPath } from '../../infra/path';
+import { toHostPath } from '../../infra/path';
+import { whenHostAnchors } from '../../infra/host';
 
 import { pickShell } from './shell-ops';
 
@@ -101,31 +101,17 @@ export class RemoteTerminalService implements ITerminalNodeService {
     const raw = launchConfig.cwd;
     if (raw) {
       const s = typeof raw === 'string' ? raw : ((raw as any).fsPath || String(raw)) as string;
-      // 1) 虚拟工作区根 (codeblitz WORKSPACE_ROOT / /workspace) → 真实 cwd
-      if (s === WORKSPACE_ROOT || s === '/workspace' || s === '/') {
-        if (base) return base;
-      }
-      // 2) 虚拟根下的相对路径: WORKSPACE_ROOT/foo 或 /workspace/foo → base/foo
-      const vroot = s.startsWith(`${WORKSPACE_ROOT}/`)
-        ? WORKSPACE_ROOT
-        : s.startsWith('/workspace/')
-          ? '/workspace'
-          : null;
-      if (vroot) {
-        const rel = s.slice(vroot.length + 1);
-        if (base) return rel ? `${base.replace(/\/+$/, '')}/${rel}` : base;
-        return s;
-      }
-      // 3) 已经是真实宿主绝对路径:
-      //    - POSIX: '/Users/.../numas' 或其子目录
-      //    - Windows: 'D:/...' / 'D:\...' / '/D:/...' (codeblitz 在 Windows 给的形态)
-      //    不要再拼 base, 此前误当相对路径 → base + '/' + rel, 导致 cwd 拼接两次, pty 500
-      if (s.startsWith('/') || isWindowsDrive(s)) {
-        return normalizeCwdPath(s) || base || s;
-      }
-      // 4) 真·相对路径 → base/rel
+      const anchors = await whenHostAnchors();
+      const directory = anchors.directory || base;
+      // 虚拟根 ('/' / '/workspace' / WORKSPACE_ROOT) → 真实工作目录
+      if (s === '/') return directory || s;
+      // 虚拟路径 (/home/..., /home/AppData/Roaming, /workspace/...) → 锚定真实 home/directory;
+      // 真实宿主绝对路径 (POSIX/Windows 盘符) 规范化返回; 无法锚定 → null
+      const host = toHostPath(s, anchors);
+      if (host) return host;
+      // 真·相对路径 → directory/rel
       const rel = s.replace(/^\/+/, '');
-      if (rel && base) return `${base.replace(/\/+$/, '')}/${rel}`;
+      if (rel && directory) return `${directory.replace(/\/+$/, '')}/${rel}`;
     }
     return this.getPtyCwd();
   }

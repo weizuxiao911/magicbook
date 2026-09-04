@@ -75,14 +75,36 @@ export function relForApi(idePath: string, workspace: string): string {
   return p;
 }
 
-/** MacOS /home 是 socket mount (mkdir ENOTSUP). codeblitz 框架硬编码 /home/.codeblitz 做 storage,
- *  我们 URI 层重写到 ${workspaceWorkspace}/.codeblitz (用户 home, 跨平台可写).
- *  cwd 格式 (POSIX '/Users/foo/Documents' 或 Windows 'C:/Users/foo/Documents') 都兼容.
- *  注: 只重写 /home/.codeblitz 前缀, 不影响其他 /home 路径. */
-export function rewriteCodeblitzHome(p: string, workspace: string): string {
-  if (!p.startsWith('/home/.codeblitz')) return p;
-  const home = workspace ? workspace.replace(/[\\/][^\\/]+[\\/]?$/, '') : '';
-  if (!home) return p; // 拿不到 home 兜底原样 (Linux 上 /home/.codeblitz 实际能 mkdir)
-  const rest = p.slice('/home/.codeblitz'.length);
-  return `${home}/.codeblitz${rest}`;
+/** codeblitz 虚拟根前缀 → 真实宿主锚点的映射.
+ *  铁律: 发往 opencode 的路径只能锚定 /path 接口返回的真实 directory/home.
+ *    /home/<suffix>            → <真实 home>/<suffix>   (虚拟家目录, 覆盖 /home/AppData/Roaming 等)
+ *    /workspace/<suffix>       → <真实 directory>/<suffix>
+ *    WORKSPACE_ROOT/<suffix>   → <真实 directory>/<suffix>
+ *  返回 null = 无法锚定到任何真实宿主路径 (虚拟路径但锚点缺失), 调用方必须当不存在处理, 不发请求.
+ *  已经是真实宿主绝对路径 (在 directory/home 内或 Windows 盘符开头) 规范化后原样返回. */
+export function toHostPath(p: string, anchors: { directory: string; home: string }, workspaceRoot = '/workspace'): string | null {
+  if (!p) return null;
+  const n = normalizeCwdPath(p);
+  const directory = normalizeCwdPath(anchors.directory || '');
+  const home = normalizeCwdPath(anchors.home || '');
+
+  const prefixes: Array<[string, string]> = [
+    ['/home', home],
+    [normalizeCwdPath(workspaceRoot) || '/workspace', directory],
+    ['/workspace', directory],
+  ];
+  for (const [vprefix, anchor] of prefixes) {
+    if (!anchor) continue;
+    if (n === vprefix) return anchor;
+    if (n.startsWith(vprefix + '/')) return `${anchor.replace(/\/+$/, '')}/${n.slice(vprefix.length + 1)}`;
+  }
+
+  // 已是真实宿主路径: 在锚点内 (contains) 或 Windows 盘符开头 → 直接用
+  const inside = (anchor: string) => !!anchor && (n === anchor || n.startsWith(anchor.replace(/\/+$/, '') + '/'));
+  if (inside(directory) || inside(home) || isWindowsDrive(n)) return n;
+
+  // POSIX 绝对路径但锚点都不在/不匹配 (e.g. 真实 /etc/hosts 或早期锚点缺失):
+  // 锚点齐全时拒绝虚拟路径; 锚点缺失 (directory 为空, 启动极早期) 放行由服务端判定.
+  if (n.startsWith('/')) return directory || home ? null : n;
+  return n;
 }

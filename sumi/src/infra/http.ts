@@ -11,6 +11,8 @@
  */
 
 import { appBaseUrl, cwdHeader } from './url';
+import { toHostPath } from './path';
+import { getHostAnchors } from './host';
 
 /** 错误类 (供 service 包装 FileSystemProviderError). */
 export class HttpError extends Error {
@@ -24,13 +26,26 @@ export class HttpError extends Error {
   }
 }
 
+/** 出口兜底: headerPath 必须锚定 /path 接口的真实 directory/home.
+ *  虚拟路径 (/home, /workspace 且无法映射) 直接拒绝, 不发请求. */
+function anchorHeaderPath(headerPath: string | undefined): string | undefined {
+  if (!headerPath) return undefined;
+  const anchored = toHostPath(headerPath, getHostAnchors());
+  if (!anchored) {
+    console.warn('[http] 拒绝无锚点虚拟 headerPath, 不发请求:', headerPath);
+    throw new HttpError(404, headerPath, `unanchored virtual path: ${headerPath}`);
+  }
+  return anchored;
+}
+
 /** 内部 fetch 封装. headerPath 优先 (外部路径 IO 用), 否则 cwd header. */
 async function apiFetch<T = any>(path: string, init: RequestInit = {}, headerPath?: string): Promise<T | null> {
   const base = appBaseUrl();
   if (!base) throw new Error('opencode api: app base url not ready');
   const url = `${base.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
-  const headers: Record<string, string> = headerPath
-    ? { 'x-opencode-directory': encodeURI(headerPath) }
+  const anchored = anchorHeaderPath(headerPath);
+  const headers: Record<string, string> = anchored
+    ? { 'x-opencode-directory': encodeURI(anchored) }
     : cwdHeader();
   if (init.body) headers['Content-Type'] = 'application/json';
   const res = await fetch(url, { ...init, headers });
@@ -66,8 +81,9 @@ export async function apiReadBytes(relPath: string, headerPath?: string): Promis
   const base = appBaseUrl();
   if (!base) throw new Error('opencode api: app base url not ready');
   const url = `${base.replace(/\/+$/, '')}/api/fs/read/${encodeURIComponent(relPath)}`;
-  const headers: Record<string, string> = headerPath
-    ? { 'x-opencode-directory': encodeURI(headerPath) }
+  const anchored = anchorHeaderPath(headerPath);
+  const headers: Record<string, string> = anchored
+    ? { 'x-opencode-directory': encodeURI(anchored) }
     : cwdHeader();
   const res = await fetch(url, { headers });
   if (res.status === 404) throw new Error('not found');

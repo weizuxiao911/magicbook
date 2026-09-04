@@ -19,6 +19,7 @@ import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 import { appBaseUrl, cwdHeader, isPathNotFoundError, effectiveCwd, emitWorkspaceChanged } from '../../infra/url';
 import { normalizeCwdPath } from '../../infra/path';
+import { setHostAnchors } from '../../infra/host';
 import { isMac, isWindows, isLinux } from '../../infra/os';
 
 import type { IOpencodeService, AgentSession, AgentMessage, AgentModel, AgentRuntime } from './opencode.interface';
@@ -61,6 +62,7 @@ export class OpencodeServiceImpl implements IOpencodeService, ClientAppContribut
     //      home:      用户 home dir (仅 .config/.local 路径用, 不当 workspace)
     //    默认 workspace 取 directory (workdir).
     let hostCwd = '';
+    let hostHome = '';
     let defaultShell = '';
     try {
       if (sdk) {
@@ -70,9 +72,14 @@ export class OpencodeServiceImpl implements IOpencodeService, ClientAppContribut
           || (typeof resp.worktree === 'string' && resp.worktree)
           || '';
         if (fallbackWs) hostCwd = normalizeCwdPath(fallbackWs);
+        if (typeof resp.home === 'string' && resp.home) hostHome = normalizeCwdPath(resp.home);
         defaultShell = await probeDefaultShell(sdk, cwd);
       }
     } catch { /* 忽略, 走默认 */ }
+
+    // 宿主路径锚点: 所有发往 opencode 的路径只能锚定这里 (directory/home),
+    // codeblitz 虚拟路径 (/home, /workspace, /home/AppData/Roaming) 由 toHostPath 映射.
+    setHostAnchors({ directory: hostCwd || cwd, home: hostHome });
 
     // 2.1 hostCwd 兜底
     if (!hostCwd && !cwd) {

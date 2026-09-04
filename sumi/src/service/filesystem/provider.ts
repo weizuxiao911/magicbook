@@ -40,16 +40,18 @@ import { FileSystemError } from '@opensumi/ide-file-service/lib/common/files';
 
 import { appBaseUrl, cwdHeader, effectiveCwd, secureUrl } from '../../infra/url';
 import { apiGet, apiPost, apiReadBytes, bytesToBase64 } from '../../infra/http';
-import { isWindowsDrive, normalizeCwdPath, rewriteCodeblitzHome } from '../../infra/path';
+import { isWindowsDrive, normalizeCwdPath, toHostPath } from '../../infra/path';
+import { whenHostAnchors } from '../../infra/host';
 
 // ---- helpers ----
 
 /** 解析 URI 路径 → opencode 调用所需信息.
  *  返回 { relPath, headerPath } 二选一:
- *  - 在 cwd 内: { relPath } (用 cwd header)
- *  - 在 cwd 外: { headerPath: parent, relPath: basename } (用 parent 作为 header, 任意绝对路径都能操作)
- *  fsPath 异常 (e.g. 非 file scheme) → null. */
-function resolveFsPath(uri: import('@opensumi/ide-core-common').Uri): { relPath: string; headerPath?: string } | null {
+ *  - 锚定 directory (工作区): { relPath } (用 cwd header)
+ *  - 锚定 home 等工作区外真实路径: { headerPath: parent, relPath: basename }
+ *  - 虚拟路径无法锚定 (/home、/workspace 且锚点缺失等): null — 调用方当不存在, 不发请求.
+ *  异步: 启动极早期框架 storage stat 可能早于 /path 锚点注入, whenHostAnchors 等待兜底. */
+async function resolveFsPath(uri: import('@opensumi/ide-core-common').Uri): Promise<{ relPath: string; headerPath?: string } | null> {
   let fsPath: string;
   try {
     fsPath = uri.fsPath;
@@ -57,35 +59,27 @@ function resolveFsPath(uri: import('@opensumi/ide-core-common').Uri): { relPath:
     return null;
   }
   if (!fsPath) return null;
-  // /home/.codeblitz → ${homeOfCwd}/.codeblitz (macOS socket mount 兼容)
-  fsPath = rewriteCodeblitzHome(fsPath, effectiveCwd());
-  // 反斜杠转正斜杠 + Windows 盘符去前导 '/', 避免 server 端 windowsPath 处理边界 case
-  // (codeblitz on Windows 可能给 'D:\\...' 或 '/D:/...' 混合格式, header 出去前先归一化)
-  const normalize = (p: string) => normalizeCwdPath(p);
-  const cwd = normalize(effectiveCwd());
-  if (!cwd) {
-    const n = normalize(fsPath);
-    const idx = n.lastIndexOf('/');
-    return { relPath: idx >= 0 ? n.slice(idx + 1) : n, headerPath: idx >= 1 ? n.slice(0, idx) : '/' };
+  const anchors = await whenHostAnchors();
+  // codeblitz 虚拟路径 (/home/.codeblitz, /home/AppData/Roaming, /workspace/...) → 真实宿主路径
+  const host = toHostPath(fsPath, anchors);
+  if (!host) {
+    console.warn('[fs-provider] 拒绝无锚点虚拟路径, 不发请求:', fsPath);
+    return null;
   }
-  const a = normalize(fsPath);
-  const c = cwd;
+  const a = normalizeCwdPath(host);
+  const c = anchors.directory;
+  if (!c) {
+    const idx = a.lastIndexOf('/');
+    return { relPath: idx >= 0 ? a.slice(idx + 1) : a, headerPath: idx >= 1 ? a.slice(0, idx) : '/' };
+  }
   if (a === c) return { relPath: '.' };
   if (a.startsWith(c + '/')) return { relPath: a.slice(c.length + 1) };
-  // file outside cwd: 用 containing dir 作为 header, basename 作为 path
-  // (server 端 x-opencode-directory 严格只信 header, 任意绝对父目录都能解析)
+  // file outside workspace: 用 containing dir 作为 header, basename 作为 path
+  // (headerPath 必须是真实宿主目录 — toHostPath 已保证锚定, 这里不再产生 /home 等虚拟值)
   const idx = a.lastIndexOf('/');
-  const parent = idx >= 1 ? a.slice(0, idx) : isWindowsDrive(a) ? a : '/';
+  const parent = idx >= 1 ? a.slice(0, idx) : isWindowsDrive(a) ? a : (anchors.home || '/');
   const name = idx >= 0 ? a.slice(idx + 1) : a;
   return { relPath: name || '.', headerPath: parent };
-}
-
-/** 兼容旧调用: 单纯 URI → rel 路径 (cwd 内才返, 外返 null) */
-function uriToRel(uri: import('@opensumi/ide-core-common').Uri): string | null {
-  const r = resolveFsPath(uri);
-  if (!r) return null;
-  if (r.headerPath) return null;
-  return r.relPath;
 }
 
 /** IDE 相对路径 → file:// URI (cwd 拼) */
@@ -142,7 +136,7 @@ export class CustomFileSystemProvider implements FileSystemProvider {
   // ---- VS Code FileSystemProvider 接口 ----
 
   async stat(uri: import('@opensumi/ide-core-common').Uri): Promise<FileStat> {
-    const r = resolveFsPath(uri);
+    const r = await resolveFsPath(uri);
     if (!r) throw FileSystemError.FileNotFound(uri.toString());
     const queryPath = r.relPath === '/' ? '.' : r.relPath;
     const res = await apiGet<FsStatResult>(`/api/fs/stat?path=${encodeURIComponent(queryPath)}`, r.headerPath).catch(() => null);
@@ -173,7 +167,7 @@ export class CustomFileSystemProvider implements FileSystemProvider {
   }
 
   async readDirectory(uri: import('@opensumi/ide-core-common').Uri): Promise<[string, FileType][]> {
-    const r = resolveFsPath(uri);
+    const r = await resolveFsPath(uri);
     if (!r) return [];
     const queryPath = r.relPath === '/' ? '.' : r.relPath;
     const entries = (await apiGet<FsEntry[]>(`/api/fs/list?path=${encodeURIComponent(queryPath)}`, r.headerPath).catch(() => [])) ?? [];
@@ -186,7 +180,7 @@ export class CustomFileSystemProvider implements FileSystemProvider {
   }
 
   async readFile(uri: import('@opensumi/ide-core-common').Uri): Promise<Uint8Array> {
-    const r = resolveFsPath(uri);
+    const r = await resolveFsPath(uri);
     if (!r) throw FileSystemError.FileNotFound(uri.toString());
     try {
       return await apiReadBytes(r.relPath === '/' ? '' : r.relPath, r.headerPath);
@@ -203,14 +197,15 @@ export class CustomFileSystemProvider implements FileSystemProvider {
     content: Uint8Array,
     _options: { create: boolean; overwrite: boolean },
   ): Promise<void> {
-    const r = resolveFsPath(uri);
+    const r = await resolveFsPath(uri);
     if (!r) throw FileSystemError.FileNotFound(uri.toString());
     if (!r.headerPath && (r.relPath === '' || r.relPath === '/' || r.relPath === '.')) {
       throw FileSystemError.FileIsNoPermissions(uri.toString(), 'cannot write to mount root');
     }
     const b64 = bytesToBase64(content);
-    // 父目录不存在 → 自动 mkdir -p (server 端 fs.writeFile 不递归建, codeblitz 写 /home/.codeblitz/* 时需要)
+    // 父目录不存在 → 自动 mkdir -p: 先建 header 基目录本身 (锚点迁移后可能缺失), 再建相对父级
     try {
+      if (r.headerPath) await this.ensureHeaderBase(r.headerPath);
       await this.ensureParentDir(r.relPath, r.headerPath);
     } catch (e: any) {
       console.warn('[fs-provider] ensureParentDir failed:', e?.message || e);
@@ -224,6 +219,29 @@ export class CustomFileSystemProvider implements FileSystemProvider {
       }
       throw FileSystemError.Unknown(msg || 'write failed');
     }
+  }
+
+  /** 写工作区外路径前, 确保 header 基目录本身存在.
+ *  锚定迁移 (codeblitz home → opencode home) 后基目录可能尚未创建,
+ *  server 对不存在基目录 stat/write 返 500 (core filesystem Layer 构建期 realPath die).
+ *  做法: 基目录在 home/directory 锚点下时, 以锚点为 header 递归 mkdir 出相对段. */
+  private async ensureHeaderBase(headerPath: string): Promise<void> {
+    if (!headerPath) return;
+    const anchors = await whenHostAnchors();
+    const base = normalizeCwdPath(headerPath);
+    const relUnder = (anchor: string): string => {
+      const a = normalizeCwdPath(anchor).replace(/\/+$/, '');
+      return a && base !== a && base.startsWith(a + '/') ? base.slice(a.length + 1) : '';
+    };
+    const homeRel = relUnder(anchors.home);
+    const dirRel = relUnder(anchors.directory);
+    if (!homeRel && !dirRel) return; // 锚点本身或锚点外: 不处理
+    // 已存在则跳过 (stat 500/404 都当不存在)
+    const exists = await apiGet<{ type: string } | null>('/api/fs/stat?path=.', base).catch(() => null);
+    if (exists?.type === 'directory') return;
+    const anchor = homeRel ? anchors.home : anchors.directory;
+    const rel = homeRel || dirRel;
+    await apiPost('/api/fs/mkdir', { path: rel, recursive: true }, anchor).catch(() => null);
   }
 
   /** 递归建父目录: relPath/foo.txt → mkdir parent dir + 上层直到已存在 */
@@ -243,7 +261,7 @@ export class CustomFileSystemProvider implements FileSystemProvider {
   }
 
   async delete(uri: import('@opensumi/ide-core-common').Uri, options: { recursive: boolean }): Promise<void> {
-    const r = resolveFsPath(uri);
+    const r = await resolveFsPath(uri);
     if (!r) throw FileSystemError.FileNotFound(uri.toString());
     if (!r.headerPath && (r.relPath === '' || r.relPath === '/' || r.relPath === '.')) {
       throw FileSystemError.FileIsNoPermissions(uri.toString(), 'cannot delete mount root');
@@ -256,8 +274,9 @@ export class CustomFileSystemProvider implements FileSystemProvider {
   }
 
   async createDirectory(uri: import('@opensumi/ide-core-common').Uri): Promise<void> {
-    const r = resolveFsPath(uri);
+    const r = await resolveFsPath(uri);
     if (!r) throw FileSystemError.FileNotFound(uri.toString());
+    if (r.headerPath) await this.ensureHeaderBase(r.headerPath).catch(() => null);
     try {
       await apiPost('/api/fs/mkdir', { path: r.relPath, recursive: false }, r.headerPath);
     } catch (e: any) {
@@ -274,8 +293,8 @@ export class CustomFileSystemProvider implements FileSystemProvider {
     newUri: import('@opensumi/ide-core-common').Uri,
     _options: { overwrite: boolean },
   ): Promise<void> {
-    const from = resolveFsPath(oldUri);
-    const to = resolveFsPath(newUri);
+    const from = await resolveFsPath(oldUri);
+    const to = await resolveFsPath(newUri);
     if (!from || !to) throw FileSystemError.FileNotFound(oldUri.toString());
     // 同 header 才能跨 header 移动 (不同目录)
     if (from.headerPath !== to.headerPath) {

@@ -15,6 +15,7 @@ import { Domain } from '@opensumi/ide-core-common';
 import { BrowserModule, ClientAppContribution, SlotLocation } from '@opensumi/ide-core-browser';
 import { ComponentContribution, ComponentRegistry } from '@opensumi/ide-core-browser/lib/layout';
 import { notification } from '@opensumi/ide-components/lib/notification';
+import React from 'react';
 
 import { PortsToken, type IPortsService } from '../../service/ports';
 
@@ -51,13 +52,20 @@ export class PortsNotifierContribution implements ClientAppContribution {
           notified.add(e.port);
           notification.info({
             message: `检测到服务 :${e.port}${e.process ? ` (${e.process})` : ''}`,
-            description: '点击通知, 经 opencode 打开服务',
+            btn: React.createElement(
+              'button',
+              {
+                type: 'button',
+                className: 'kt-button',
+                onClick: () => {
+                  const url = this.ports.proxyUrl(e.port)
+                  window.open(url, '_blank', 'noopener')
+                },
+              },
+              '打开应用',
+            ),
             type: 'info',
             duration: 8,
-            onClick: () => {
-              const url = this.ports.proxyUrl(e.port);
-              window.open(url, '_blank', 'noopener');
-            },
           });
         }
         // closed 不打扰 (列表自动消失即可)

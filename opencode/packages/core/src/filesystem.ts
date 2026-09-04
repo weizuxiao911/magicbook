@@ -100,7 +100,10 @@ const baseLayer = Layer.effect(
     const location = yield* Location.Service
     const search = yield* FileSystemSearch.Service
     const events = yield* EventV2.Service
-    const root = yield* fs.realPath(location.directory).pipe(Effect.orDie)
+    // 基目录不存在时回退到声明目录 (而非 orDie 让整个 location 服务构建失败 → 裸 500).
+    // 服务仍可构建; 后续对具体路径的 NotFound 由 handler 的 fileSystem 转 404.
+    // (与 server fs.watch handler 的 realPath(...).orElseSucceed 写法一致)
+    const root = yield* fs.realPath(location.directory).pipe(Effect.orElseSucceed(() => location.directory))
     const resolve = Effect.fnUntraced(function* (input?: RelativePath) {
       const absolute = path.resolve(location.directory, FSUtil.windowsPath(input ?? "."))
       if (!FSUtil.contains(location.directory, absolute))
