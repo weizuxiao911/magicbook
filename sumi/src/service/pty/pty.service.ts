@@ -45,16 +45,26 @@ export class RemoteTerminalService implements ITerminalNodeService {
   @Autowired(ITerminalService)
   private readonly terminalClient!: ITerminalService;
 
-  private channels = new Map<string, Channel>();
+private channels = new Map<string, Channel>();
   private client: ITerminalServiceClient | null = null;
   private sdk: ReturnType<typeof createOpencodeClient> | null = null;
+  private sdkCwd = ''; // 跟踪 SDK client 创建时的 cwd, 切换时重建
 
   private ensureSdk(): ReturnType<typeof createOpencodeClient> {
-    if (this.sdk) return this.sdk;
+    const cwd = effectiveCwd();
+    // 铁律 8: 必须传 directory 让 SDK 把 x-opencode-directory header 注入到每个请求.
+    // SDK client 是单例, 切换 workspace 后必须重建, 否则 header 仍指向旧 cwd.
+    if (this.sdk && this.sdkCwd === cwd) return this.sdk;
+if (this.sdk) {
+      // 旧 SDK 还在但 cwd 已变 → 关闭旧 channels + 清空 (旧 workspace PTY 全释放)
+      this.channels.forEach((c) => {
+        try { c.ws?.close() } catch { /* ignore */ }
+      })
+      this.channels.clear()
+      this.sdk = null
+    }
     const base = appBaseUrl();
     if (!base) throw new Error('opencode url not ready (appBaseUrl 未注入)');
-    // 铁律 8: 必须传 directory 让 SDK 把 x-opencode-directory header 注入到每个请求.
-    const cwd = effectiveCwd();
     this.sdk = createOpencodeClient({
       baseUrl: base,
       directory: cwd,
@@ -62,6 +72,7 @@ export class RemoteTerminalService implements ITerminalNodeService {
       responseStyle: 'fields',
       throwOnError: true,
     });
+    this.sdkCwd = cwd;
     return this.sdk;
   }
 

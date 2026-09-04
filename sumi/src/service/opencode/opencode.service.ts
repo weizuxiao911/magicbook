@@ -26,6 +26,8 @@ import type { IOpencodeService, AgentSession, AgentMessage, AgentModel, AgentRun
 import { AgentToken } from './opencode.interface';
 
 let _client: any = null;
+// 跟踪 SDK client 创建时的 cwd, 切换 workspace 后必须重建 (header 跟随新 cwd)
+let _clientCwd = '';
 
 @Injectable()
 @Domain(ClientAppContribution)
@@ -163,13 +165,17 @@ export class OpencodeServiceImpl implements IOpencodeService, ClientAppContribut
     }
   }
 
-  getClient(): any {
-    if (_client) return _client;
+getClient(): any {
+    const cwd = effectiveCwd();
+    // 铁律 8: 必须传 directory 让 SDK 把 x-opencode-directory header 注入每个请求.
+    // SDK client 是单例, 切换 workspace 后必须重建, 否则 header 仍指向旧 cwd.
+    if (_client && _clientCwd === cwd) return _client;
+    if (_client) {
+      // 旧 client 还在但 cwd 已变 → 关闭旧 client (新 client 重建)
+      try { _client = null; } catch { /* ignore */ }
+    }
     const base = appBaseUrl();
     if (!base) return null;
-    // 铁律 8: 必须传 directory 让 SDK 把 x-opencode-directory header 注入
-    // 每个请求 (否则 server defaultDirectory fallback 到 process.cwd()).
-    const cwd = effectiveCwd();
     _client = createOpencodeClient({
       baseUrl: base,
       directory: cwd,
@@ -177,6 +183,7 @@ export class OpencodeServiceImpl implements IOpencodeService, ClientAppContribut
       responseStyle: 'fields',
       throwOnError: true,
     });
+    _clientCwd = cwd;
     (window as any).__APP_OPENCODE__ = _client;
     (window as any).__APP_OPENCODE_RUNTIME__ = { baseUrl: base };
     return _client;
