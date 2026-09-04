@@ -183,6 +183,18 @@ getClient(): any {
       responseStyle: 'fields',
       throwOnError: true,
     });
+    // numas: 干掉 npm @opencode-ai/sdk 默认的 rewrite interceptor (对 GET 把 header 改写到
+    // ?directory= query 并删除 header). server 端 defaultDirectory 只读 x-opencode-directory
+    // header (铁律 8), GET 请求会因此 fall back 到 process.cwd() (numas), 切 workspace 后所有
+    // GET 端点 (path.get / file.list / session.list / provider.list 等) 都用错目录.
+    // 拦截器清空后 header 保持, server 端解析正确.
+    try {
+      const innerClient: any = (typeof _client?.client === 'object' && (_client as any).client) || _client;
+      if (innerClient?.interceptors?.request?.clear) {
+        innerClient.interceptors.request.clear();
+        console.log('[opencode] cleared SDK rewrite interceptor (header stays in request)');
+      }
+    } catch (e) { console.warn('[opencode] clear interceptor failed:', e); }
     _clientCwd = cwd;
     (window as any).__APP_OPENCODE__ = _client;
     (window as any).__APP_OPENCODE_RUNTIME__ = { baseUrl: base };

@@ -11,7 +11,7 @@
 import { Injectable } from '@opensumi/di';
 import { BrowserModule } from '@opensumi/ide-core-browser';
 
-import { apiGet, apiPost } from '../../infra/http';
+import { apiGet, apiPost, apiReadBytes } from '../../infra/http';
 import { effectiveCwd } from '../../infra/url';
 import { relForApi, normalizeSep, pathBase, toHostPath } from '../../infra/path';
 import { whenHostAnchors } from '../../infra/host';
@@ -80,13 +80,7 @@ export class FileSystemServiceImpl implements IFileSystem {
   async read(idePath: string): Promise<Uint8Array> {
     const rel = relForApi(idePath, effectiveCwd());
     try {
-      const base = window.location.origin;
-      const res = await fetch(`${base.replace(/\/+$/, '')}/api/fs/read/${encodeURIComponent(rel)}`);
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`fs read failed: ${idePath}: HTTP ${res.status} ${text.slice(0, 200)}`);
-      }
-      return new Uint8Array(await res.arrayBuffer());
+      return await apiReadBytes(rel);
     } catch (e: any) {
       throw new Error(`fs read failed: ${idePath}: ${e?.message || 'unknown'}`);
     }
