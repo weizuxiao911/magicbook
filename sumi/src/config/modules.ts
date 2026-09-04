@@ -16,6 +16,7 @@ import { WorkspaceModule } from '../extensions/workspace';
 import { FilePickerModule } from '../extensions/filepicker';
 import { PdfReaderModule } from '../extensions/pdf';
 import { OpenTypeModule } from '../extensions/opentype';
+import { PortsExtensionModule } from '../extensions/ports';
 
 import { AgentModule } from '../service/opencode';
 import { ExtensionModule } from '../service/extension';
@@ -24,6 +25,7 @@ import { FileDocModule } from '../service/filesystem/doc-provider';
 import { TerminalModule } from '../service/pty';
 import { EditorModule } from '../service/editor';
 import { StateModule } from '../service/state';
+import { PortsModule } from '../service/ports';
 
 import { EditorSessionModule } from '../contribution/editor-session';
 
@@ -40,6 +42,7 @@ export function getBuiltinModules(_opts?: { vsixMetadata?: any[] }): any[] {
     TerminalModule,        // 伪终端 (codeblitz 终端协议)
     EditorModule,          // 编辑器能力 (open / openWith)
     StateModule,           // codeblitz 状态 (workspace / recent)
+    PortsModule,           // 本地服务端口发现 (面板 + 事件)
 
     // contribution 层 (lifecycle / UI 状态)
     EditorSessionModule,   // 编辑器 tab 持久化 (刷新后恢复)
@@ -52,6 +55,7 @@ export function getBuiltinModules(_opts?: { vsixMetadata?: any[] }): any[] {
     FilePickerModule,
     PdfReaderModule,
     OpenTypeModule,
+    PortsExtensionModule,  // 端口面板 (底部 tab, 服务发现提示)
 
     // 自定义 file scheme provider (覆盖 codeblitz 默认 DiskFileSystemProvider)
     // 放最后: codeblitz 默认 fsProviders 先就位, 我们 fsProviders.delete + registerProvider
