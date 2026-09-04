@@ -81,6 +81,8 @@ import {
 } from "./middleware/authorization"
 import { EventApi } from "./groups/event"
 import { PtyConnectApi } from "./groups/pty"
+import { PortsService } from "@/ports/ports"
+import { portsRoute } from "@/ports/ports-route"
 import { eventHandlers } from "./handlers/event"
 import { configHandlers } from "./handlers/config"
 import { controlHandlers } from "./handlers/control"
@@ -191,6 +193,8 @@ const docRoute = HttpRouter.use((router) => router.add("GET", "/doc", () => Effe
   Layer.provide(authOnlyRouterLayer),
 )
 
+const numasPortsRoute = portsRoute.pipe(Layer.provide(authOnlyRouterLayer))
+
 const uiRoute = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const fs = yield* FSUtil.Service
@@ -266,6 +270,7 @@ const app = LayerNode.group([
   ProjectV2.node,
   ProjectCopy.node,
   PtyTicket.node,
+  PortsService.node,
 ])
 
 export function createRoutes(
@@ -280,6 +285,7 @@ export function createRoutes(
     instanceRoutes,
     serverRoutes,
     docRoute,
+    numasPortsRoute,
     uiRoute,
   ).pipe(
     Layer.provide([
