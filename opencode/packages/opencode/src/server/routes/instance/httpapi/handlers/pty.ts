@@ -24,6 +24,7 @@ import { InstanceHttpApi } from "../api"
 import * as ApiError from "../errors"
 import { CursorQuery, PtyConnectApi } from "../groups/pty"
 import { WebSocketTracker } from "../websocket-tracker"
+import { PortsService } from "@/ports/ports"
 
 function validOrigin(request: HttpServerRequest.HttpServerRequest, opts: CorsOptions | undefined) {
   return isAllowedRequestOrigin(request.headers.origin, request.headers.host, opts)
@@ -44,6 +45,7 @@ export const ptyHandlers = HttpApiBuilder.group(InstanceHttpApi, "pty", (handler
     const cors = yield* CorsConfig
     const plugin = yield* Plugin.Service
     const locations = yield* LocationServiceMap.Service
+    const ports = yield* PortsService.Service
     const unregister = registerDisposer((directory) =>
       Effect.runPromise(locations.invalidate(Location.Ref.make({ directory: AbsolutePath.make(directory) }))),
     )
@@ -72,7 +74,7 @@ export const ptyHandlers = HttpApiBuilder.group(InstanceHttpApi, "pty", (handler
       // SDK sends only `directory` and the workspace dir is the only valid cwd.
       const cwd = (yield* InstanceState.context).directory
       const shell = yield* plugin.trigger("shell.env", { cwd }, { env: {} as Record<string, string> })
-      return yield* pty(
+      const info = yield* pty(
         Pty.Service.use((service) =>
           service.create({
             ...ctx.payload,
@@ -82,6 +84,9 @@ export const ptyHandlers = HttpApiBuilder.group(InstanceHttpApi, "pty", (handler
           }),
         ),
       )
+      // numas: 注册 PTY 根 PID 到 PortsService, 让端口面板跟踪该 shell 进程及其子进程树 LISTEN 端口
+      if (info.pid && info.pid > 0) yield* ports.registerPid(info.pid)
+      return info
     })
 
     const get = Effect.fn("PtyHttpApi.get")(function* (ctx: { params: { ptyID: PtyID } }) {

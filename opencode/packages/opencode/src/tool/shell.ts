@@ -447,6 +447,21 @@ export const ShellTool = Tool.define(
       let expired = false
       let aborted = false
 
+      // numas: 注册 shell 工具 spawn 的 PID 到端口面板
+      // 直接走 HTTP POST 自身 /ports/pids 端点 (fire-and-forget), 避免 Effect service R 污染 execute 签名
+      const numasPort = Number(process.env["NUMAS_PORT"] || 24096)
+      const numasBase = `http://127.0.0.1:${numasPort}`
+      const trackPid = (pid: number) => {
+        void fetch(`${numasBase}/ports/pids`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ pid }),
+        }).catch(() => {})
+      }
+      const untrackPid = (pid: number) => {
+        void fetch(`${numasBase}/ports/pids/${pid}`, { method: "DELETE" }).catch(() => {})
+      }
+
       const closeSink = Effect.fnUntraced(function* () {
         const stream = sink
         if (!stream) return
@@ -482,6 +497,17 @@ export const ShellTool = Tool.define(
         Effect.gen(function* () {
           yield* Effect.addFinalizer(closeSink)
           const handle = yield* spawner.spawn(cmd(input.shell, input.command, input.cwd, input.env))
+
+          // numas: 注册 shell 工具 spawn 的 PID 到端口面板 (fire-and-forget HTTP)
+          const childPid = (handle as unknown as { pid?: number }).pid
+          if (typeof childPid === "number" && childPid > 0) {
+            trackPid(childPid)
+            // 反注册: scope exit 时 fire-and-forget, 不能 yield* service (execute R = never)
+            yield* Effect.addFinalizer((_exit) => {
+              untrackPid(childPid)
+              return Effect.void
+            })
+          }
 
           yield* Effect.forkScoped(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {

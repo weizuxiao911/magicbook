@@ -90,6 +90,38 @@ export const portsRoute = HttpRouter.use((router) =>
         return HttpServerResponse.jsonUnsafe({ ok: true })
       }),
     )
+    // /ports/pids {pid} : 注册 numas 主动 spawn 的根 PID (PTY create / Agent spawn 后调用)
+    yield* router.add("POST", "/ports/pids", (request) =>
+      Effect.gen(function* () {
+        let body = ""
+        try {
+          body = yield* request.text
+        } catch {
+          return HttpServerResponse.jsonUnsafe({ error: "read body failed" }, { status: 400 })
+        }
+        let pid = 0
+        try {
+          pid = Number(JSON.parse(body).pid)
+        } catch {
+          return HttpServerResponse.jsonUnsafe({ error: "invalid body" }, { status: 400 })
+        }
+        if (!Number.isInteger(pid) || pid <= 0) {
+          return HttpServerResponse.jsonUnsafe({ error: "bad pid" }, { status: 400 })
+        }
+        yield* ports.registerPid(pid)
+        return HttpServerResponse.jsonUnsafe({ ok: true })
+      }),
+    )
+    // /ports/pids/:pid : 反注册 (PTY onExit / Agent 工具退出时调用)
+    yield* router.add("DELETE", "/ports/pids/*", (request) =>
+      Effect.gen(function* () {
+        const url = new URL(request.url, "http://localhost")
+        const m = url.pathname.match(/^\/ports\/pids\/(\d+)$/)
+        if (!m) return HttpServerResponse.jsonUnsafe({ error: "bad path" }, { status: 400 })
+        yield* ports.unregisterPid(Number(m[1]))
+        return HttpServerResponse.jsonUnsafe({ ok: true })
+      }),
+    )
     // /proxy/<port>/<rest>: 任意方法反代
     yield* router.add("GET", "/proxy/*", proxy)
     yield* router.add("POST", "/proxy/*", proxy)

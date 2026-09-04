@@ -47,6 +47,28 @@ export class PortsServiceImpl implements IPortsService {
     } catch { /* 静默 */ }
   }
 
+  /** 注册 numas spawn 的根 PID (PTY/Agent 工具). 服务端自动 scan 一次 */
+  async registerPid(pid: number): Promise<void> {
+    const base = appBaseUrl();
+    if (!base || !Number.isInteger(pid) || pid <= 0) return;
+    try {
+      await fetch(`${base.replace(/\/+$/, '')}/ports/pids`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pid }),
+      });
+    } catch { /* 静默 */ }
+  }
+
+  /** 反注册 (PTY/Agent 工具退出时). 服务端下次 scan 自动清理已退出 PID */
+  async unregisterPid(pid: number): Promise<void> {
+    const base = appBaseUrl();
+    if (!base || !Number.isInteger(pid) || pid <= 0) return;
+    try {
+      await fetch(`${base.replace(/\/+$/, '')}/ports/pids/${pid}`, { method: 'DELETE' });
+    } catch { /* 静默 */ }
+  }
+
   proxyUrl(port: number): string {
     const base = appBaseUrl();
     return `${base.replace(/\/+$/, '')}/proxy/${port}/`;

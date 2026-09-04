@@ -1,17 +1,19 @@
 /**
  * PortsService — 本地服务端口发现 (numas fork 增量, 全局单例)
  *
- * 对标 VSCode 端口面板:
- *   - 周期扫描宿主机 LISTEN 端口 (mac/linux lsof, win netstat)
- *   - 基线 diff → 新增推 `ports.detected`, 消失推 `ports.closed`
- *     (走 GlobalBus → /global/event SSE → codeblitz 提示)
- *   - GET /ports 快照 / POST /ports 手动白名单 / DELETE /ports/:port 移除
- *   - /proxy/:port/* 仅代理"已知端口" (防 SSRF: 不把 opencode 当开放代理)
+ * 对标 VSCode 端口面板 (autoForwardPortsSource: "process"):
+ *   - 仅跟踪 numas 主动 spawn 的进程 (PTY / Agent 工具) 的子进程树 LISTEN 端口,
+ *     不扫宿主全局 LISTEN, 无需维护进程名名单
+ *   - 周期 (3s) 扫描: pgrep 递归 PID 树 → lsof/netstat 拿 LISTEN → diff emit
+ *     (走 GlobalBus → /global/event SSE → codeblitz 面板)
+ *   - 白名单 (POST /ports) 仍保留: 用户手动转发非 numas spawn 的端口
+ *   - /proxy/:port/* 仅代理 "已知端口" (scanned + whitelist, 防 SSRF)
  *
- * 排除:
- *   - 本进程监听的端口 (opencode 自身, pid === process.pid)
- *   - dev 辅助端口 (registry 7790 / webpack 7788, 独立进程扫得到但不应展示)
- *   - 1024 以下特权端口默认不自动提示
+ * 注册/反注册:
+ *   - registerPid(pid): numas spawn 进程 (PTY create 后, Agent 工具 spawn 后) 调
+ *   - unregisterPid(pid): 进程 exit 时调 (PTY onExit, Agent 工具退出)
+ *
+ * 自身端口 (opencode 24096 / control-plane 子 opencode): 排除, 永不展示
  */
 
 import { Context, Effect, Layer, Ref, Schema } from "effect"
@@ -35,16 +37,18 @@ export namespace Ports {
     readonly whitelist: (port: number) => Effect.Effect<void>
     readonly remove: (port: number) => Effect.Effect<void>
     readonly isKnown: (port: number) => Effect.Effect<boolean>
+    readonly registerPid: (pid: number) => Effect.Effect<void>
+    readonly unregisterPid: (pid: number) => Effect.Effect<void>
+    readonly trackedPids: () => Effect.Effect<readonly number[]>
   }
 }
 
-/** dev 辅助进程固定端口 (registry/webpack devServer), 不展示 */
-const ALWAYS_EXCLUDE = new Set([7790, 7788])
+/** 进程树递归最大深度, 防失控 */
+const MAX_TREE_DEPTH = 16
+/** 进程树单步探测超时 (ms) */
+const PROC_TREE_TIMEOUT = 3000
 
-/** 明确非开发的 GUI/系统/代理进程, 不展示 (对标 VSCode: 不转发无关系统服务) */
-const IGNORE_PROCESS = /^(launchd|systemd|rapportd|ControlCe|WeChat|DingTalk|clash-ver|Trae|ApifoxApp|com\.docke|CoreSimulator|mDNSResponder|configd|airportd|WiFiAgent|apsd|bird|nsurlsessiond|secinit|uedit|locationd|symptomsd|loginwindow|WindowServer|Safari|Google Chrome|Firefox|QQMusic|NetEaseMusic|Telegram|Slack|Discord|Zoom\.us|Microsoft Teams)$/i
-
-/** 取原始监听行 (跨平台, 失败静默) */
+/** 取原始监听行 (跨平台, 失败静默). 仍然扫全量 LISTEN, 后续按 PID 过滤 */
 async function rawListenLines(): Promise<string[]> {
   try {
     if (process.platform === "win32") {
@@ -56,8 +60,46 @@ async function rawListenLines(): Promise<string[]> {
   }
 }
 
-/** 解析原始行 → 端口条目 (win: netstat 无进程名; posix: lsof) */
-function parseLines(lines: string[], selfPid: number): PortEntry[] {
+/** BFS 收集 rootPid 的所有后代 (含自身). POSIX: pgrep -P; Windows: Get-CimInstance. */
+async function collectDescendants(rootPid: number): Promise<Set<number>> {
+  const out = new Set<number>([rootPid])
+  if (rootPid <= 0) return out
+  let frontier = [rootPid]
+  for (let depth = 0; depth < MAX_TREE_DEPTH && frontier.length > 0; depth++) {
+    const next: number[] = []
+    for (const pid of frontier) {
+      try {
+        let lines: string[]
+        if (process.platform === "win32") {
+          lines = await Process.lines(
+            ["powershell", "-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ParentProcessId=${pid}").ProcessId`],
+            { nothrow: true, timeout: PROC_TREE_TIMEOUT },
+          )
+        } else {
+          lines = await Process.lines(["pgrep", "-P", String(pid)], { nothrow: true, timeout: PROC_TREE_TIMEOUT })
+        }
+        for (const ln of lines) {
+          const c = Number(ln.trim())
+          if (Number.isInteger(c) && c > 0 && !out.has(c)) {
+            out.add(c)
+            next.push(c)
+          }
+        }
+      } catch {
+        /* 探测失败跳过, 不影响整体 */
+      }
+    }
+    frontier = next
+  }
+  return out
+}
+
+/** 解析原始 LISTEN 行 → Map<port, PortEntry>, 仅保留 pid ∈ allowedPids 的端口 */
+function parseListenForPids(
+  lines: string[],
+  selfPid: number,
+  allowedPids: Set<number>,
+): Map<number, PortEntry> {
   const seen = new Map<number, PortEntry>()
   for (const line of lines) {
     if (process.platform === "win32") {
@@ -65,8 +107,9 @@ function parseLines(lines: string[], selfPid: number): PortEntry[] {
       if (!m) continue
       const port = Number(m[1])
       const pid = Number(m[2])
-      if (!valid(port) || pid === selfPid || ALWAYS_EXCLUDE.has(port)) continue
-      if (!seen.has(port)) seen.set(port, { port, pid: pid || undefined, detectedAt: Date.now() })
+      if (!valid(port) || pid === selfPid) continue
+      if (!allowedPids.has(pid)) continue
+      if (!seen.has(port)) seen.set(port, { port, pid, detectedAt: Date.now() })
       continue
     }
     // lsof: NAME 列形如 `*:8080 (LISTEN)` / `127.0.0.1:3000 (LISTEN)`
@@ -75,25 +118,51 @@ function parseLines(lines: string[], selfPid: number): PortEntry[] {
     if (!m) continue
     const port = Number(m[3])
     const pid = Number(m[2])
-    if (!valid(port) || pid === selfPid || ALWAYS_EXCLUDE.has(port)) continue
+    if (!valid(port) || pid === selfPid) continue
+    if (!allowedPids.has(pid)) continue
     if (!seen.has(port)) {
       seen.set(port, { port, pid, process: m[1], detectedAt: Date.now() })
     }
   }
-  return Array.from(seen.values())
+  return seen
 }
 
 function valid(port: number): boolean {
   return Number.isInteger(port) && port >= 1 && port <= 65535
 }
 
+/** 检测 PID 是否存活 (POSIX: kill -0; Windows: tasklist). 失败/不存在返回 false. */
+function isPidAlive(pid: number): Effect.Effect<boolean> {
+  if (!Number.isInteger(pid) || pid <= 0) return Effect.succeed(false)
+  return Effect.tryPromise(async () => {
+    try {
+      if (process.platform === "win32") {
+        const out = await Process.lines(["tasklist", "/FI", `PID eq ${pid}`, "/NH"], { nothrow: true, timeout: 1500 })
+        return out.some((l) => l.includes(String(pid)))
+      }
+      // POSIX: kill -0 不杀进程, 仅测试权限/存在; 退出码 0 = 存活
+      const out = await Process.lines(["kill", "-0", String(pid)], { nothrow: true, timeout: 1500 })
+      // kill -0 没输出但成功 (空数组 + 退出 0) 表示存活; 退出码 1 (权限/不存在) 时 Process.lines 返回 []
+      // 通过 nothrow + timeout 已能区分; 此处用 Process.lines 的语义判断:
+      //   kill -0 成功 → 进程存活
+      // 我们直接探测 /proc/<pid> (linux) 或 ps -p (mac/linux), 兼容更广
+      const psOut = await Process.lines(["ps", "-p", String(pid), "-o", "pid="], { nothrow: true, timeout: 1500 })
+      return psOut.length > 0 && psOut.some((l) => l.trim().length > 0)
+    } catch {
+      return false
+    }
+  }).pipe(Effect.catch(() => Effect.succeed(false)))
+}
+
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const selfPid = process.pid
-    /** 当前展示集: 发现 + 白名单 */
+    /** 当前展示集: 进程树扫描 + 白名单 */
     const entries = yield* Ref.make(new Map<number, PortEntry>())
     const whitelist = yield* Ref.make(new Set<number>())
+    /** numas 主动 spawn 的根 PID 集合 (PTY / Agent 工具). 每次 scan 时 BFS 求后代 */
+    const trackedPids = yield* Ref.make(new Set<number>())
     /** 首次扫描前不推 detected (避免启动时把既有端口全当新增) */
     const firstScanDone = yield* Ref.make(false)
 
@@ -101,17 +170,34 @@ export const layer = Layer.effect(
       GlobalBus.emit("event", { directory: "global", payload: { type, properties } })
     }
 
-    const doScan = Effect.gen(function* () {
+const doScan = Effect.gen(function* () {
+      const tracked = yield* Ref.get(trackedPids)
+      // 清理已退出 PID (PTY/Agent 工具退出后, 主动回收避免永久保留)
+      if (tracked.size > 0) {
+        const survivors = new Set<number>()
+        for (const pid of tracked) {
+          if (yield* isPidAlive(pid)) survivors.add(pid)
+        }
+        if (survivors.size !== tracked.size) yield* Ref.set(trackedPids, survivors)
+      }
+      // 收集 numas 主动 spawn 的进程树 (含自身)
+      const alive = yield* Ref.get(trackedPids)
+      const allowedPids = new Set<number>()
+      for (const pid of alive) {
+        const desc = yield* Effect.tryPromise(() => collectDescendants(pid)).pipe(
+          Effect.catch(() => Effect.succeed(new Set<number>([pid]))),
+        )
+        for (const p of desc) allowedPids.add(p)
+      }
+      // 扫宿主 LISTEN, 仅保留 pid ∈ allowedPids 的端口
       const raw = yield* Effect.tryPromise(() => rawListenLines()).pipe(Effect.catch(() => Effect.succeed([])))
-      const found = parseLines(raw, selfPid)
-        .filter((e) => e.port >= 1024)
-        .filter((e) => !(e.process && IGNORE_PROCESS.test(e.process)))
-      const map = yield* Ref.get(entries)
+      const scanned = parseListenForPids(raw, selfPid, allowedPids)
+      // 合并白名单: 用户手动添加的端口直接入 next (即使未启动; pid 不确定)
       const wl = yield* Ref.get(whitelist)
-      const next = new Map<number, PortEntry>()
-      for (const e of found) next.set(e.port, e)
+      const next = new Map<number, PortEntry>(scanned)
       for (const p of wl) if (!next.has(p)) next.set(p, { port: p, detectedAt: Date.now() })
 
+      const map = yield* Ref.get(entries)
       const isFirst = yield* Ref.get(firstScanDone)
       if (!isFirst) {
         yield* Ref.set(firstScanDone, true)
@@ -123,7 +209,7 @@ export const layer = Layer.effect(
         if (!map.has(port)) emit("ports.detected", { port, pid: e.pid, process: e.process })
       }
       for (const [port, e] of map) {
-        if (!next.has(port) && !wl.has(port)) emit("ports.closed", { port, pid: e.pid })
+        if (!next.has(port)) emit("ports.closed", { port, pid: e.pid })
       }
       yield* Ref.set(entries, next)
       return Array.from(next.values()).sort((a, b) => a.port - b.port)
@@ -148,7 +234,7 @@ export const layer = Layer.effect(
       scan: () => doScan,
       whitelist: (port) =>
         Effect.gen(function* () {
-          if (!valid(port) || port < 1024 || ALWAYS_EXCLUDE.has(port)) return
+          if (!valid(port) || port < 1024) return
           const wl = yield* Ref.get(whitelist)
           if (wl.has(port)) return
           yield* Ref.set(whitelist, new Set([...wl, port]))
@@ -163,7 +249,7 @@ export const layer = Layer.effect(
           const wl = yield* Ref.get(whitelist)
           if (wl.has(port)) yield* Ref.set(whitelist, new Set([...wl].filter((p) => p !== port)))
           const map = yield* Ref.get(entries)
-          if (!map.has(port)) return
+          if (map.has(port)) return
           yield* Ref.set(entries, new Map([...map].filter(([p]) => p !== port)))
           emit("ports.closed", { port })
         }),
@@ -174,6 +260,24 @@ export const layer = Layer.effect(
           const wl = yield* Ref.get(whitelist)
           return wl.has(port)
         }),
+      registerPid: (pid) =>
+        Effect.gen(function* () {
+          if (!Number.isInteger(pid) || pid <= 0) return
+          const cur = yield* Ref.get(trackedPids)
+          if (cur.has(pid)) return
+          yield* Ref.set(trackedPids, new Set([...cur, pid]))
+          // 注册即扫一次 (覆盖已 LISTEN 的端口, 不用等下次定时)
+          void Effect.runPromise(doScan).catch(() => {})
+        }),
+      unregisterPid: (pid) =>
+        Effect.gen(function* () {
+          const cur = yield* Ref.get(trackedPids)
+          if (!cur.has(pid)) return
+          yield* Ref.set(trackedPids, new Set([...cur].filter((p) => p !== pid)))
+          // 反注册即扫一次 (该 PID 树关闭的端口立刻移除)
+          void Effect.runPromise(doScan).catch(() => {})
+        }),
+      trackedPids: () => Ref.get(trackedPids).pipe(Effect.map((s) => Array.from(s).sort((a, b) => a - b))),
     }
 
     return service
