@@ -72,6 +72,42 @@ AI 给方案推荐 + 备选时, **必须** 用 `question` 工具让用户点选,
 - service 层是 commands / codeblitz / 其他 service 调用的基础设施, 不暴露给 extensions 直调
 - commands 层定义对外 API / token / interface, 是 service 与 codeblitz 之间的契约
 
+### 7. 跨平台路径铁律
+
+> **路径以 opencode 服务端真实路径为单一事实源. 禁止自行拼接/重写/添加前导 `/`. 任何路径处理走 `sumi/src/infra/path.ts` 工具函数, 不要直接写正则/字符串拼接.**
+
+**事实**: codeblitz 暴露的 `idePath` 与 opencode 宿主机 `hostPath` **完全一致**, 仅多 `file://` 协议头 (codeblitz editor 用). 不存在中间虚拟化映射. AI 不得发明 `path.win32` / `path.posix` 转换 / 自定义"虚拟根"层.
+
+**禁令**:
+- **禁止硬编码前导 `/`**: `'/' + segments.join('/')` 会让 Windows drive 渲染成 `/D:/projects` 多余前缀 (历史 bug: `extensions/filepicker/FilePicker.tsx:232`). 正确做法: 按首段是否含 `:` 判断, Windows drive 直接作为根 (`D:` / `D:/projects`), POSIX 才补前导 `/`
+- **禁止硬编码分隔符**: 跨平台统一用 `/`, 用 `normalizeSep()` (`\\` → `/`). 服务端协议 / UI 展示均 POSIX 分隔
+- **禁止写死的 `isWindowsDrive` / `path.win32` 判断到处散落**: 集中用 `infra/path.ts`:
+  - `normalizeCwdPath(p)`: Windows drive 去前导 `/` + 去尾 `/` (server `path.win32` 处理)
+  - `normalizeSep(p)`: `\\` → `/`
+  - `isWindowsDrive(p)`: 单一权威检测
+  - `absToRel(abs, ws)`: 宿主机绝对路径 → workspace 相对路径
+  - `toHostPath(idePath, anchors)`: codeblitz 虚拟路径 → opencode 宿主路径 (来自 `infra/path.ts:toHostPath`, 不自造)
+- **禁止 `/D:/...` 形态直接传给 server**: 走 `normalizeCwdPath` 规范化. 否则 server `path.win32` 按 POSIX 根解析 → 500/错目录
+- **HTTP header 路径必须 `encodeURI()`**: CJK + Windows drive 全角字符都需 URI encode (`x-opencode-directory` 等)
+
+**正确示例**:
+```ts
+// 绝对路径拼接 (POSIX '/Users/foo' / Windows 'D:/projects' 都对)
+const p = (segments[0]?.includes(':') ? '' : '/') + segments.slice(0, i + 1).join('/');
+
+// 路径规范化
+const safe = normalizeCwdPath(userInput);   // 'D:/projects' 而非 '/D:/projects'
+
+// server 请求前
+headers: { 'x-opencode-directory': encodeURI(workspace) }
+```
+
+**检测方法**: 改完路径相关代码, **必须** 在 `dataDir` 是 Windows 路径 (如 `D:/projects`) 时跑一次, 验证:
+- 面包屑/foot-path 不出现多余 `/` 前缀
+- `getWorkspace()` / `urlWorkspace()` 返回 `D:/projects` 而非 `/D:/projects`
+- `fs.listDir('D:/projects')` 200, 不 500
+- 中文路径 `测试/中文目录/文件.md` 正常 resolve
+
 ---
 
 ## 项目事实 (终态)
@@ -207,7 +243,7 @@ AI 给方案推荐 + 备选时, **必须** 用 `question` 工具让用户点选,
 - **直连无代理**: client → opencode 之间不加 HTTP 中间层
 - **CJK 路径 encodeURI**: HTTP header 必须 ISO-8859-1, `x-opencode-directory` 需 `encodeURI()`
 - **单一事实源**: 端口 / CORS / APP_BASE_URL 由 dev.js 控制, 透 process.env 注入. 不要散落
-- **平台兼容**: fs 命令按 host 平台分流 (mac/linux=POSIX, win=PowerShell); shell 走 `/pty/shells` 探测
+- **平台兼容**: fs 命令按 host 平台分流 (mac/linux=POSIX, win=PowerShell); shell 走 `/pty/shells` 探测; **路径处理细则见 [铁律 7](#7-跨平台路径铁律) — 所有路径拼接走 `sumi/src/infra/path.ts` 工具函数, 禁止硬编码前导 `/` 与 `\\` 分隔符**
 - **单一职责**: 每个模块只做一件事
 - **配置外置**: 敏感信息不入库
 - **中文优先**: 文档/接口/文案中文为主
