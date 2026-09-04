@@ -34,6 +34,10 @@ const options = {
     type: "string" as const,
     describe: "registry service URL for the web UI (e.g. https://registry.example.com)",
   },
+  "web-ui": {
+    type: "string" as const,
+    describe: "serve the web UI from this directory at runtime instead of the embedded bundle (dev: rebuild UI without recompiling the binary)",
+  },
 }
 
 export type NetworkOptions = InferredOptionTypes<typeof options>
@@ -80,6 +84,7 @@ export function resolveNetworkOptionsNoConfig(args: NetworkOptions, config?: Con
   const argsCors = Array.isArray(args.cors) ? args.cors : args.cors ? [args.cors] : []
   const cors = [...configCors, ...argsCors]
   const registry = args.registry
+  const webUI = args["web-ui"]
 
-  return { hostname, port, mdns, mdnsDomain, cors, registry }
+  return { hostname, port, mdns, mdnsDomain, cors, registry, webUI }
 }

@@ -2,6 +2,7 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Context, Effect, Stream } from "effect"
 import { HttpBody, HttpClient, HttpClientRequest, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { createHash } from "node:crypto"
+import { resolve as pathResolve } from "node:path"
 import { ProxyUtil } from "../proxy-util"
 
 /** Registry 地址 (--registry): sumi 扩展市场服务, 注入到嵌入的 web UI */
@@ -77,6 +78,34 @@ function embeddedUIResponse(file: string, body: Uint8Array, registry?: string) {
   return HttpServerResponse.raw(data, { headers })
 }
 
+/** 从磁盘 UI 目录读一个文件 (--web-ui 模式), 防目录穿越; 不存在 → undefined.
+ *  未知路径 (SPA 路由) 回退 index.html — 与 embedded 兜底行为一致. */
+function serveDiskUI(
+  requestPath: string,
+  fs: FSUtil.Interface,
+  webRoot: string,
+  registry?: string,
+): Effect.Effect<HttpServerResponse.HttpServerResponse | undefined, never, never> {
+  const rootReal = FSUtil.resolve(webRoot)
+  const rel = decodeURIComponent(requestPath.replace(/^\//, "")).replaceAll("\\", "/")
+  const readIfInside = (
+    name: string,
+  ): Effect.Effect<HttpServerResponse.HttpServerResponse | undefined, never, never> => {
+    const abs = pathResolve(rootReal, name)
+    if (!FSUtil.contains(rootReal, abs)) return Effect.succeed(undefined)
+    return fs.readFile(abs).pipe(
+      Effect.map((content) => embeddedUIResponse(abs, content, registry)),
+      Effect.catch(() => Effect.succeed(undefined as HttpServerResponse.HttpServerResponse | undefined)),
+    )
+  }
+  if (rel && !rel.endsWith("/")) {
+    return readIfInside(rel).pipe(
+      Effect.flatMap((hit) => (hit ? Effect.succeed(hit) : readIfInside("index.html"))),
+    )
+  }
+  return readIfInside("index.html")
+}
+
 export function serveEmbeddedUIEffect(
   requestPath: string,
   fs: FSUtil.Interface,
@@ -94,13 +123,26 @@ export function serveEmbeddedUIEffect(
 
 export function serveUIEffect(
   request: HttpServerRequest.HttpServerRequest,
-  services: { fs: FSUtil.Interface; client: HttpClient.HttpClient; disableEmbeddedWebUi: boolean },
+  services: {
+    fs: FSUtil.Interface
+    client: HttpClient.HttpClient
+    disableEmbeddedWebUi: boolean
+    /** 磁盘 UI 目录 (--web-ui): 运行时用磁盘上的 web UI 静态产物替换内嵌 bundle.
+     *  dev 场景: sumi 改完只需重建产物 + 重启 server, 不必重编 opencode 二进制. */
+    webUIRoot?: string
+  },
 ) {
   return Effect.gen(function* () {
-    const embeddedWebUI = yield* Effect.promise(() => embeddedUI(services.disableEmbeddedWebUi))
     const registry = yield* RegistryConfig
     const path = new URL(request.url, "http://localhost").pathname
 
+    // --web-ui 磁盘目录优先: 每次请求实时读盘
+    if (services.webUIRoot) {
+      const disk = yield* serveDiskUI(path, services.fs, services.webUIRoot, registry)
+      if (disk) return disk
+    }
+
+    const embeddedWebUI = yield* Effect.promise(() => embeddedUI(services.disableEmbeddedWebUi))
     if (embeddedWebUI) return yield* serveEmbeddedUIEffect(path, services.fs, embeddedWebUI, registry)
 
     const response = yield* services.client.execute(

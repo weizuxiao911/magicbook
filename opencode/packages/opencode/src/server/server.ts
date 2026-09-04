@@ -35,6 +35,7 @@ type ListenOptions = CorsOptions & {
   mdns?: boolean
   mdnsDomain?: string
   registry?: string
+  webUI?: string
 }
 type ListenerState = {
   scope: Scope.Scope
@@ -99,7 +100,7 @@ const listenEffect: (opts: ListenOptions) => Effect.Effect<EffectListener, unkno
 )
 
 function listenerLayer(opts: ListenOptions, port: number) {
-  return HttpRouter.serve(HttpApiApp.createRoutes(opts), {
+  return HttpRouter.serve(HttpApiApp.createRoutes(opts, opts.webUI), {
     middleware: disposeMiddleware,
     disableLogger: true,
     disableListenLog: true,

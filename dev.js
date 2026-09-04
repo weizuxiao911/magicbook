@@ -343,6 +343,7 @@ const opencodeProc = spawn(finalBin, [
   '--port', String(PORT),
   '--cors', '*',
   '--registry', REGISTRY,
+  '--web-ui', sumiDist,
 ], {
   stdio: 'inherit',
   detached: true,

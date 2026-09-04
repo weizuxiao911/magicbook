@@ -200,16 +200,17 @@ const docRoute = HttpRouter.use((router) => router.add("GET", "/doc", () => Effe
 
 const numasPortsRoute = portsRoute.pipe(Layer.provide(authOnlyRouterLayer))
 
-const uiRoute = HttpRouter.use((router) =>
-  Effect.gen(function* () {
-    const fs = yield* FSUtil.Service
-    const client = yield* HttpClient.HttpClient
-    const flags = yield* RuntimeFlags.Service
-    yield* router.add("*", "/*", (request) =>
-      serveUIEffect(request, { fs, client, disableEmbeddedWebUi: flags.disableEmbeddedWebUi }),
-    )
-  }),
-).pipe(Layer.provide(authOnlyRouterLayer))
+const uiRoute = (webUIRoot?: string) =>
+  HttpRouter.use((router) =>
+    Effect.gen(function* () {
+      const fs = yield* FSUtil.Service
+      const client = yield* HttpClient.HttpClient
+      const flags = yield* RuntimeFlags.Service
+      yield* router.add("*", "/*", (request) =>
+        serveUIEffect(request, { fs, client, disableEmbeddedWebUi: flags.disableEmbeddedWebUi, webUIRoot }),
+      )
+    }),
+  ).pipe(Layer.provide(authOnlyRouterLayer))
 
 type RouteRequirements =
   | HttpRouter.HttpRouter
@@ -280,6 +281,7 @@ const app = LayerNode.group([
 
 export function createRoutes(
   corsOptions?: CorsOptions,
+  webUIRoot?: string,
 ): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
   const locationServiceMapV2 = buildLocationServiceMap()
 
@@ -291,7 +293,7 @@ export function createRoutes(
     serverRoutes,
     docRoute,
     numasPortsRoute,
-    uiRoute,
+    uiRoute(webUIRoot),
   ).pipe(
     Layer.provide([
       errorLayer,
