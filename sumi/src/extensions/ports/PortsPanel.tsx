@@ -10,7 +10,7 @@
  *
  * 打开逻辑: 走 opencode 反代 `${base}/proxy/<port>/` (服务端转发到 127.0.0.1:<port>).
  *
- * 输入格式: "端口号\\应用名" 或单独 "端口号". 例: "3000" 或 "3000\\API Server"
+ * 输入格式: 两个独立字段, 端口号必填, 应用名选填 (用于备注名称)
  *
  * 订阅: 面板 mount 时启动 SSE, unmount 取消; 之前全局常驻通知已删除 (面板未开时不弹).
  */
@@ -27,11 +27,14 @@ const STYLES = `
 .pf-title{font-size:12px;color:var(--ai-fg-muted,#9ca3af);font-weight:600;display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
 .pf-title-icon{color:var(--ai-accent,#818cf8);display:inline-flex}
 .pf-count{font-size:11px;color:var(--ai-fg-muted,#6b7280);background:var(--ai-hover,rgba(255,255,255,0.04));padding:1px 6px;border-radius:8px;margin-left:2px}
-.pf-input-wrap{position:relative;display:flex;align-items:center;flex:1;min-width:120px}
+.pf-input-wrap{position:relative;display:flex;align-items:center;min-width:120px}
+.pf-input-wrap--port{flex:0 0 110px}
+.pf-input-wrap--name{flex:1;min-width:120px}
 .pf-input-icon{position:absolute;left:9px;color:var(--ai-fg-muted,#6b7280);pointer-events:none;display:inline-flex}
 .pf-input{width:100%;height:28px;background:rgba(255,255,255,0.04);border:1px solid var(--ai-divider,rgba(255,255,255,0.1));border-radius:7px;color:var(--ai-fg,#e5e7eb);font-size:12.5px;padding:0 10px 0 28px;outline:none;transition:all .15s;font-family:inherit}
 .pf-input::placeholder{color:var(--ai-fg-muted,#6b7280)}
 .pf-input:focus{border-color:var(--ai-accent,#6366f1);background:rgba(99,102,255,0.08)}
+.pf-sep{color:var(--ai-fg-muted,#6b7280);font-size:13px;font-weight:500;user-select:none;padding:0 4px;flex-shrink:0}
 .pf-add-btn{height:28px;background:var(--ai-accent,#6366f1);border:none;color:#fff;font-size:12.5px;font-weight:600;padding:0 12px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;transition:all .12s;flex-shrink:0}
 .pf-add-btn:hover{background:var(--ai-accent-strong,#4f52d9)}
 .pf-add-btn:disabled{opacity:.45;cursor:default;background:var(--ai-fg-muted,#6b7280)}
@@ -88,24 +91,7 @@ function defaultLabel(e: PortEntry): string {
   return '手动转发';
 }
 
-/** 解析 "端口号\\名称" 或单独 "端口号". 返回 { port, label } 或 null. */
-function parseInput(raw: string): { port: number; label: string } | null {
-  const text = raw.trim();
-  if (!text) return null;
-  // 仅允许反斜杠分隔, 前段为端口号, 后段任意名称
-  const idx = text.indexOf("\\");
-  let portText: string;
-  let label = "";
-  if (idx >= 0) {
-    portText = text.slice(0, idx).trim();
-    label = text.slice(idx + 1).trim();
-  } else {
-    portText = text;
-  }
-  const port = Number(portText);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
-  return { port, label };
-}
+
 
 const RefreshIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -133,11 +119,13 @@ const PlusIcon = () => (
 export const PortsPanel: React.FC = () => {
   const ports = useInjectable<IPortsService>(PortsToken);
   const [entries, setEntries] = useState<PortEntry[]>([]);
-  const [input, setInput] = useState('');
+  const [portInput, setPortInput] = useState('');
+  const [nameInput, setNameInput] = useState('');
   const [labels, setLabels] = useState<Record<number, string>>(() => loadLabels());
   const [editingPort, setEditingPort] = useState<number | null>(null);
   const editingValueRef = useRef<string>('');
-  const inputRef = useRef<HTMLInputElement>(null);
+  const portInputRef = useRef<HTMLInputElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -198,14 +186,15 @@ export const PortsPanel: React.FC = () => {
   }, [ports]);
 
   const submitInput = useCallback(async () => {
-    const parsed = parseInput(input);
-    if (!parsed) {
-      notification.error({ message: '格式: 端口号 或 端口号\\名称', type: 'error', duration: 3 });
-      inputRef.current?.focus();
+    const port = Number(portInput.trim());
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      notification.error({ message: '端口号无效 (1-65535)', type: 'error', duration: 2 });
+      portInputRef.current?.focus();
       return;
     }
-    const { port, label } = parsed;
-    setInput('');
+    const label = nameInput.trim();
+    setPortInput('');
+    setNameInput('');
     try {
       await ports.add(port);
       if (label) {
@@ -224,7 +213,7 @@ export const PortsPanel: React.FC = () => {
     } catch (e: any) {
       notification.error({ message: `添加失败: ${e?.message || e}`, type: 'error', duration: 3 });
     }
-  }, [input, ports, refresh]);
+  }, [portInput, nameInput, ports, refresh]);
 
   const beginEdit = useCallback((port: number, current: string) => {
     setEditingPort(port);
@@ -247,7 +236,10 @@ export const PortsPanel: React.FC = () => {
 
   const sortedEntries = useMemo(() => entries.slice().sort((a, b) => a.port - b.port), [entries]);
 
-  const canSubmit = parseInput(input) !== null;
+  const canSubmit = (() => {
+    const p = Number(portInput.trim());
+    return Number.isInteger(p) && p >= 1 && p <= 65535;
+  })();
 
   return (
     <div className="pf">
@@ -264,21 +256,44 @@ export const PortsPanel: React.FC = () => {
           端口
           {entries.length > 0 && <span className="pf-count">{entries.length}</span>}
         </span>
-        <div className="pf-input-wrap">
+        <div className="pf-input-wrap pf-input-wrap--port">
           <span className="pf-input-icon"><PortIcon /></span>
           <input
-            ref={inputRef}
+            ref={portInputRef}
             className="pf-input"
             type="text"
-            placeholder="端口号\\名称, 如 3000 或 3000\\API Server"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void submitInput(); }}
-            maxLength={64}
+            inputMode="numeric"
+            placeholder="端口号"
+            value={portInput}
+            onChange={(e) => setPortInput(e.target.value.replace(/[^\d]/g, ''))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                if (canSubmit) void submitInput();
+                else nameInputRef.current?.focus();
+              }
+            }}
+            maxLength={5}
+            aria-label="端口号"
             spellCheck={false}
           />
         </div>
-        <button className="pf-add-btn" onClick={() => void submitInput()} disabled={!canSubmit} title="添加端口 (格式: 端口号 或 端口号\\名称)">
+        <span className="pf-sep">\</span>
+        <div className="pf-input-wrap pf-input-wrap--name">
+          <input
+            ref={nameInputRef}
+            className="pf-input"
+            style={{ paddingLeft: 10 }}
+            type="text"
+            placeholder="应用名 (选填)"
+            value={nameInput}
+            onChange={(e) => setNameInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void submitInput(); }}
+            maxLength={48}
+            aria-label="应用名"
+            spellCheck={false}
+          />
+        </div>
+        <button className="pf-add-btn" onClick={() => void submitInput()} disabled={!canSubmit} title="转发端口 (应用名选填)">
           <PlusIcon />
           <span>转发</span>
         </button>
