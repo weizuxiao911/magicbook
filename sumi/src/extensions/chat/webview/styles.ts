@@ -1172,6 +1172,8 @@ export const styles = `
   font-size: 12px; font-weight: 500;
 }
 .q__nav:hover { background: var(--ai-hover); }
+.q__cancel { color: var(--ai-danger, #e5534b); border-color: color-mix(in srgb, var(--ai-danger, #e5534b) 40%, transparent); }
+.q__cancel:hover { background: color-mix(in srgb, var(--ai-danger, #e5534b) 12%, transparent); }
 .q__submit {
   padding: 5px 14px; border-radius: 6px; cursor: pointer;
   background: var(--ai-hover);

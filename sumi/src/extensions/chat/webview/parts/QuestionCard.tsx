@@ -60,9 +60,10 @@ export const QuestionCard: React.FC<{
   part: any;
   sessionID: string;
   onReply: (sid: string, rid: string, answers: string[][]) => Promise<void>;
+  onIgnore?: (rid: string) => void;
   preferredRequestID?: string;
   busy?: boolean;
-}> = ({ part, sessionID, onReply, preferredRequestID, busy }) => {
+}> = ({ part, sessionID, onReply, onIgnore, preferredRequestID, busy }) => {
   const questions = useMemo(() => extractQuestions(part), [part]);
   const localRid = useMemo(() => extractRequestId(part), [part]);
   const requestId = preferredRequestID || localRid;
@@ -212,7 +213,11 @@ export const QuestionCard: React.FC<{
           {questions.length > 1 ? (
             <div className="q__foot">
               <div className="q__foot-start">
-                {qi > 0 && (
+                {qi === 0 ? (
+                  <button className="q__nav q__cancel" onClick={() => onIgnore?.(requestId)} disabled={submitting}>
+                    取消
+                  </button>
+                ) : (
                   <button className="q__nav" onClick={() => setActiveIdx(qi - 1)}>
                     上一个
                   </button>
@@ -232,6 +237,11 @@ export const QuestionCard: React.FC<{
             </div>
           ) : busy && (
             <div className="q__foot">
+              <div className="q__foot-start">
+                <button className="q__nav q__cancel" onClick={() => onIgnore?.(requestId)} disabled={submitting}>
+                  取消
+                </button>
+              </div>
               <div className="q__foot-end">
                 <button className="q__submit" onClick={submit} disabled={submitting}>
                   {submitting ? '提交中...' : '提交'}

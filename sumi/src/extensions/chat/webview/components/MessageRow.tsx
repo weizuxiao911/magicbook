@@ -8,8 +8,9 @@ export const MessageRow: React.FC<{
   done?: boolean;
   sessionID: string;
   onReplyQuestion: (sid: string, rid: string, answers: string[][]) => Promise<void>;
+  onIgnoreQuestion?: (rid: string) => void;
   busy?: boolean;
-}> = ({ row, streaming, done, sessionID, onReplyQuestion, busy }) => {
+}> = ({ row, streaming, done, sessionID, onReplyQuestion, onIgnoreQuestion, busy }) => {
   if (row.role === 'user') {
     const text = extractText(row.parts);
     const copy = () => navigator.clipboard?.writeText(text);
@@ -73,6 +74,7 @@ export const MessageRow: React.FC<{
               done={done}
               sessionID={sessionID}
               onReply={onReplyQuestion}
+              onIgnoreQuestion={onIgnoreQuestion}
               preferredQuestionRequestID={questionMeta?.requestID}
               busy={busy}
             />

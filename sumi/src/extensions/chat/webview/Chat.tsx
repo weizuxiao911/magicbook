@@ -1498,6 +1498,7 @@ export const Chat: React.FC = () => {
               done={!busy}
               sessionID={sessionID}
               onReplyQuestion={onReplyQuestion}
+              onIgnoreQuestion={onIgnoreQuestion}
               busy={busy}
             />
           ))
