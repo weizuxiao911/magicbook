@@ -53,8 +53,11 @@ export class RemoteTerminalService implements ITerminalNodeService {
     if (this.sdk) return this.sdk;
     const base = appBaseUrl();
     if (!base) throw new Error('opencode url not ready (appBaseUrl 未注入)');
+    // 铁律 8: 必须传 directory 让 SDK 把 x-opencode-directory header 注入到每个请求.
+    const cwd = effectiveCwd();
     this.sdk = createOpencodeClient({
       baseUrl: base,
+      directory: cwd,
       headers: cwdHeader(),
       responseStyle: 'fields',
       throwOnError: true,
@@ -156,8 +159,10 @@ export class RemoteTerminalService implements ITerminalNodeService {
   }
 
   private wsUrl(ptyId: string, cwd: string): string {
+    // numas fork: 铁律 8 — workspace 路径统一走 header. WS URL ?directory= 用 raw path
+    // (无 encodeURI), 服务端 WorkspaceRoutingMiddleware 读 raw query 解析 workspace.
     const wsBase = secureUrl(appBaseUrl()).replace(/^http/, 'ws');
-    return `${wsBase}/pty/${ptyId}/connect?directory=${encodeURIComponent(cwd)}`;
+    return `${wsBase}/pty/${ptyId}/connect?directory=${cwd}`;
   }
 
   async create2(id: string, _cols: number, _rows: number, launchConfig: IShellLaunchConfig): Promise<IPtyProcessProxy | undefined> {

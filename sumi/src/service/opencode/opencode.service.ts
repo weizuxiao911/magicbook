@@ -167,8 +167,12 @@ export class OpencodeServiceImpl implements IOpencodeService, ClientAppContribut
     if (_client) return _client;
     const base = appBaseUrl();
     if (!base) return null;
+    // 铁律 8: 必须传 directory 让 SDK 把 x-opencode-directory header 注入
+    // 每个请求 (否则 server defaultDirectory fallback 到 process.cwd()).
+    const cwd = effectiveCwd();
     _client = createOpencodeClient({
       baseUrl: base,
+      directory: cwd,
       headers: cwdHeader(),
       responseStyle: 'fields',
       throwOnError: true,
