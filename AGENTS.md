@@ -88,7 +88,7 @@ AI 给方案推荐 + 备选时, **必须** 用 `question` 工具让用户点选,
   - `absToRel(abs, ws)`: 宿主机绝对路径 → workspace 相对路径
   - `toHostPath(idePath, anchors)`: codeblitz 虚拟路径 → opencode 宿主路径 (来自 `infra/path.ts:toHostPath`, 不自造)
 - **禁止 `/D:/...` 形态直接传给 server**: 走 `normalizeCwdPath` 规范化. 否则 server `path.win32` 按 POSIX 根解析 → 500/错目录
-- **HTTP header 路径必须 `encodeURI()`**: CJK + Windows drive 全角字符都需 URI encode (`x-opencode-directory` 等)
+- **HTTP header 路径 raw 形式 + server 端 decode 防御**: `x-opencode-directory` header 走 raw path (无 `encodeURI`);server 端读 header 时 `decodeURIComponent` 防御性处理. 详细见 [铁律 8](#8-opencode-跨进程通信约定)
 
 **正确示例**:
 ```ts
@@ -98,8 +98,12 @@ const p = (segments[0]?.includes(':') ? '' : '/') + segments.slice(0, i + 1).joi
 // 路径规范化
 const safe = normalizeCwdPath(userInput);   // 'D:/projects' 而非 '/D:/projects'
 
-// server 请求前
-headers: { 'x-opencode-directory': encodeURI(workspace) }
+// server 请求前: header 用 raw path (无 encodeURI, 详见铁律 8)
+headers: { 'x-opencode-directory': workspace }
+
+// server 端 defaultDirectory: 取 header 后防御性 decode
+const raw = request.headers["x-opencode-directory"]
+const dir = raw ? decodeURIComponent(raw) : process.cwd()
 ```
 
 **检测方法**: 改完路径相关代码, **必须** 在 `dataDir` 是 Windows 路径 (如 `D:/projects`) 时跑一次, 验证:
@@ -107,6 +111,39 @@ headers: { 'x-opencode-directory': encodeURI(workspace) }
 - `getWorkspace()` / `urlWorkspace()` 返回 `D:/projects` 而非 `/D:/projects`
 - `fs.listDir('D:/projects')` 200, 不 500
 - 中文路径 `测试/中文目录/文件.md` 正常 resolve
+
+### 8. opencode 跨进程通信约定
+
+> **请求 opencode 统一使用 header 携带 `x-opencode-directory`. 不支持 header 的旧 V2 端点才用 `?directory=` query 方式.**
+
+**事实**: opencode 服务端 workspace 路由有两套入口, 但 numas 客户端**必须**只走 header 一套:
+- **header 入口** (所有 V1 端点 `/pty` `/file` `/path` 等): `x-opencode-directory` 是 workspace 唯一真实路径, server 端 `defaultDirectory(request, url)` 直接取该 header
+- **V2 query 入口** (部分 `/api/...` 端点): `?directory=` query 作为 V2 workspace selector (历史兼容, server `selectedV2WorkspaceID` 才读)
+- **混合 bug 链** (历史教训): sumi SDK client `v2/client.ts:33-52` 的 request rewrite 把 header 值复制到 query — `pick()` 比较时 `encodeURI(header)` 与 `encodeURIComponent(fallback)` 不一致导致 mismatch, 最终把 encoded header 写进 query, server `defaultDirectory` fallback 到 `process.cwd()` → 客户端 URL 指定 `?directory=Documents` 实际 PTY 跑到 numas 子目录, WS connect 时 query 是 `Documents` (encoded) → server routing 找不到该 session → **WS 404**
+
+**禁令**:
+- **禁止 client 把 header 写进 query**: numas fork 的 `@opencode-ai/sdk/v2/client` 的 request rewrite **只保留 header, 不写 `?directory=` query**. 已加 numas 增量 patch (`v2/client.ts` 后续修改需保留该 patch)
+- **禁止 client 对 header path 做 `encodeURI`**: `x-opencode-directory` 走 raw path, server 端防御性 `decodeURIComponent` 处理 (历史 encode 是 bug 源)
+- **禁止 `WorkspaceRoutingMiddleware` 兜底到 `process.cwd()` 后无声 fallback**: 若 `x-opencode-directory` 缺失或 decode 失败, 应显式报错或 400 (而不是静默用 server 启动 workdir 替代)
+
+**正确示例**:
+```ts
+// client: 发送请求时 header 用 raw path
+const ws = normalizeCwdPath(getWorkspace());
+fetch(url, { headers: { 'x-opencode-directory': ws } });
+
+// server: defaultDirectory 取 header 防御性 decode
+function defaultDirectory(request, _url) {
+  const raw = request.headers["x-opencode-directory"]
+  return raw ? decodeURIComponent(raw) : process.cwd()
+}
+```
+
+**检测方法**: 切换工作空间 (`?directory=/Users/foo/Documents`) 时, **必须**验证:
+- `console` log `[opencode] runtime applied: { workspace: '/Users/foo/Documents' }` (而非 `process.cwd()` fallback 值)
+- terminal create 出来的 PTY `cwd` 实际是 `/Users/foo/Documents` (而非 server 启动 workdir)
+- WS `/pty/<id>/connect?directory=...` 不出现 404 (encoded header 不再泄漏到 query)
+- server `/path?directory=...` 响应 `directory` 字段与请求一致
 
 ---
 
