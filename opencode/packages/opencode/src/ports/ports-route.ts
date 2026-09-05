@@ -57,9 +57,16 @@ export const portsRoute = HttpRouter.use((router) =>
     const client = yield* HttpClient.HttpClient
     const proxy = (request: HttpServerRequest.HttpServerRequest) => proxyOnce(ports, client, request)
 
-    yield* router.add("GET", "/ports", () =>
+    yield* router.add("GET", "/ports", (request) =>
       Effect.gen(function* () {
-        const list = yield* ports.scan()
+        // 工作区目录来自 x-opencode-directory header (铁律 8; raw router 不经 WorkspaceRoutingMiddleware).
+        // 传入后只返回监听进程 cwd 在该工作区下的端口 (+ 白名单); 缺失则返回用户项目服务全集.
+        let workspace: string | undefined
+        const rawHeader = (request.headers as Record<string, string | undefined>)["x-opencode-directory"]
+        if (rawHeader) {
+          try { workspace = decodeURIComponent(rawHeader) } catch { workspace = rawHeader }
+        }
+        const list = yield* ports.scan(workspace)
         return HttpServerResponse.jsonUnsafe(list)
       }),
     )

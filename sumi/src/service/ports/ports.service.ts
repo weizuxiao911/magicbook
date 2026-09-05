@@ -10,11 +10,21 @@ import { Injectable } from '@opensumi/di';
 import { BrowserModule } from '@opensumi/ide-core-browser';
 
 import { apiGet, apiPost } from '../../infra/http';
-import { appBaseUrl } from '../../infra/url';
+import { appBaseUrl, effectiveCwd } from '../../infra/url';
+import { normalizeSep } from '../../infra/path';
 import { onEventType } from '../event/eventBus';
 
 import type { IPortsService, PortEntry } from './ports.interface';
 import { PortsToken } from './ports.interface';
+
+/** cwd 是否在当前工作区目录下 (服务端按工作目录归属检测; 无 cwd = 白名单/手动, 放行). */
+function cwdInWorkspace(cwd: unknown): boolean {
+  const ws = normalizeSep(effectiveCwd() || '');
+  if (!ws) return true; // 工作区未知 → 不过滤
+  if (typeof cwd !== 'string' || !cwd) return true; // 白名单/无 cwd 事件放行
+  const c = normalizeSep(cwd);
+  return c === ws || c.startsWith(ws.replace(/\/+$/, '') + '/');
+}
 
 @Injectable()
 export class PortsServiceImpl implements IPortsService {
@@ -95,7 +105,10 @@ export class PortsServiceImpl implements IPortsService {
         const t = ev.type as 'ports.detected' | 'ports.closed';
         const props = ev.properties || {};
         const entry = { type: t, port: Number(props.port), process: props.process };
+        console.log('[ports][bus] 收到事件', t, 'port=', props.port, 'pid=', props.pid, 'process=', props.process ?? '-', 'cwd=', props.cwd ?? '-');
         if (!entry.port) return;
+        // detected: 仅当前工作区 (cwd 归属) 的服务入库; closed: 始终处理 (移除本地缓存)
+        if (t === 'ports.detected' && !cwdInWorkspace(props.cwd)) return;
         // 更新缓存
         if (t === 'ports.detected') {
           if (!this.cached.some((e) => e.port === entry.port)) {

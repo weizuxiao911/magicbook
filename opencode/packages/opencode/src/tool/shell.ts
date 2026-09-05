@@ -452,14 +452,20 @@ export const ShellTool = Tool.define(
       const numasPort = Number(process.env["NUMAS_PORT"] || 24096)
       const numasBase = `http://127.0.0.1:${numasPort}`
       const trackPid = (pid: number) => {
+        console.log(`[ports][shell] trackPid → POST /ports/pids pid=${pid} cmd=${input.command?.slice(0, 80) ?? ""}`)
         void fetch(`${numasBase}/ports/pids`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ pid }),
-        }).catch(() => {})
+        })
+          .then((r) => { if (!r.ok) console.warn(`[ports][shell] trackPid HTTP ${r.status} pid=${pid}`) })
+          .catch((e) => console.warn(`[ports][shell] trackPid fetch failed pid=${pid}:`, e))
       }
       const untrackPid = (pid: number) => {
-        void fetch(`${numasBase}/ports/pids/${pid}`, { method: "DELETE" }).catch(() => {})
+        console.log(`[ports][shell] untrackPid → DELETE /ports/pids/${pid} (shell scope exit)`)
+        void fetch(`${numasBase}/ports/pids/${pid}`, { method: "DELETE" })
+          .then((r) => { if (!r.ok) console.warn(`[ports][shell] untrackPid HTTP ${r.status} pid=${pid}`) })
+          .catch((e) => console.warn(`[ports][shell] untrackPid fetch failed pid=${pid}:`, e))
       }
 
       const closeSink = Effect.fnUntraced(function* () {
