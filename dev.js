@@ -6,7 +6,7 @@
  *   0. 依赖安装 (sumi: npm install,  opencode: bun install;  首次/依赖变才装)
  *   1. sumi build (hash 增量) → mirror cp → opencode/packages/app/dist
  *   2. opencode build (hash 增量 + NUMAS_WEB_DIST=sumi/dist)
- *   3. 启 opencode web @ <port> --cors * --registry <url>
+ *   3. 启 opencode web @ <port> --cors * --registry <url> --extensions-dir registry/vsix
  *
  * CLI: --port / --registry / --fast (跳过 build/cp) / --force-build
  * 进程树: dev.js → opencode web (detached pgid=-pid), SIGINT 杀整组
@@ -49,7 +49,10 @@ function parseFlagInt(flag, fallback) {
   return fallback;
 }
 const PORT = parseFlagInt('--port', parseInt(process.env.NUMAS_PORT || '24096', 10));
-const REGISTRY = parseFlag('--registry', process.env.NUMAS_REGISTRY || 'http://127.0.0.1:7790');
+// 扩展市场: 默认内置 /extensions 控制器 (fork 扫 --extensions-dir vsix), 无独立 registry 服务;
+// 外部自建市场可 --registry https://host:port 覆盖
+const REGISTRY = parseFlag('--registry', process.env.NUMAS_REGISTRY || '/extensions');
+const EXTENSIONS_DIR = path.join(ROOT, 'registry', 'vsix');
 const FORCE_BUILD = process.argv.includes('--force-build');
 const FAST = process.argv.includes('--fast') || process.env.NUMAS_FAST === '1' || process.env.NUMAS_FAST === 'true';
 
@@ -303,7 +306,7 @@ if (!fs.existsSync(finalBin)) {
 }
 
 // ============================================================================
-// 3. 启 opencode web @ <port> --cors * --registry <url>
+// 3. 启 opencode web @ <port> --cors * --registry <url> --extensions-dir
 // ============================================================================
 function killPort(port) {
   try {
@@ -343,6 +346,7 @@ const opencodeProc = spawn(finalBin, [
   '--port', String(PORT),
   '--cors', '*',
   '--registry', REGISTRY,
+  '--extensions-dir', EXTENSIONS_DIR,
   '--web-ui', sumiDist,
 ], {
   stdio: 'inherit',
