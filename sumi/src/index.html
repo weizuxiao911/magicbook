@@ -24,6 +24,29 @@
             }));
           }
         } catch (e) { /* localStorage 不可用时退化为框架默认行为 */ }
+
+        // numas: 快照官方 workbench tab 缓存 (editor.restore → scoped:{ws}:/workbench).
+        // 必须在框架 bundle 前执行: opensumi storage 的 debounce flush 会在启动早期把
+        // 空的 grid 状态异步写回, 覆盖官方恢复要读的 uris → 官方恢复读空失败 + 欢迎页误开.
+        // 这里提前把 uris 快照到 window, 由 contribution/editor-restore 在官方恢复落空后兜底恢复.
+        try {
+          var __wbSnap = [];
+          for (var i = 0; i < localStorage.length; i++) {
+            var key = localStorage.key(i);
+            if (key && /\/workbench$/.test(key) && key.indexOf('scoped:') === 0) {
+              try {
+                var raw = localStorage.getItem(key);
+                var parsed = raw ? JSON.parse(raw) : null;
+                var grid = parsed && parsed.grid ? JSON.parse(parsed.grid) : null;
+                var list = (grid && grid.editorGroup && grid.editorGroup.uris) || [];
+                for (var j = 0; j < list.length; j++) {
+                  if (typeof list[j] === 'string' && list[j].indexOf('file://') === 0) __wbSnap.push(list[j]);
+                }
+              } catch (e2) { /* 单 key 解析失败跳过 */ }
+            }
+          }
+          window.__NUMAS_WB_URIS__ = __wbSnap;
+        } catch (e3) { /* 忽略 */ }
       })();
     </script>
 
