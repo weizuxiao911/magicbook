@@ -1,51 +1,52 @@
 # AGENTS.md — Numas AI 协作约定
 
-> 给 AI 的项目事实 + 协作铁律. README.md 是给用户看的终态架构, 本文件是给 AI 看的工作上下文.
+> 用户与 AI 共同维护的项目协作规范. README.md 是给用户看的终态架构,
+> docs/AI 工作台总体设计.md 是项目静态事实, 本文件是 AI 协作协议与工程约束.
+>
 > 品牌: **Numas (🐮 牛马 AI)** — 打工人首选工作模式, 对标腾讯 workbuddy 类产品.
 
 ---
 
-## AI 协作铁律 (最高优先级)
+## 1. 用户与 AI 协作规范
 
-### 1. 技术选型铁律
+### 1.1 责任分工
 
-> **所有技术选型, AI 只能给方案推荐, 不得做决策. 多个候选方案时列推荐 + 备选, 等用户拍板再实施.**
+- **用户对结果负责**, AI 辅助完成开发/测试/问题处理等工作.
+- **所有功能设计和技术方案必须由用户决策**, AI 仅能根据用户要求展开事实依据调查, 提供建议或方案推荐, **不得替人做决定**.
 
-适用范围: 库/命令/命名/目录结构选型、公开 API/数据模型/配置 schema 变更、跨模块或跨项目耦合改动、新依赖/新工具/新流程引入、删除/覆盖/迁移/远程写入/重写历史等不可逆动作.
+### 1.2 AI 自主边界 (仅限以下无歧义小动作)
 
-AI 自主做的仅限: 拼写/格式/注释修复、已约定命名替换、单元测试补全、只读操作 (跑命令/读日志/截图).
+- 拼写/格式/注释修复
+- 已约定命名替换
+- 单元测试补全
+- 只读操作 (跑命令/读日志/截图)
+- 临时文件清理 (mv stray 到 `.tmp/`)
+- 维护 §4 避坑指南 (沉淀自身经验)
 
-### 2. 交互协议铁律
+### 1.3 决策点必须用 `question` 工具反馈
 
-> **所有需要拍板/选择/决策/不可逆操作的交互, 必须通过 `question` 工具列选项让用户拍板. 不得用普通文本/隐式同意/默认执行替代.**
+适用范围: 技术选型/公开 API/数据模型/config schema 变更、跨模块/跨项目耦合改动、新依赖/新工具/新流程引入、删除/覆盖/迁移/远程写入/重写历史等**不可逆动作**, 以及任何用户未在对话中明确确认的功能/视觉/交互/边界处理.
 
-AI 给方案推荐 + 备选时, **必须** 用 `question` 工具让用户点选, 不得用文本"我准备 X / 你 OK 吗? / 如果你同意" 等隐式询问.
+反馈规范:
+- 标题清晰、简洁, 不偏移主题
+- 选项至少包含一项**推荐的可执行的、综合价值最高**的 (标"(推荐)")
+- 必须由用户拍板, AI 不得用普通文本/隐式同意/"我准备 X 你 OK 吗"等替代
 
-### 3. 功能设计与架构决策铁律
+### 1.4 改动必反馈
 
-> **一切功能设计和架构决策必须由用户拍板, AI 不得自行加戏.**
+只要 AI 动过项目文件 (任何改动, 不管多大), 完成后必须用 `question` 工具主动反馈, 询问 git 操作意向. **不得静默结束**.
 
-适用范围: 任何**未在对话中明确确认**的功能/特性/视觉/交互/状态/边界处理. 包括但不限于:
-
-- 交互行为 (悬停提示 / 选中是否可取消 / 哪些操作触发哪些反馈)
-- 视觉细节 (提示文字 / 颜色 / 动画 / 默认值)
-- 状态机分支 (错误/成功/空状态展示, 边界处理)
-- 字段/数据模型新增 (sidecar schema / popover 控件)
-- 任何看起来"理所当然"或"用户应该会喜欢"的自作主张
-
-### 4. 改动反馈铁律
-
-> **只要 AI 动过项目文件 (任何改动, 不管多大), 完成后必须用 `question` 工具主动反馈, 询问 git 操作意向. 不得静默结束.**
-
-反馈内容: 改了哪些文件 (简短列表) + 关键改动点 (1-2 句话).
+反馈内容:
+- 改了哪些文件 (简短列表)
+- 关键改动点 (1-2 句话)
 
 选项必须包含: 提交+推送 (双远程) / 仅提交 / 暂存 / 不 git 操作 (用户拍板).
 
 即使上一轮用户取消了 git 操作选择, 只要 AI 后续又执行了其他改动, 也必须**再次主动反馈**.
 
-### 5. 代码改动 → 提交/推送 流程铁律
+### 1.5 Git 流程 (双远程)
 
-> **任何代码改动后, AI 必须用 `question` 工具反馈改动内容 + 列出提交/推送选项, 由用户决策. AI 不自作主张 `git add` / `git commit` / `git push`.**
+任何代码改动后, AI 必须用 `question` 工具反馈改动内容 + 列出提交/推送选项, 由用户决策. AI 不自作主张 `git add` / `git commit` / `git push`.
 
 典型选项: 提交 (1 commit) / 拆 N 个 commit / 不提交; 推 gitlab / 推 github / 两个都推 / 不推; 提交信息 AI 写 / 用户给.
 
@@ -57,7 +58,21 @@ AI 给方案推荐 + 备选时, **必须** 用 `question` 工具让用户点选,
 
 推送后自检 `git push` 两个 remote 都执行, 缺一个要补.
 
-### 6. 分层架构铁律
+> **关键**: 用户对 git 的提示/认可**仅单次有效**. 下一次改动后必须重新提问.
+
+---
+
+## 2. 工程维护约束和规范
+
+### 2.1 接手工作流程
+
+接手工作时**必须以尊重客观事实为前提**, 对现有的功能设计实现和技术框架应用和约束进行全面了解, 再根据任务需求展开讨论和分析, 直到用户决策执行任务才能进行.
+
+过程中如果你觉得满足条件可以进入执行, 可以使用 `question` 工具反馈给用户进行决策; 同理, 如果条件不满足时也可以使用 `question` 工具反馈用户进行选择, 以更好地推进工作落地.
+
+**所有任务不为交付而着急**, 不做 DEMO 级的事. 要么不做, 要么就一次性做好. 做事时必须先充分讨论/分析后完成设计方案, 由用户决策执行才能推进执行. 挖出执行后, 要使用 `question` 工具反馈用户推进下一步操作, 所有的 git 操作必须由用户下达指示或你提问后得到用户认可后才能执行, **记住提示或认可仅单次有效!**
+
+### 2.2 分层架构铁律
 
 > **所有拓展文件系统操作必须通过 codeblitz 的文件系统和 opencode 访问服务器端, 不得直连 service.**
 
@@ -72,7 +87,7 @@ AI 给方案推荐 + 备选时, **必须** 用 `question` 工具让用户点选,
 - service 层是 commands / codeblitz / 其他 service 调用的基础设施, 不暴露给 extensions 直调
 - commands 层定义对外 API / token / interface, 是 service 与 codeblitz 之间的契约
 
-### 7. 跨平台路径铁律
+### 2.3 跨平台路径铁律
 
 > **路径以 opencode 服务端真实路径为单一事实源. 禁止自行拼接/重写/添加前导 `/`. 任何路径处理走 `sumi/src/infra/path.ts` 工具函数, 不要直接写正则/字符串拼接.**
 
@@ -88,7 +103,7 @@ AI 给方案推荐 + 备选时, **必须** 用 `question` 工具让用户点选,
   - `absToRel(abs, ws)`: 宿主机绝对路径 → workspace 相对路径
   - `toHostPath(idePath, anchors)`: codeblitz 虚拟路径 → opencode 宿主路径 (来自 `infra/path.ts:toHostPath`, 不自造)
 - **禁止 `/D:/...` 形态直接传给 server**: 走 `normalizeCwdPath` 规范化. 否则 server `path.win32` 按 POSIX 根解析 → 500/错目录
-- **HTTP header 路径走 `encodeURI` (浏览器 fetch 强制要求)**: `x-opencode-directory` header 值必须 ISO-8859-1 (Latin-1), 客户端**必须** `encodeURI` 后再发 (中文/非 ASCII 路径直发会抛 `String contains non ISO-8859-1 code point`);server 端 `defaultDirectory` 防御性 `decodeURIComponent` 还原. 详细见 [铁律 8](#8-opencode-跨进程通信约定)
+- **HTTP header 路径走 `encodeURI` (浏览器 fetch 强制要求)**: `x-opencode-directory` header 值必须 ISO-8859-1 (Latin-1), 客户端**必须** `encodeURI` 后再发 (中文/非 ASCII 路径直发会抛 `String contains non ISO-8859-1 code point`); server 端 `defaultDirectory` 防御性 `decodeURIComponent` 还原. 详细见 §2.4
 
 **正确示例**:
 ```ts
@@ -98,7 +113,7 @@ const p = (segments[0]?.includes(':') ? '' : '/') + segments.slice(0, i + 1).joi
 // 路径规范化
 const safe = normalizeCwdPath(userInput);   // 'D:/projects' 而非 '/D:/projects'
 
-// server 请求前: header 走 encodeURI (兼容 fetch ISO-8859-1, 详见铁律 8)
+// server 请求前: header 走 encodeURI (兼容 fetch ISO-8859-1, 详见 §2.4)
 headers: { 'x-opencode-directory': encodeURI(workspace) }
 
 // server 端 defaultDirectory: 取 header 后防御性 decode
@@ -112,7 +127,7 @@ const dir = raw ? decodeURIComponent(raw) : process.cwd()
 - `fs.listDir('D:/projects')` 200, 不 500
 - 中文路径 `测试/中文目录/文件.md` 正常 resolve
 
-### 8. opencode 跨进程通信约定
+### 2.4 opencode 跨进程通信约定
 
 > **请求 opencode 统一使用 header 携带 `x-opencode-directory`. 不支持 header 的旧 V2 端点才用 `?directory=` query 方式.**
 
@@ -145,142 +160,12 @@ function defaultDirectory(request, _url) {
 - WS `/pty/<id>/connect?directory=...` 不出现 404 (encoded header 不再泄漏到 query)
 - server `/path?directory=...` 响应 `directory` 字段与请求一致
 
----
-
-## 项目事实 (终态)
-
-### 顶层结构
-
-| 目录 / 文件 | 作用 |
-| --- | --- |
-| `dev.js` | 根 `package.json#bin`, npx 入口, 编排 build + spawn `opencode web --port 24096` |
-| `package.json` | name=`numas`, deps 只有 `opencode-ai@^1.18.11` (binary 兜底), scripts `dev=node dev.js` |
-| `sumi/` | **客户端 IDE** (codeblitz/opensumi + React), webpack 独立 build |
-| `opencode/` | **完整 fork 的 opencode 仓库** (bun workspace, 31 个 packages), 内嵌编译产物被 dev.js spawn |
-| `extensions/` | 三个独立 vsix 源码 (`html`, `paper`, `pdf`), esbuild 自打包 → registry @ 7790 分发, dev 模式**不加载** |
-| `registry/` | vsix 注册表服务, 端口 7790, 手动启, dev 模式不自动启 |
-| `docs/` | 4 篇 Markdown (架构 / 功能清单 / fs 设计 / 标注设计) |
-
-### 客户端 (`sumi/src`)
-
-**入口**: `sumi/src/index.tsx` (22 行) → 调 `installCustomEditorPatch()` (main-thread 接管 webview) + 挂 `window.__APP_CONFIG__` + ReactDOM.render.
-
-**目录**:
-
-| 目录 | 内容 |
-| --- | --- |
-| `commands/` | 4 接口 + Token: IFileSystem / IAgent / IEnvService / IRegistry |
-| `config/` | app / brand / layout / modules / preferences / runtime / slots |
-| `service/` | agent / env / fs / registry / terminal, 挂 `window.__APP_FS__` / `__APP_OPENCODE__` |
-| `extensions/` | 8 内置: actions / ask / chat / filepicker / opentype / pdf / welcome / workspace |
-| `patches/` | `patch-custom-editor.ts` |
-| `styles/` | overrides.css (865 行) + slots.css (201 行) |
-| `assets/` | favicon.ico/png, logo.svg (🐮) |
-
-**BrowserModule 注册**: `sumi/src/config/modules.ts:7-39` 注册 14 个 (TerminalNextModule + TaskModule + AgentModule + RegistryModule + FileSystemModule + TerminalModule + EnvModule + ActionsModule + WelcomeModule + ChatModule + WorkspaceModule + FilePickerModule + PdfReaderModule + OpenTypeModule).
-
-**通信方式**:
-
-| 用途 | 协议 | 入口 |
-| --- | --- | --- |
-| 文件读 | HTTP `GET /api/fs/read/<path>` | `sumi/src/service/fs.ts:840` |
-| 文件写 | HTTP `POST /api/fs/write` (base64) | `sumi/src/service/fs.ts:897` |
-| 文件删 / 建 / 移 | HTTP `/api/fs/remove` / `/mkdir` / `/rename` | `service/fs.ts` |
-| 终端 PTY | WS `${baseUrl}/pty/{id}/connect?directory=...` | `service/terminal.ts:325` |
-| AI | SDK `@opencode-ai/sdk/v2/client`, header 自动带 `x-opencode-directory` | `service/agent.ts:184` |
-| 事件 | `EventSource ${baseUrl}/global/event` (V1 SSE) | `service/fs.ts:711` |
-
-**postinstall 改 node_modules** (`sumi/scripts/`):
-- `patch-codeblitz-constant.js`: `constant.js` WORKSPACE_ROOT 取 APP_CWD → sessionStorage → `__APP_CONFIG__.cwd` → `/workspace`; `disk-file-system.provider.js` `fse.move` → 桥接 `window.__APP_FS__.move`
-- `patch-opensumi-customeditors.js`: `customEditors.js` 改 useRef 版本, webview 生命周期交给 `sumi/src/patches/patch-custom-editor.ts` 的 main-thread 接管
-
-### opencode fork (内嵌, 不是 npm 包)
-
-`opencode/packages/opencode/` version `1.18.25`, 31 个 packages, bun workspace, `bin: { opencode, numas }`.
-
-**fork 增量** (`packages/opencode/src/`):
-
-| 路径 | 增量 |
-| --- | --- |
-| `index.ts:47` | `scriptName("numas")` 品牌 |
-| `cli/network.ts:33-37` | `--registry <url>` flag |
-| `cli/cmd/web.ts` | `web` 子命令 (instance: false, per-request workspace 路由, pre-warm + 1500ms 自动开浏览器) |
-| `cli/cmd/serve.ts` | 无头模式, listen 不开浏览器 |
-| `server/shared/ui.ts:17-21` | CSP 全开放 (给内嵌 opensumi 用) |
-| `server/shared/ui.ts:71-77` | HTML 注入 `window.__APP_CONFIG__.registryBaseUrl` |
-| `server/routes/instance/httpapi/middleware/workspace-routing.ts:87` | `x-opencode-directory` header + `?directory=` query per-request 路由 |
-| `server/routes/instance/httpapi/groups/fs.ts` | `/api/fs/read` `/list` `/find` `/stat` `/write` `/mkdir` `/remove` `/rename` `/watch` 9 端点 |
-| `server/routes/instance/httpapi/handlers/file.ts:96-125` | `/api/content` vscode 兼容端点 (vsix ext 用) |
-| `control-plane/` | workspace.ts (966 行) + types / adapters (worktree) / workspace-context / workspace-adapter-runtime / dev-debug-workspace-plugin / util |
-| `effect/` | Effect-TS 服务运行时 + run-service / instance-state / instance-registry / bootstrap-runtime / app-runtime / bridge |
-| `event-v2-bridge.ts` | V2 事件桥 (events.publish → GlobalBus, 注入 location.directory) |
-| `event-manifest.ts` | 重新导出 schema/event-manifest |
-| `patch/index.ts` | apply_patch 工具 (Hunk schema + Add/Delete/Update) |
-
-**协议**: `opencode/packages/protocol/src/groups/fs.ts:57-194` `FileSystemGroup` 注册 9 端点 (read/list/find/stat/write/mkdir/remove/rename/watch). 注意 `write` 是 base64-encoded (`groups/fs.ts:115-127`).
-
-**fs watcher**: `opencode/packages/core/src/filesystem/watcher.ts:19-37` 懒加载 `@parcel/watcher` 原生 binding (mac: fs-events / linux: inotify / win: windows), 200ms 防抖 → `file.watcher.updated` SSE 事件 (`schema/src/filesystem-watcher.ts:6-12`).
-
-**构建**: `bun run packages/opencode/script/build.ts --single --skip-install`. `--single` 只构建当前平台; `NUMAS_WEB_DIST` 环境变量指向 numas web 静态产物, 直接内嵌 (替代 `packages/app` build). 产物: `dist/opencode-<os>-<arch>/bin/opencode` (~200MB).
-
-### 内置拓展能力
-
-| 能力 | 来源 | 入口 |
-| --- | --- | --- |
-| 文件浏览/编辑 | codeblitz (内置) | explorer + monaco |
-| 终端 PTY | opencode (远程 spawn shell) | `sumi/src/service/terminal.ts` |
-| AI chat | opencode 全局 SDK | `sumi/src/extensions/chat/` (Chat.tsx 1844 行) |
-| 工作目录切换 | 内置 UI (logo 旁按钮 + picker modal) | `extensions/actions/ActionsView.tsx:210-241` + `WorkspacePicker` |
-| PDF 阅读 | **内置** + **vsix 备选** | `sumi/src/extensions/pdf/PdfReaderView.tsx` (2014 行) / `extensions/pdf/` (registry) |
-| HTML 预览 | **仅 vsix** | `extensions/html/` (registry) |
-| Paper 试卷 | **仅 vsix** | `extensions/paper/` (registry) |
-| 打开方式/默认编辑器 | 内置重写 (覆盖 OpenSumi 3 个 bug) | `extensions/opentype/module.ts` (253 行) |
-| 文件树 watcher | opencode 服务端 `@parcel/watcher` SSE | `service/fs.ts:711-760` |
-| 标注 (rect → AI) | 内置 | `extensions/pdf/AnnotPopover.tsx` + `AnnotationActions.tsx` (309 行) |
-
-### 端口
-
-| 端 | 默认 | 说明 |
-| --- | --- | --- |
-| opencode web (集成模式) | **24096** | dev.js 默认; `--port <n>` / `NUMAS_PORT` 改 |
-| webpack devServer (独立模式) | 7788 | `sumi/webpack.config.js:242`; `WEB_PORT` 改; dev.js 集成模式不起 |
-| vsix registry | 7790 | `registry/src/server.js:21`; `NUMAS_REGISTRY` 改; 手动启 |
-
-### dev.js 启动流程
-
-```
-0. Node ≥ 20 检查
-1. sumi deps 自检自装 (npm install --ignore-scripts, hash marker)
-2. opencode-ai 全局 binary 自检自装 (npm i -g, 兜底)
-3. [dead code] watchexec 自检自装 (brew/apt/PowerShell) — 实际未用
-4. killPort(24096) (lsof -ti :24096)
-5. sumi build (npm run build, hash 命中则跳过)
-6. mirror cp sumi/dist → opencode/packages/app/dist (mtime+size 增量)
-7. opencode build (bun run script/build.ts --single --skip-install, NUMAS_WEB_DIST=sumi/dist, hash 命中则跳过)
-8. spawn opencode web --hostname 0.0.0.0 --port 24096 --cors * --registry <url> (detached pgid=-pid)
-9. SIGINT/SIGTERM cleanup (kill -pgid)
-10. 4s 后 spawn open / cmd /c start / xdg-open http://localhost:24096
-```
-
-**注意**: 第 3 步装 watchexec 是 dead code — 客户端零 watch 进程, 全部在 opencode 服务端 (`@parcel/watcher`). 待清理.
-
-### 命令行参数
-
-| Flag / Env | 默认 | 说明 |
-| --- | --- | --- |
-| `--port <n>` / `NUMAS_PORT` | 24096 | opencode web 端口 |
-| `--registry <url>` / `NUMAS_REGISTRY` | http://127.0.0.1:7790 | vsix registry |
-| `--fast` / `NUMAS_FAST=1` | off | 跳过 sumi build / cp / opencode build (复用 5-10s → 1-2s) |
-| `--force-build` | off | 强制重 build, 忽略 hash |
-
----
-
-## 约定 / 禁忌
+### 2.5 工程约定 / 禁忌
 
 - **直连无代理**: client → opencode 之间不加 HTTP 中间层
 - **CJK 路径 encodeURI**: HTTP header 必须 ISO-8859-1, `x-opencode-directory` 需 `encodeURI()`
 - **单一事实源**: 端口 / CORS / APP_BASE_URL 由 dev.js 控制, 透 process.env 注入. 不要散落
-- **平台兼容**: fs 命令按 host 平台分流 (mac/linux=POSIX, win=PowerShell); shell 走 `/pty/shells` 探测; **路径处理细则见 [铁律 7](#7-跨平台路径铁律) — 所有路径拼接走 `sumi/src/infra/path.ts` 工具函数, 禁止硬编码前导 `/` 与 `\\` 分隔符**
+- **平台兼容**: fs 命令按 host 平台分流 (mac/linux=POSIX, win=PowerShell); shell 走 `/pty/shells` 探测; **路径处理细则见 §2.3 — 所有路径拼接走 `sumi/src/infra/path.ts` 工具函数, 禁止硬编码前导 `/` 与 `\\` 分隔符**
 - **单一职责**: 每个模块只做一件事
 - **配置外置**: 敏感信息不入库
 - **中文优先**: 文档/接口/文案中文为主
@@ -294,13 +179,150 @@ function defaultDirectory(request, _url) {
 
 ---
 
-## 文档索引
+## 3. AI 自成长机制规范和约束
 
-| 文档 | 内容 |
-| --- | --- |
-| [README.md](./README.md) | 给用户看的终态架构 + 快速开始 + CLI + FAQ |
-| [docs/AI 工作台总体设计.md](./docs/AI%20工作台总体设计.md) | 总体架构 + 客户端分层 + 三种部署形态 + 关键技术决策 |
-| [docs/AI 工作台功能清单.md](./docs/AI%20工作台功能清单.md) | 已落地功能勾选清单 |
-| [docs/文件系统服务设计与测试用例.md](./docs/文件系统服务设计与测试用例.md) | fs 设计 (DynamicRequest read + WriteSyncFS write + OverlayFS) + 验收 26 用例 |
-| [docs/标注功能设计与测试用例.md](./docs/标注功能设计与测试用例.md) | PDF 标注设计 + AI ask popover + 批注演示 |
-| [opencode/AGENTS.md](./opencode/AGENTS.md) | opencode fork 内部开发约定 (Effect-TS / 模块 shape / 测试 / typecheck) |
+> 此部分 AI 自主维护. 接受用户的教导和帮助, 一切以用户意志为准.
+> 不得替用户做决策, 只能提供建议或方案推荐!
+
+### 3.1 长期记忆维护
+
+- **自主跟进项目迭代**: 每次协作后, 把沉淀的知识/教训同步到 §4 避坑指南, 避免同类问题多次出错.
+- **沉淀自己的做事方法和习惯**: 反复出现的模式可以总结成 §4.1 实践指南的子项.
+- **不替用户决策**: §1 已明确, 自成长过程中遇到需要权衡的方向, 用 `question` 反馈.
+
+### 3.2 接受用户教导
+
+- 用户给的纠正/指引, 当轮即时修正.
+- 反复出现的同类纠正, 提炼成 §4 避坑指南.
+- 用户的隐式偏好 (例如"回答精简", "先看现象再下结论"), 观察到后沉淀.
+
+### 3.3 自维护边界
+
+AI **可以自主**做:
+- §4 避坑指南/实践指南的增删改
+- §3.2 沉淀长期偏好
+- 拼写/格式/链接/目录校对
+- `git mv` 与文档类 rename (跨文档引用同步)
+- 临时文件清理 (.tmp/ stray)
+
+AI **仍需 `question`**:
+- §1/§2 任何规则条款的增删改
+- 跨文档重组
+- 与项目事实 (§1/§2) 冲突的修改
+
+---
+
+## 4. 实践手册与避坑指南
+
+> AI 自主维护, 用户可随时指出错误或要求补充.
+
+### 4.1 实践指南
+
+#### 1. 如何撰写功能设计与验收标准
+
+模板 (写入 `docs/<功能名>功能设计与测试用例.md`):
+
+```
+# <功能名> 功能设计
+
+> 一句话概括设计目标 + 链路入口
+
+## 1. 设计说明
+### 1.1 整体结构   (可选 mermaid graph TD)
+### 1.2 设计原则   (3-5 条 bullet, 每条一行)
+### 1.3 核心链路   (可选 mermaid sequenceDiagram / flowchart)
+
+## 2. 验收标准 (X.X-1, X.X-2...)
+每条: 操作 + 期望 + 状态 (✅ 已验证 / ⏳ 待验)
+
+## 3. 执行记录
+| 用例 | 结果 | 备注 |
+| --- | --- | --- |
+```
+
+要点:
+- **写"为什么"不写"做了什么"**: 设计原则 + 链路说明目的, 验收写行为
+- **验收可执行**: 每条都是可单步验证的具体动作, 避免"功能正常"这种不可验证
+- **测试覆盖三类**: 正常路径 / 边界 / 错误/降级
+- **跨模块改动必须列影响面**: 列出被影响的拓展/服务/scheme/事件名
+
+#### 2. 如何高效排查定位关键问题
+
+定位流程 (从表象到根因):
+
+1. **看现象**: 截图 / console / network 三件套, 不靠脑补
+2. **找最小复现**: 单步操作能复现 vs 时序/条件才复现, 优先前者
+3. **二等分定位**: 沿调用链/数据流画边界, 从中间往两端二分 (例: client → proxy → server, 先确认 proxy 在不在, 再深查两端)
+4. **怀疑一切**: 文档说的 ≠ 代码做的. 一旦现象与设计不符, 优先相信现象, 去 grep 代码
+5. **历史教训**: `git log --all --oneline -- <file>` + `git blame` 看是不是回归. `git log --grep "<关键字>"` 看历史 issue
+6. **确认修复方向**: 找根因后再讨论方案, 不在"症状"层面来回修
+
+输出沉淀到避坑指南: 现象 / 复现路径 / 解决方案 / 是否需要回归测试.
+
+#### 3. 如何拆分多轮任务 (推荐做法)
+
+- 一轮 = 一个可独立验证的里程碑 (build + 跑通 +1 个核心场景)
+- 每轮开头**回顾上一轮状态**, 结尾**给当前状态摘要** (committed + pushed + 已知遗留)
+- 跨轮任务**先 question 确认是否继续**, 不要一气呵成做完多轮
+
+### 4.2 避坑指南
+
+#### 1. opencode 服务端 `WorkspaceRoutingMiddleware` 静默 fallback 到 `process.cwd()`
+
+- **问题描述**: sumi SDK client 的 request rewrite 把 header 值复制到 query (`pick()` 比较 `encodeURI(header)` 与 `encodeURIComponent(fallback)` 不一致导致), server `defaultDirectory` 兜底到 `process.cwd()`, 客户端 URL 指定 `?directory=Documents` 实际 PTY 跑到 numas 子目录, WS connect 时 query 是 `Documents` (encoded) → server routing 找不到该 session → **WS 404**.
+- **复现路径**: 工作空间切到非 numas 启动目录 (`?directory=/Users/foo/Documents`), opencode 后端监听非 :24096 端口, 客户端发起 PTY WS connect.
+- **解决方案**: numas fork 的 `@opencode-ai/sdk/v2/client` 的 request rewrite **只保留 header, 不写 `?directory=` query**; client 对 header path 做 `encodeURI`; server `defaultDirectory` 防御性 `decodeURIComponent` 兼容. 见 §2.4.
+
+#### 2. 前导 `/` 硬编码让 Windows drive 渲染成 `/D:/projects`
+
+- **问题描述**: `'/' + segments.join('/')` 在 Windows 下给 `D:/projects` 路径加前导 `/`, 变成 `/D:/projects` 多余前缀, server `path.win32` 按 POSIX 根解析 → 500 / 错目录.
+- **复现路径**: `dataDir = 'D:/projects'` 时调用 `fs.listDir('D:/projects')`.
+- **解决方案**: 按首段是否含 `:` 判断, Windows drive 直接作为根 (`D:` / `D:/projects`), POSIX 才补前导 `/`. 所有路径拼接走 `sumi/src/infra/path.ts` 工具函数. 见 §2.3.
+
+#### 3. 浏览器 fetch header 限制 ISO-8859-1, 中文路径直发抛错
+
+- **问题描述**: HTTP header 值必须 ISO-8859-1 (Latin-1), raw path 含中文/非 ASCII 字符直发会 throw `String contains non ISO-8859-1 code point` → 整个 fetch 失败.
+- **复现路径**: `x-opencode-directory: /Users/测试/目录` (未 encodeURI).
+- **解决方案**: client **必须** `encodeURI(ws)` 后再发; server `defaultDirectory` 防御性 `decodeURIComponent`. 见 §2.4.
+
+#### 4. AI 操作造成的 stray 文件污染项目根
+
+- **问题描述**: playwright mcp 截图默认相对路径或 `/tmp/`, 散落到项目根或子目录, 污染源码/触发 lint warning.
+- **复现路径**: `screenshot({path: 'foo.png'})` 不带目录前缀.
+- **解决方案**: 截图/落盘 `filename` 一律**绝对路径** `.tmp/<name>.png`; 任何 `> file` / `tee file` 输出必须在 `.tmp/`; 写完一组操作自检 `git status --short` + `ls .tmp/`; stray 立刻 `mv` 到 `.tmp/`. 见 §2.5.
+
+#### 5. AI 静默 commit / push, 用户失去决策权
+
+- **问题描述**: AI 自作主张 `git add` / `git commit` / `git push`, 违反"用户对结果负责 + 用户对 git 操作拍板"原则.
+- **复现路径**: AI 完成功能后默认执行 commit + push 双远程, 不走 question 工具.
+- **解决方案**: 任何改动后**必须**用 `question` 工具列出提交/推送选项, 等用户拍板; 用户对 git 的提示/认可仅单次有效, 下次改动重新提问. 见 §1.4/§1.5.
+
+#### 6. question 选项缺推荐, 用户必须自己拍板所有选项
+
+- **问题描述**: AI 用 question 工具但选项无推荐标, 用户失去"综合价值最高"参考, 易选错或来回问.
+- **复现路径**: 选项平铺无标, 用户从 4-5 个里盲目选.
+- **解决方案**: 选项至少包含一项**推荐的可执行的、综合价值最高**的 (标"(推荐)"); 标题简洁不偏移主题. 见 §1.3.
+
+#### 7. 用户提示/认可被跨任务复用, 误以为已批准新动作
+
+- **问题描述**: 用户在某轮认可"提交+双远程推送", AI 把它带到下一轮的所有改动, 跳过 question.
+- **复现路径**: 第二轮改动后 AI 直接 `git push`, 没问.
+- **解决方案**: 用户对 git 的提示/认可**仅单次有效**, 每轮改动后重新走 question. 见 §1.5 末尾强调.
+
+#### 8. CLI `chromium --no-sandbox` 启动需要 bundle ESM 路径, 误用 CJS 路径
+
+- **问题描述**: 排查工具 `cli/chromium-sandbox-flag.js` 启动 puppeteer 时 bundle 路径写错 (`./bundle.js` 找不到).
+- **复现路径**: `node cli/chromium-sandbox-flag.js`.
+- **解决方案**: 用 `path.join(__dirname, '../dist/something.cjs')`, ESM 项目入口指向 `dist/index.cjs`.
+
+#### 9. 端口反代 URL 拼接漏 `replace(/\/+$/, '')`, 双斜杠出错
+
+- **问题描述**: `proxyUrl(port)` 拼接 baseUrl + `/proxy/<port>/` 时, baseUrl 含尾斜杠会导致 `http://localhost:24096//proxy/8000/`.
+- **复现路径**: `appBaseUrl()` 返回 `/` 或 `http://localhost:24096/`.
+- **解决方案**: 拼接前 `replace(/\/+$/, '')`, 见 `proxyUrl()` 实现.
+
+#### 10. 内置浏览器默认 `<embed>` 渲染 PDF 不可靠 (依赖 Chrome PDF 插件)
+
+- **问题描述**: headless Chrome 无 PDFium, 部分 Chrome flag 禁用 PDF viewer, `<embed src=blob type=application/pdf>` 渲染失败显示空白.
+- **复现路径**: 启用 PDF plugin 禁用的 Chrome.
+- **解决方案**: 默认 `pdfMode='pdfjs'`, 走 pdf.js + canvas 渲染, 跨环境可靠. worker 从 unpkg/jsdelivr CDN 拉, CSP `worker-src * blob:` 已透传.
