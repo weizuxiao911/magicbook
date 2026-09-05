@@ -52,8 +52,8 @@ RUN apt-get update \
        bash zsh \
        # 编辑器 / 监控
        vim nano htop tmux less file \
-       # 网络 / 工具
-       curl wget jq \
+       # 网络 / 工具 (lsof: opencode 端口 scan 依赖, 缺失 → /proxy 反代 known-ports 全空)
+       curl wget jq lsof netcat-openbsd \
        # 版本控制
        git \
        # python (含 pip / venv)
@@ -70,24 +70,32 @@ RUN apt-get update \
 USER root
 
 # 容器内根 = /app (workdir + 默认工作区根, explorer 只见用户文件);
-# 产物藏到 home 下 ~/.numas (root → /root/.numas, 不进工作区) = 程序目录 (opencode binary + sumi web ui)
+# 程序目录 ~/.numas (root → /root/.numas, 不进工作区) — 挂载点 (设计文档
+# docs/Docker产物目录挂载点与扩展注册功能设计与测试用例.md):
+#   exec/        opencode 可执行程序 (含内置 /extensions 扩展市场控制器)
+#   ui/          sumi web 静态产物 (entrypoint 默认 --web-ui /root/.numas/ui)
+#   extensions/  vsix 扩展包集合 (--extensions-dir 指向, opencode 内置市场扫描; 与工程
+#                registry/vsix 同构, 动态识别新增 .vsix)
+# 每目录镜像内置默认产物 (交付即用), 运维可 -v volume 覆盖任一目录升级, 不重建镜像.
+# 注: 扩展市场由 opencode fork 内置 (/extensions 同源端点), 无独立 registry 进程.
 WORKDIR /app
-RUN mkdir -p /root/.numas
+RUN mkdir -p /root/.numas/exec /root/.numas/ui /root/.numas/extensions
 
-# 本地产物拷贝:
-#   opencode 单二进制 — arch 由构建脚本决定并显式传入 (docker-build.sh 传 OPENCODE_ARTIFACT,
+# ① exec: opencode 单二进制 — arch 由构建脚本显式传入 (docker-build.sh 传 OPENCODE_ARTIFACT,
 #   与 --platform 一一对应: linux/arm64→opencode-linux-arm64, linux/amd64→opencode-linux-x64).
 #   禁止用 glob (dist 里可能同时存在多平台产物, 会 COPY 冲突/装错 arch). 构建期 --version
 #   冒烟即验证 arch 匹配 (exec format error 会在此暴露).
 ARG OPENCODE_ARTIFACT=opencode-linux-arm64
-COPY opencode/packages/opencode/dist/${OPENCODE_ARTIFACT}/bin/opencode /root/.numas/opencode
-#   sumi web UI 静态产物 (--web-ui 固定指向这里, 替换 UI = 重 build + 重 COPY)
-COPY sumi/dist /root/.numas/sumi/
+COPY opencode/packages/opencode/dist/${OPENCODE_ARTIFACT}/bin/opencode /root/.numas/exec/opencode
+# ② ui: sumi web 静态产物
+COPY sumi/dist /root/.numas/ui/
+# ③ extensions: vsix 包集合 (内置市场 --extensions-dir 扫描; 动态识别新放入的 .vsix)
+COPY registry/vsix/*.vsix /root/.numas/extensions/
 
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
-  && chmod +x /root/.numas/opencode \
-  && /root/.numas/opencode --version
+  && chmod +x /root/.numas/exec/opencode \
+  && /root/.numas/exec/opencode --version
 
 # 端口/host/registry 默认值 (entrypoint 可见的镜像默认; 用户可用短名 env 覆盖, 如
 # -e PORT=8080 替换默认 4096 — entrypoint 读值规则: 短名优先, 长名兜底, 再默认)

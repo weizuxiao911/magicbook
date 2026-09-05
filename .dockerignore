@@ -27,11 +27,16 @@
 docs
 docs/**
 
-# registry 是 vsix 拓展注册服务 (开发用, 不进镜像)
+# registry: 源码不进镜像 (registry-server 本地产物预编译), 只放行产物目录
+#   vsix/*.vsix (extensions 挂载点默认内容) + bin/ (registry-server 单文件)
 registry
 registry/**
+!registry/vsix
+!registry/vsix/**
+!registry/bin
+!registry/bin/**
 
-# extensions (vsix 源码; dev 模式不加载, 进镜像也用不上)
+# extensions (vsix 源码; 打包产物在 registry/vsix, 源码不进镜像)
 extensions
 extensions/**
 
