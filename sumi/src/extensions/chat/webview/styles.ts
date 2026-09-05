@@ -298,6 +298,44 @@ export const styles = `
 }
 .chat__notice button:hover { color: var(--ai-fg); }
 
+/* Session status bar: 只承载非 busy/idle 状态 (retry 退避/限额) — 琥珀警示调 */
+.chat__status {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--ai-warning) 14%, var(--ai-bg-elev));
+  border: 1px solid color-mix(in srgb, var(--ai-warning) 35%, transparent);
+  border-radius: 8px;
+  color: var(--ai-fg);
+  font-size: 12px;
+  display: flex; align-items: flex-start; gap: 8px;
+  white-space: pre-wrap; word-break: break-word;
+}
+.chat__status-spin {
+  flex-shrink: 0; margin-top: 2px;
+  color: var(--ai-warning);
+  animation: chat-status-rotate 1.4s linear infinite;
+}
+@keyframes chat-status-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.chat__status-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.chat__status-title { font-weight: 600; color: var(--ai-warning); line-height: 1.35; }
+.chat__status-next { margin-left: 6px; font-weight: 400; opacity: 0.85; }
+.chat__status-msg { line-height: 1.45; }
+.chat__status-link {
+  flex-shrink: 0;
+  margin-top: 1px;
+  background: var(--ai-hover);
+  border: 1px solid var(--ai-border);
+  color: var(--ai-fg);
+  text-decoration: none;
+  padding: 3px 10px; border-radius: 5px;
+  font-size: 11px; line-height: 1.4;
+  white-space: nowrap;
+}
+.chat__status-link:hover { background: var(--ai-active); color: var(--ai-accent); }
+
 /* Composer */
 .chat__composer {
   padding: 8px 12px 12px;

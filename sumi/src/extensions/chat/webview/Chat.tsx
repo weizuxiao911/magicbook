@@ -64,6 +64,40 @@ function sessionKeyFor(cwd: string): string {
   return `chat.sessionID.${readable}-${hex}`;
 }
 
+/** /session/status 会话状态 (与 opencode SessionStatus.Info 对齐):
+ *  idle 不会出现在服务端返回里 (无条目即 idle), retry 带 attempt/message/next 细节供状态条渲染 */
+type SessionStatusInfo =
+  | { type: 'busy' }
+  | { type: 'idle' }
+  | {
+      type: 'retry';
+      attempt: number;
+      message: string;
+      next: number;
+      action?: {
+        reason: string;
+        provider: string;
+        title: string;
+        message: string;
+        label: string;
+        link?: string;
+      };
+    };
+
+/** busy 判定: retry 也算 busy — 服务端还在重试流程里 (未终止的 run), 不锁输入会撞 busy 报错 */
+function isBusyStatus(st?: SessionStatusInfo): boolean {
+  return !!st && (st.type === 'busy' || st.type === 'retry');
+}
+
+/** retry 状态条的 next 字段展示: 绝对时间戳 (epoch ms) → 本地 HH:MM 时钟.
+ *  静态时间不随渲染变 (事件/对账刷新时会更新), 避免显示过时的相对倒计时 */
+function formatStatusTime(nextMs: number): string {
+  const d = new Date(nextMs);
+  return Number.isNaN(d.getTime())
+    ? ''
+    : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 /** 在用户工作目录创建会话（directory 从 SDK path.get 取, 确保会话归属 workspace） */
 async function createSessionInWorkspace(client: any) {
   try {
@@ -109,9 +143,12 @@ export const Chat: React.FC = () => {
   const [sessions, setSessions] = useState<any[]>([]);
   const [rows, setRows] = useState<Row[]>([]);
   const [input, setInput] = useState('');
-  // busy 按会话管理: sid → 是否生成中; 渲染/发送时取当前会话
-  const [busyBySession, setBusyBySession] = useState<Record<string, boolean>>({});
-  const busy = !!busyBySession[sessionID];
+  // 会话状态按 sid 维护 (busy/retry/idle + retry 细节): SSE 事件即时更新 + 15s 对账全量校准;
+  // 渲染/发送时取当前会话. retry 期间 isBusyStatus=true (锁发送/可停止) + 状态条展示原因
+  const [statusBySession, setStatusBySession] = useState<Record<string, SessionStatusInfo>>({});
+  const busy = isBusyStatus(statusBySession[sessionID]);
+  // 当前会话完整状态 (retry 时驱动输入框上方的状态条)
+  const curStatus = statusBySession[sessionID];
   const [agents, setAgents] = useState<any[]>([]);
   const [currentAgent, setCurrentAgent] = useState<string>('build');
   const [models, setModels] = useState<any[]>([]);
@@ -447,12 +484,14 @@ export const Chat: React.FC = () => {
     if (!c) return;
     try {
       const res = await c.session.status();
-      const map: Record<string, boolean> = {};
+      const map: Record<string, SessionStatusInfo> = {};
       const data = res?.data || {};
+      // 服务端只返回非 idle 会话 (idle 即无条目, 覆盖本地残留); retry 细节原样保留供状态条渲染
       for (const [sid, st] of Object.entries(data)) {
-        map[sid] = (st as any)?.type === 'busy';
+        const info = st as SessionStatusInfo;
+        if (info?.type === 'busy' || info?.type === 'idle' || info?.type === 'retry') map[sid] = info;
       }
-      setBusyBySession(map);
+      setStatusBySession(map);
     } catch { /* ignore */ }
   }, []);
 
@@ -476,27 +515,35 @@ export const Chat: React.FC = () => {
     };
     /** 会话消息事件: 来自客户端消息总线 (service/event/eventBus.ts, 全客户端唯一
      *  /global/event SSE). 总线已把帧归一化为 {type, properties}; 下方处理逻辑原样保留. */
-    const handleEvent = (ev: { type: string; properties: any }) => {
+    const handleEvent = (ev: { type: string; properties: any; directory?: string }) => {
       if (stopped) return;
-          const { type, properties } = ev || ({} as any);
+          const { type, properties, directory } = ev || ({} as any);
           if (!type || !properties) return;
           // busy 状态全局维护: status/idle 事件总是处理 (带 sessionID), 不参与当前会话过滤,
           // 否则切走期间到达的 idle 事件被丢弃 → 旧会话 busy 悬挂
+          // /global/event 广播进程内所有工作区实例的事件 (信封 directory = 事件所属实例路径);
+          // 其他目录会话的 status/idle 会污染本表 (对账只查当前实例 → 悬挂项永不清除) → 按 directory 过滤
+          if (type === 'session.status' || type === 'session.idle') {
+            const dir = typeof directory === 'string' ? directory.replace(/\/+$/, '') : '';
+            const ws = getWorkspace().replace(/\/+$/, '');
+            if (dir && ws && dir !== ws) return;
+          }
           if (type === 'session.status') {
-            const st = properties.status?.type;
+            const st = properties.status as SessionStatusInfo | undefined;
             const ssid = properties.sessionID;
-            if (ssid) {
-              if (st === 'busy') setBusyBySession((prev) => ({ ...prev, [ssid]: true }));
-              else if (st === 'idle') {
-                setBusyBySession((prev) => ({ ...prev, [ssid]: false }));
+            if (ssid && st) {
+              if (st.type === 'idle') {
+                setStatusBySession((prev) => ({ ...prev, [ssid]: { type: 'idle' } }));
                 if (ssid === sessionIDRef.current) void loadMessages(ssid);
+              } else {
+                setStatusBySession((prev) => ({ ...prev, [ssid]: st }));
               }
             }
             return;
           }
           if (type === 'session.idle') {
             const ssid = properties.sessionID;
-            if (ssid) setBusyBySession((prev) => ({ ...prev, [ssid]: false }));
+            if (ssid) setStatusBySession((prev) => ({ ...prev, [ssid]: { type: 'idle' } }));
             return;
           }
           // 只处理当前会话的事件
@@ -690,7 +737,7 @@ export const Chat: React.FC = () => {
         sessionIDRef.current = sid;
         setSessionID(sid);
         setRows([]);
-        setBusyBySession((prev) => ({ ...prev, [sid]: false }));
+        setStatusBySession((prev) => ({ ...prev, [sid]: { type: 'idle' } }));
         setError('');
         setCurrentTitle('新会话');
         setShowSessions(false);
@@ -762,7 +809,7 @@ export const Chat: React.FC = () => {
               : { modelID: currentModel, ...(currentProvider ? { providerID: currentProvider } : {}) };
           })()
         : undefined;
-      if (sid) setBusyBySession((prev) => ({ ...prev, [sid]: true }));
+      if (sid) setStatusBySession((prev) => ({ ...prev, [sid]: { type: 'busy' } }));
       // promptAsync: fire-and-forget, 回复由 SSE 事件流 (message.part.updated) 打字机式渲染
       const parts: any[] = [{ type: 'text', text: fullText }];
       if (images.length) {
@@ -780,7 +827,7 @@ export const Chat: React.FC = () => {
         ...(model ? { model } : {}),
       });
     } catch (e) {
-      setBusyBySession((prev) => ({ ...prev, [sessionIDRef.current]: false }));
+      setStatusBySession((prev) => ({ ...prev, [sessionIDRef.current]: { type: 'idle' } }));
       setRows((prev) => prev.filter((r) => r.id !== localId));
       setInput(t);
       setApiError(e);
@@ -801,7 +848,8 @@ export const Chat: React.FC = () => {
     if (!target || !client) return;
     try { await client.session.abort({ sessionID: target }); }
     catch (e) { console.warn('[ai] abort:', e); }
-    setBusyBySession((prev) => ({ ...prev, [target]: false }));
+    // 乐观复位为 idle; 服务端随后会发真实终态 (若停在 retry 循环上, abort 打断后发 idle)
+    setStatusBySession((prev) => ({ ...prev, [target]: { type: 'idle' } }));
     setInteractions((prev) => {
       const cur = prev[target];
       if (!cur) return prev;
@@ -1423,10 +1471,11 @@ export const Chat: React.FC = () => {
           />
         ) : (
           rows.map((r) => (
+            // 打字机动画只在真正流式输出时开; retry 退避等待期不假装在出字
             <MessageRow
               key={r.id}
               row={r}
-              streaming={busy && r.role === 'assistant' && r.id === rows[rows.length - 1]?.id}
+              streaming={curStatus?.type === 'busy' && r.role === 'assistant' && r.id === rows[rows.length - 1]?.id}
               done={!busy}
               sessionID={sessionID}
               onReplyQuestion={onReplyQuestion}
@@ -1448,6 +1497,30 @@ export const Chat: React.FC = () => {
         <div className="chat__notice">
           <span className="chat__notice-text">{notice}</span>
           <button onClick={() => setNotice('')}>×</button>
+        </div>
+      )}
+
+      {/* 会话状态条: 只在非 busy/idle (retry 退避/限额) 时出现, 展示服务端原因.
+          busy 由停止按钮 + 流式动画表达, idle 无文案, 均不占这块区域 */}
+      {curStatus?.type === 'retry' && (
+        <div className="chat__status">
+          <svg className="chat__status-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          <div className="chat__status-main">
+            <div className="chat__status-title">
+              {curStatus.action?.title || '正在自动重试'}
+              <span className="chat__status-next">
+                第 {curStatus.attempt} 次 · 下次 {formatStatusTime(curStatus.next)}
+              </span>
+            </div>
+            <div className="chat__status-msg">
+              {curStatus.action?.message || curStatus.message}
+            </div>
+          </div>
+          {curStatus.action?.link && (
+            <a className="chat__status-link" href={curStatus.action.link} target="_blank" rel="noreferrer">
+              {curStatus.action.label || '查看详情'}
+            </a>
+          )}
         </div>
       )}
 
