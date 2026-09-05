@@ -215,8 +215,8 @@ opensumi/codeblitz 通过 BrowserFS → `WriteSyncFS` (`sumi/src/config/runtime.
 | 文档 | 内容 |
 |---|---|
 | [AGENTS.md](./AGENTS.md) | AI 协作铁律 (6 条) + 项目事实 + 约定/禁忌 |
-| [docs/架构设计.md](./docs/架构设计.md) | 架构总览 + 6 张架构图 + 11 节 |
-| [docs/功能清单.md](./docs/功能清单.md) | 已落地功能勾选清单 |
+| [docs/AI 工作台总体架构设计.md](./docs/AI%20工作台总体架构设计.md) | 总体架构 + 客户端分层 + 三种部署形态 + 关键技术决策 |
+| [docs/AI 工作台功能清单.md](./docs/AI%20工作台功能清单.md) | 已落地功能勾选清单 |
 | [docs/文件系统设计与测试用例.md](./docs/文件系统设计与测试用例.md) | fs 设计 (DynamicRequest read + WriteSyncFS write + OverlayFS) + 验收 26 用例 |
 | [docs/标注功能设计与测试用例.md](./docs/标注功能设计与测试用例.md) | PDF 标注设计 + AI ask popover + 批注演示 |
 
