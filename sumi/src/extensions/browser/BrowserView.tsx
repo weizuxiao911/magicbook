@@ -188,6 +188,8 @@ const [nonce, setNonce] = useState(0);         // 刷新用 (改 key 强制重�
   const srcRef = useRef('about:blank');
   addrRef.current = addr;
   srcRef.current = src;
+  // 地址框编辑态 (聚焦输入中): true 时轮询/onload 不同步覆盖 addr, 避免吞字
+  const editingAddrRef = useRef(false);
   // 跨 effect 共享的 view api 句柄 (注册用 effect 写入, message handler / syncAddr 读取)
   const viewApiRef = useRef<BrowserViewApi | null>(null);
 
@@ -206,6 +208,8 @@ const [nonce, setNonce] = useState(0);         // 刷新用 (改 key 强制重�
   const syncAddrFromIframe = useCallback(() => {
     const f = iframeRef.current;
     if (!f) return;
+    // 用户正在地址框输入/编辑: 不覆盖 (600ms 轮询会吞掉打字内容)
+    if (editingAddrRef.current) return;
     let real: string;
     try {
       // 同源时 location 可读; 跨域时抛错被 catch
@@ -398,6 +402,12 @@ async function fetchAllPortsCwd(port: number): Promise<string | undefined> {
           <input
             value={addr}
             onChange={(e) => setAddr(e.target.value)}
+            onFocus={() => { editingAddrRef.current = true; }}
+            onBlur={() => {
+              // 失焦结束编辑态: 若用户未回车导航, 回填 iframe 当前真实地址保持一致性
+              editingAddrRef.current = false;
+              syncAddrFromIframe();
+            }}
             placeholder="输入网址, 回车访问 (localhost 服务自动经 /proxy 反代, 同源可调试)"
             style={{
               flex: 1, height: 28, padding: '0 10px', fontSize: 13,
