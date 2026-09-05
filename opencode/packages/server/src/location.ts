@@ -14,6 +14,8 @@ export class LocationMiddleware extends HttpApiMiddleware.Service<LocationMiddle
 ) {}
 
 export function response<A, E, R>(data: Effect.Effect<A, E, R>) {
+  // numas: logger 真实异常 → console.error (上游 orDie 静默吞, fs 500 难远程诊断)
+  // tapError 上提到整个 gen 外 (含 Location.Service yield), 避免 data 前 yield 抛不被捕
   return Effect.gen(function* () {
     const location = yield* Location.Service
     return {
@@ -24,7 +26,16 @@ export function response<A, E, R>(data: Effect.Effect<A, E, R>) {
       }),
       data: yield* data,
     }
-  })
+  }).pipe(
+    Effect.tapError((e) =>
+      Effect.sync(() =>
+        console.error(
+          `[numas][server] handler error (x-opencode-directory=${location?.directory ?? "?"}):`,
+          e instanceof Error ? `${e.name}: ${e.message}\n${e.stack}` : e,
+        ),
+      ),
+    ),
+  )
 }
 
 /** Defensive: strip a leading "/" from Windows drive paths (e.g. "/D:/projects" -> "D:/projects").
