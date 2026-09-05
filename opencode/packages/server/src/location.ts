@@ -15,9 +15,12 @@ export class LocationMiddleware extends HttpApiMiddleware.Service<LocationMiddle
 
 export function response<A, E, R>(data: Effect.Effect<A, E, R>) {
   // numas: logger 真实异常 → console.error (上游 orDie 静默吞, fs 500 难远程诊断)
-  // tapError 上提到整个 gen 外 (含 Location.Service yield), 避免 data 前 yield 抛不被捕
+  // tapError 上提到整个 gen 外 (含 Location.Service yield), 避免 data 前 yield 抛不被捕;
+  // 目录先暂存外层变量供 tapError 闭包读取 (gen 内 const 作用域到不了 pipe 回调)
+  let errDir: string | undefined
   return Effect.gen(function* () {
     const location = yield* Location.Service
+    errDir = location.directory
     return {
       location: new Location.Info({
         directory: location.directory,
@@ -30,7 +33,7 @@ export function response<A, E, R>(data: Effect.Effect<A, E, R>) {
     Effect.tapError((e) =>
       Effect.sync(() =>
         console.error(
-          `[numas][server] handler error (x-opencode-directory=${location?.directory ?? "?"}):`,
+          `[numas][server] handler error (x-opencode-directory=${errDir ?? "?"}):`,
           e instanceof Error ? `${e.name}: ${e.message}\n${e.stack}` : e,
         ),
       ),

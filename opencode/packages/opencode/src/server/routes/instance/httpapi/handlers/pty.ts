@@ -92,6 +92,10 @@ export const ptyHandlers = HttpApiBuilder.group(InstanceHttpApi, "pty", (handler
       )
       // numas: 注册 PTY 根 PID 到 PortsService, 让端口面板跟踪该 shell 进程及其子进程树 LISTEN 端口
       if (info.pid && info.pid > 0) yield* ports.registerPid(info.pid)
+      // numas: 该 PTY 所在 workspace 注册为端口识别锚点: 容器/服务器部署 workspace 常挂
+      // home 外 (如 /app), 该目录下后台启动的服务 (nohup/&) 靠 cwd∈workspace 识别,
+      // 不依赖进程树 (shell 退出后孤儿照常进面板 / 可 /proxy 转发)
+      yield* ports.registerWorkspace(instanceDir)
       return info
     })
 

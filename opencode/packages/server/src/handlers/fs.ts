@@ -93,7 +93,7 @@ export const FileSystemHandler = HttpApiBuilder.group(Api, "server.fs", (handler
         Effect.gen(function* () {
           const fs = yield* FileSystem.Service
           yield* fs.mkdir(ctx.payload)
-        }).pipe(fileSystem),
+        }),
       )
       .handle("fs.remove", (ctx) =>
         Effect.gen(function* () {

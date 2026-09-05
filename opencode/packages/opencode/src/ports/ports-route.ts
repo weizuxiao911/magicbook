@@ -126,6 +126,15 @@ export const portsRoute = HttpRouter.use((router) =>
           return HttpServerResponse.jsonUnsafe({ error: "bad pid" }, { status: 400 })
         }
         yield* ports.registerPid(pid)
+        // Agent spawn 请求带 workspace header 时顺带注册识别锚点 (容器 workspace 常挂 home 外)
+        const ws = (request.headers as Record<string, string>)["x-opencode-directory"]
+        if (ws) {
+          let root = ws
+          try {
+            root = decodeURIComponent(ws)
+          } catch { /* 原样用 */ }
+          yield* ports.registerWorkspace(root)
+        }
         return HttpServerResponse.jsonUnsafe({ ok: true })
       }),
     )

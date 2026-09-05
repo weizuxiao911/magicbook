@@ -42,6 +42,9 @@ export namespace Ports {
     readonly isKnown: (port: number) => Effect.Effect<boolean>
     readonly registerPid: (pid: number) => Effect.Effect<void>
     readonly unregisterPid: (pid: number) => Effect.Effect<void>
+    /** 注册用户项目根为端口识别锚点 (容器/服务器部署时 workspace 常不在 os.homedir 下,
+     *  如挂载 /app; 只认 home 会把该目录下后台服务全过滤掉). */
+    readonly registerWorkspace: (root: string) => Effect.Effect<void>
     readonly trackedPids: () => Effect.Effect<readonly number[]>
     /** 关闭 (杀) 监听该端口的进程; 无监听者静默. 端口关闭由周期 scan diff 发 ports.closed. */
     readonly kill: (port: number) => Effect.Effect<void>
@@ -233,6 +236,12 @@ export const layer = Layer.effect(
     }
 
     const home = os.homedir()
+    /** 端口识别锚点集: home (本地场景) ∪ 注册过的用户项目根 (workspace).
+     *  容器/服务器部署 workspace 常挂 home 外 (如 /app), 只认 home 会把该目录下
+     *  后台服务全过滤 → 端口面板看不到 / /proxy 404. */
+    const projectRoots = yield* Ref.make(new Set<string>([home]))
+    /** 每 tracked 根上一轮的后代快照 (死根退场时, 仍存活的孤儿提升为新跟踪根) */
+    const treeByRoot = new Map<number, number[]>()
 
     /** Windows netstat -ano 解析 → {port,pid} (cwd 探测不支持, 仅靠 tracked-tree 兜底). */
     const parseNetstatCandidates = (lines: string[], selfPid: number) => {
@@ -266,9 +275,11 @@ export const layer = Layer.effect(
         Effect.catch(() => Effect.succeed(new Map<number, string>())),
       )
       const out = new Map<number, PortEntry>()
+      const roots = yield* Ref.get(projectRoots)
       for (const c of cands) {
         const cwd = cwdMap.get(c.pid)
-        const fromCwd = isUserProjectCwd(cwd, home)
+        // 主模型: cwd 在任一识别锚点 (home ∪ 已注册 workspace) 下
+        const fromCwd = [...roots].some((root) => isUserProjectCwd(cwd, root))
         const fromTree = treePids.has(c.pid)
         if (!fromCwd && !fromTree) continue
         if (out.has(c.port)) continue
@@ -287,18 +298,50 @@ export const layer = Layer.effect(
      *  事件 diff 始终按"用户项目服务全集" (跨工作区, 一个服务启动只推一次). */
     const doScan = (workspaceDir?: string) =>
       Effect.gen(function* () {
-        // 清理已退出 tracked 根进程 (PTY/Agent 退出后回收)
+        // 清理已退出 tracked 根进程; 根退出但其后代 (孤儿) 仍存活时, 提升为新跟踪根.
+        // 后台/nohup 服务常在 shell 退出后 reparent 到 init, pgrep 找不到 → 不提升会丢端口.
         const tracked = yield* Ref.get(trackedPids)
         if (tracked.size > 0) {
           const survivors = new Set<number>()
           const reaped: number[] = []
+          const promoted: number[] = []
           for (const pid of tracked) {
-            if (yield* isPidAlive(pid)) survivors.add(pid)
-            else reaped.push(pid)
+            if (yield* isPidAlive(pid)) {
+              survivors.add(pid)
+            } else {
+              // 该根上一轮快照里的后代, 仍存活者提升为新根 (继续跟踪其 LISTEN 端口)
+              const prevDesc = treeByRoot.get(pid) ?? []
+              treeByRoot.delete(pid)
+              for (const d of prevDesc) {
+                if (yield* isPidAlive(d)) {
+                  survivors.add(d)
+                  promoted.push(d)
+                }
+              }
+              reaped.push(pid)
+            }
           }
           if (reaped.length > 0) {
-            console.log(`[ports] scan: 根进程已退出, 回收 trackedPids=[${reaped.sort((a, b) => a - b).join(",")}]`)
             yield* Ref.set(trackedPids, survivors)
+            console.log(
+              `[ports] scan: 根进程退出, 回收 trackedPids=[${reaped.sort((a, b) => a - b).join(",")}]` +
+                (promoted.length > 0 ? `, 孤儿提升为新根=[${promoted.sort((a, b) => a - b).join(",")}]` : ""),
+            )
+          }
+        }
+
+        // 刷新每 tracked 根的后代快照 (供下轮死根孤儿提升判定).
+        // 竞态: root 恰在上一轮 reap 判活之后、本处 collect 之前死亡时, pgrep 只能拿到
+        // root 自身 (后代已 reparent 到 init), 若此时覆盖快照会清空 → 下轮 reap 无后代
+        // 可提升 → 孤儿服务丢端口. 故 collect 不到后代且 root 已死时保留旧快照不覆盖,
+        // 由 reap 段 (delete + 提升) 兜底消费.
+        const aliveTracked = yield* Ref.get(trackedPids)
+        for (const pid of aliveTracked) {
+          const desc = yield* Effect.tryPromise(() => collectDescendants(pid)).pipe(
+            Effect.catch(() => Effect.succeed(new Set<number>([pid]))),
+          )
+          if (desc.size > 1 || (yield* isPidAlive(pid))) {
+            treeByRoot.set(pid, Array.from(desc))
           }
         }
 
@@ -407,6 +450,18 @@ export const layer = Layer.effect(
           yield* Ref.set(trackedPids, next)
           console.log(`[ports] unregisterPid pid=${pid} trackedRoots=[${[...next].sort((a, b) => a - b).join(",")}]`)
           // 反注册即扫一次 (该 PID 树关闭的端口立刻移除)
+          void Effect.runPromise(doScan()).catch(() => {})
+        }),
+      registerWorkspace: (root) =>
+        Effect.gen(function* () {
+          if (!root || typeof root !== "string") return
+          const n = root.replace(/\/+$/, "") || root
+          const cur = yield* Ref.get(projectRoots)
+          if (cur.has(n)) return
+          const next = new Set([...cur, n])
+          yield* Ref.set(projectRoots, next)
+          console.log(`[ports] registerWorkspace root=${n} roots=[${[...next].sort().join(",")}]`)
+          // 注册即扫一次 (该目录下已 LISTEN 的服务立刻进面板)
           void Effect.runPromise(doScan()).catch(() => {})
         }),
       trackedPids: () => Ref.get(trackedPids).pipe(Effect.map((s) => Array.from(s).sort((a, b) => a - b))),
