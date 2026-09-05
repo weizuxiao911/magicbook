@@ -1,6 +1,6 @@
-# 对话面板设计:消息总线接入 (SSE 收敛)
+# AI 助手拓展设计:消息总线接入 (SSE 收敛)
 
-> 本篇只讲**事件通道改造**: 对话面板 (chat) 把会话消息事件从"自建 SSE + 轮询重连"改为消费[消息总线](./消息总线服务设计与测试用例.md). 聊天 UI / 消息渲染 / 会话管理逻辑不变。
+> 本篇只讲**事件通道改造**: AI 助手拓展 (chat 面板) 把会话消息事件从"自建 SSE + 轮询重连"改为消费[消息总线](./消息总线服务设计与测试用例.md). 聊天 UI / 消息渲染 / 会话管理逻辑不变。
 
 ## 1. 设计说明
 
@@ -12,7 +12,7 @@
 - `run()` 循环 `for await` 消费事件, 跑一个大 switch 处理 `session.status` / `session.idle` / `message.part.updated` / `message.part.delta` / `message.updated` / `message.removed` / `session.updated` / `question.asked` / `todo.updated` / `permission.updated` / `permission.replied`;
 - 流结束 (`for await` 退出) 后 `setTimeout(run, 3000)` 轮询重连兜底; cleanup 里 `es.close()`。
 
-这套自建 SSE + 异步迭代器 + 3s 重连与 ask / ports 重复, 且迭代器/重连样板代码复杂。
+这套自建 SSE + 异步迭代器 + 3s 重连与 ports 重复 (同样在自建 EventSource), 且迭代器/重连样板代码复杂。ask 命令的事件消费独立, 详见[无头ask命令功能设计](./无头ask命令功能设计与测试用例.md)。
 
 **改造**: 删除自建 EventSource / 异步迭代器 / `run()` 循环 / 3s 重连定时器, effect 内改为订阅消息总线 `onEvent(handler)`:
 
@@ -66,7 +66,7 @@
 
 1. `Chat.tsx` 内**不再出现** `new EventSource` / 异步迭代器 / `setTimeout(run` 3s 重连。
 2. 会话消息经总线到达: 发消息后打字机流式增量正常, 消息完整、无重复 (尤其不出现"你好你好"式占位叠加)。
-3. 与端口面板/提问命令同时使用时, Network 中 `/global/event` 仅一条。
+3. 与端口面板同时使用时, Network 中 `/global/event` 仅一条 (chat 与 ports 共用同一条 SSE, 由消息总线归一)。
 
 ### 2.2 流式与 busy 回归
 
@@ -96,7 +96,7 @@
 | --- | --- | --- |
 | 2.1-1 | ⏳ | Chat.tsx 无 new EventSource / 无 3s 重连 |
 | 2.1-2 | ⏳ | 打字机流式完整无重复 |
-| 2.1-3 | ⏳ | 三功能同用 /global/event 仅一条 |
+| 2.1-3 | ⏳ | 与端口面板共用 /global/event 仅一条 |
 | 2.2-1 | ⏳ | delta 逐字 + updated 不丢 part |
 | 2.2-2 | ⏳ | busy/停止按钮/切回不悬挂 |
 | 2.2-3 | ⏳ | idle 单次 loadMessages, 无 HTTP 洪流 |

@@ -1,4 +1,4 @@
-# 提问命令设计:Ask 无头 AI 通道 (workspace 修复 + 硬化)
+# 无头 ask 命令设计:workspace 修复 + 硬化
 
 ## 1. 设计说明
 
