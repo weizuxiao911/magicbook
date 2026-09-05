@@ -1,8 +1,8 @@
 # Docker 产物目录 (~/.numas) 挂载点与扩展注册功能设计与测试用例
 
-> 目标: 把镜像内程序产物从单一 `/root/.numas` 细分为 **exec / ui / extensions / registry** 四个
-> 可挂载点, 内置默认产物 (交付即用) + 允许 `-v` volume 覆盖 (升级/替换不重建镜像);
-> registry 服务以本地产物单文件形态内置并由 entrypoint 拉起, 扩展 (vsix) 打包产物全链路进镜像。
+> 目标: 把镜像内程序产物细分为 **exec / ui / extensions** 挂载点 (内置默认产物 + `-v` 可覆盖);
+> 扩展市场由 **opencode fork 内置 /extensions 控制器** 提供 (扫描 vsix 目录, 动态识别),
+> 不跑独立 registry 进程、不走端口反代; 扩展 (vsix) 打包产物全链路进镜像.
 
 ## 1. 设计说明
 
@@ -13,42 +13,41 @@
 │
 ├── /app                      工作区根 (explorer 只见用户文件; 默认 workdir, NUMAS_WORKDIR 可切)
 └── /root/.numas/             程序根 (镜像内置默认, 每子目录可被 -v volume 覆盖)
-    ├── exec/opencode         opencode 单二进制 (本地产物 COPY, OPENCODE_ARTIFACT 定 arch)
+    ├── exec/opencode         opencode 单二进制 (含内置 /extensions 市场控制器; OPENCODE_ARTIFACT 定 arch)
     ├── ui/                   sumi web 静态产物 (entrypoint 默认 --web-ui /root/.numas/ui)
-    ├── registry/             registry-server 单文件 (本地产物 bun 编译, 无 node 依赖)
-    └── extensions/           registry 数据根 (metadata.json + kt-ext 解包静态, 默认内置)
+    └── extensions/           vsix 扩展包集合 (--extensions-dir; 与工程 registry/vsix 同构)
 ```
 
 ### 1.2 设计原则
 
-- **内置默认 + 可覆盖**: 四个目录镜像内都带默认产物, 开箱即用; 运维 `-v host:/root/.numas/<sub>` 覆盖任一目录即替换对应能力, 不重建镜像
-- **零容器内编译**: exec / ui / registry-server / extensions 数据全部由本地产物流程产出, 容器只 COPY + 跑
-- **registry 无 node 依赖**: registry-server 用 bun 本地交叉编译为单文件 (与 exec 同构), 容器不再装 node
-- **registry 能力**: ① 扫描 .vsix 集合动态生成 metadata + 解包静态分发 (kt-ext 协议), **新增 .vsix 动态可识别** (目录 mtime 失效缓存, 无需重启/重建); ② 加载目录可指定 (`--vsix-dir <path>` / env `VSIX_DIR`, 默认 `/root/.numas/extensions`, 开发环境默认 `registry/vsix`)
-- **registry 数据与程序分离**: `extensions/` 是数据 (挂载热更新 .vsix), `registry/` 是程序 (版本随镜像)
-- **workdir 与程序根正交**: 工作区根 (/app) 与 ~/.numas 无耦合; 换 workdir 不影响产物加载
+- **内置默认 + 可覆盖**: 各目录镜像内带默认产物, 开箱即用; 运维 `-v host:/root/.numas/<sub>`
+  覆盖即替换对应能力, 不重建镜像
+- **零容器内编译**: exec / ui / extensions 全部由本地产物流程产出, 容器只 COPY + 跑
+- **扩展市场内置 (关键架构决策)**: 独立 registry 服务 (node :7790 + opencode /proxy 反代) 已废弃 —
+  脆弱点: 容器需第二进程; /proxy 依赖端口 scan + lsof (容器缺 lsof 全挂); scan 3s 窗口竞态。
+  改为 opencode fork 内置 `/extensions` 同源端点 (扫描 .vsix → metadata + 静态分发),
+  单进程无竞态; 历史对比见 §1.3
+- **extensions 动态添加**: 目录签名 (mtime/size) 失效缓存, 新 .vsix 放入即自动识别
+- **workdir 与程序根正交**: 工作区根 (/app) 与 ~/.numas 无耦合
 
 ### 1.3 核心链路
 
 ```
-本地产物链 (docker-build.sh, 每步产物缺失自动构建 / --force 强制):
-  sumi npm run build                → sumi/dist          → COPY → /root/.numas/ui/
-  opencode NUMAS_TARGET 交叉编译     → dist/opencode-*   → COPY → /root/.numas/exec/opencode
-  extensions/* 各自打包 .vsix        → registry/vsix/*.vsix  ──COPY──→ /root/.numas/extensions/
-  registry bun build --compile     → registry-server     → COPY → /root/.numas/registry/
-       (server 内置: 扫描 .vsix → metadata.json + 解包缓存 → 静态分发)
+本地产物链 (docker-build.sh, 每步产物缺失自动构建 / 强制重建 flag):
+  step1 sumi build               → sumi/dist         → COPY → ui/
+  step2 opencode NUMAS_TARGET 交叉编译 → dist/opencode-linux-<arch> → COPY → exec/ (含 /extensions)
+  step3 extensions npm run package → registry/vsix/*.vsix → COPY → extensions/
+  step4 docker buildx 组装 (ubuntu 24.04 + COPY + tini entrypoint)
 
-entrypoint.sh 拉起顺序:
-  1) cd $WORKDIR (/app)
-  2) 起 registry-server (默认 --vsix-dir /root/.numas/extensions, PORT=7790, 监听 127.0.0.1):
-       扫描 .vsix 集合 (目录 mtime 失效缓存) → 动态生成 metadata + 解包静态
-  3) exec opencode web --web-ui /root/.numas/ui --registry /proxy/7790 ...
-     (前端 __APP_CONFIG__.registryBaseUrl=/proxy/7790 → 同源经 opencode /proxy 反代到容器内 7790)
+运行 (单进程):
+  opencode web --web-ui /root/.numas/ui --registry /extensions --extensions-dir /root/.numas/extensions
+    ├─ 前端 registryBaseUrl=/extensions (同源): metadata + 扩展静态资源直出
+    ├─ 外部市场资产 (uri 带 authority, 如 alipay CDN 图标) 仍走原 CDN (前端分流)
+    └─ 扩展更新: 新 .vsix 放挂载目录, 刷新/重拉 metadata 即识别 (动态)
 
-扩展动态添加 (不改镜像/不重启服务):
-  1) 新 .vsix 放入挂载目录 (docker run -v host/exts:/root/.numas/extensions)
-  2) sumi 重新拉 /metadata.json → 新条目出现 → 前端加载新扩展
-  (开发期等价: registry-server --vsix-dir <本地 registry/vsix> 直接跑)
+历史形态对比 (已废弃):
+  独立 registry 服务 (:7790) + --registry /proxy/7790 反代
+    → 第二进程 + 端口 scan/lsof 依赖 + 3s 窗口竞态 (容器缺 lsof 即全挂)
 ```
 
 ## 2. 验收标准
@@ -80,21 +79,22 @@ entrypoint.sh 拉起顺序:
 - X.5-3 `-e PORT=8080` + `-p 8080:8080` 生效
 
 ## 3. 待确认/待验证项
-- opencode fork `/proxy/<port>` 对容器内 127.0.0.1:7790 的反代行为 (registryBaseUrl 相对路径支持) — 需要读 fork proxy 实现后定 entrypoint 默认参数形态
-- registry-server 改造细节: 扫描 .vsix 集合 → metadata + 解包缓存 (吸收现有 src/build.js 能力); 目录 mtime 失效缓存粒度; bun build --compile 兼容性 (`__dirname` 硬编码 → env/参数)
-- 前端"动态添加"刷新粒度: sumi extension.service 重新拉 metadata 即可识别 (页面级刷新 or 轮询重拉), 是否做自动热加载另行评估
+- ~~opencode /proxy 反代容器内 registry 行为~~ → 已废弃 (改内置 /extensions, 无反代依赖)
+- ~~registry-server bun 编译兼容性~~ → 已废弃 (能力并入 opencode fork)
+- 前端"动态添加"刷新粒度: 页面/重新拉 metadata 即识别 (轮询热加载另行评估, 非阻塞)
+- 外部市场资产 (带 authority) 分流: 已实现并验证 (图标 CDN 200)
 
-## 4. 改造清单
-- registry: 重写/扩展 server.js → 单文件 registry-server:
-  - CLI/env: `--vsix-dir <path>` (默认 /root/.numas/extensions, dev 默认 registry/vsix), `PORT`(7790), 可选 certs
-  - 能力 1 (动态添加): 请求 metadata / 静态资源时按目录 mtime 失效缓存, 新增 .vsix 自动入 metadata + 解包缓存
-  - 能力 2 (指定目录): --vsix-dir 参数化, 目录即 .vsix 集合 (与工程 registry/vsix 同构)
-  - 兼容 bun build --compile: 路径全部 env/argv, 不依赖 __dirname 布局
-- 本地产物链 (docker-build.sh): extensions 打包 step (缺失/--force 时跑各扩展打包到 registry/vsix) + registry-server 单文件编译 step
-- Dockerfile: /root/.numas 四子目录 + COPY 产物 (extensions = registry/vsix/*.vsix; registry = registry-server 单文件)
-- entrypoint.sh: registry 拉起段 (--vsix-dir 默认 /root/.numas/extensions); --web-ui/--registry 默认指向新路径
-- .dockerignore: 白名单放行 registry/vsix + registry/src(编译用) 等所需目录
-- 前端: registryBaseUrl 相对路径 (/proxy/7790) 兼容性确认 (extension.service.ts fetch 同源即可)
+## 4. 改造清单 (完成态)
+- opencode fork: `src/server/extensions-route.ts` 内置 /extensions 控制器 (adm-zip 扫 vsix,
+  目录签名失效缓存动态识别; metadata uri 不带 authority); `--extensions-dir` 参数;
+  `--registry` 默认 `/extensions` 注入前端; `Server.listen`/`createRoutes` 透传
+- opencode fork 版本命名: `numas-v<numas根version>-<ts>` (packages/script/src/index.ts)
+- sumi: `extension.service.ts` registryBaseUrl 相对路径归一化 + 静态资源 authority 分流
+  (本地扩展 → registryBaseUrl, 市场资产 → 原 CDN); webpack 默认 registry `/extensions`
+- Dockerfile: 三挂载点 exec/ui/extensions + COPY 产物; runtime 装 lsof (端口 scan 依赖, 保留)
+- entrypoint.sh: `--extensions-dir`/`--registry /extensions`/`--web-ui` 默认; 无 registry 进程段
+- docker-build.sh: 4 步产物链 (sumi/opencode/extensions vsix/docker); 产物复用 + 强制重建 flag
+- 废弃: 独立 registry 服务入镜像 (registry/src/* 保留为 dev/vsix 打包工具, 不再打包/启动)
 
 ## 5. 执行记录
 | 用例 | 结果 | 备注 |
