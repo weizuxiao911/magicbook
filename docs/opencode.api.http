@@ -1,6 +1,0 @@
-### 获取 path 必须传 header x-opencode-directory ！！！
-GET http://localhost:24096/path?directory=/Users/weizuxiao/Documents/2026春季学期实验
-x-opencode-directory: %2FUsers%2Fweizuxiao%2FDocuments%2F2026%E6%98%A5%E5%AD%A3%E5%AD%A6%E6%9C%9F%E5%AE%9E%E9%AA%8C
-
-### 获取 path 不传 header x-opencode-directory 定位的是启动位置！！！！
-GET http://localhost:24096/path?directory=/Users/weizuxiao/Documents/2026春季学期实验
