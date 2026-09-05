@@ -7,6 +7,26 @@
     <meta name="description" content="Numas — 牛马新伙伴,未来我说了算" />
     <meta name="theme-color" content="#6d5ef5" />
 
+    <script>
+      // numas: 冷启动首帧预置布局态, 消除 left slot「先折叠(49px)后展开」的闪烁.
+      // 必须在框架 bundle 执行前运行: 框架首帧 SplitPanel 宽度由 localStorage 'layout'
+      // 决定 (getStorageValue), 无该 key 时 left 按 49px 折叠渲染, 待 onDidStart
+      // restoreTabbarService 消费 defaultPanels 后才展开 → 肉眼可见闪烁.
+      // 仅当 'layout' key 不存在(从未使用)时写默认展开态; 用户一旦折叠/拖拽, 框架即写入
+      // 该 key, 此后一律尊重用户态, 永不覆盖. size 对齐 App.tsx panelSizes, 避免宽度跳变.
+      (function () {
+        try {
+          if (!localStorage.getItem('layout')) {
+            localStorage.setItem('layout', JSON.stringify({
+              left: { currentId: 'explorer', size: 268 },
+              right: { currentId: 'chat-panel', size: 468 },
+              bottom: { currentId: '' },
+            }));
+          }
+        } catch (e) { /* localStorage 不可用时退化为框架默认行为 */ }
+      })();
+    </script>
+
     <style>
       html,
       body {
