@@ -186,6 +186,21 @@ graph TD
 1. `extensions` 仅通过 `commands` 契约或 codeblitz `IFileServiceClient` 访问能力, **禁止直连 service 内部实现**
 2. `service` 只被 `commands` 与上层 `extensions` 通过注入接口使用
 3. 所有对 opencode 的访问统一经全局 SDK 单例 (`__APP_OPENCODE__`)
+4. **扩展间通信铁律 (vscode 标准)**: 内置拓展之间**禁止直接 import / DI 注入其它拓展的 token/interface/实现**
+   (会制造跨拓展耦合, 单个拓展无法独立加载/卸载)。扩展能力必须**暴露为全局契约**后由调用方经
+   标准机制消费, 契约形态按优先级:
+   - **全局命令** (首选): 能力方 `CommandContribution.registerCommand` 注册 vscode 风格命令
+     (如 `numas.browser.open`); 调用方 `CommandService.executeCommand('numas.browser.open', url)`
+     — 命令 id 字符串即跨拓展 API, 双方不互相 import
+   - **消息总线**: service/event/eventBus.ts 事件 (全客户端唯一 /global/event SSE) — 解耦广播
+   - **codeblitz 全局服务注入**: 框架层接口 (IFileServiceClient / CommandService / 编辑器等),
+     非某拓展私有
+   反例: PortsPanel 直接 import browser 拓展的 `BrowserToken` 注入 (2026-09 已改回
+   `executeCommand('numas.browser.open')` 并沉淀至 AGENTS.md §2.2)
+5. **业务功能模块范式**: 业务功能必须**按用户交互行为组织、遵循 codeblitz 兼容拓展标准开发**,
+   再通过框架扩展点 (ResourceProvider / EditorComponent / CommandContribution / opener /
+   scheme 等) **注册到 codeblitz 框架承载业务数据与交互**, 不在框架外自建承载层;
+   模块间交互一律走全局通信机制 (规则 4), **禁止拓展间直连或引用**
 
 ### 3.2 依赖注入体系
 

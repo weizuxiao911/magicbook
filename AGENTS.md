@@ -87,6 +87,22 @@
 - service 层是 commands / codeblitz / 其他 service 调用的基础设施, 不暴露给 extensions 直调
 - commands 层定义对外 API / token / interface, 是 service 与 codeblitz 之间的契约
 
+**扩展间通信铁律 (vscode 标准)**:
+- **内置拓展之间禁止直接 import / DI 注入其它拓展的 token/interface/实现** (跨拓展耦合,
+  单拓展无法独立加载/卸载). 扩展能力必须**暴露为全局契约**后由调用方经标准机制消费,
+  按优先级选型:
+  1. **全局命令** (首选): 能力方 `CommandContribution.registerCommand` 注册 vscode 风格命令
+     (如 `numas.browser.open`, 命令 id 字符串即跨拓展 API); 调用方
+     `CommandService.executeCommand('numas.browser.open', url)` — 双方不互相 import
+  2. **消息总线**: `service/event/eventBus.ts` 事件 (唯一 /global/event SSE) — 解耦广播
+  3. **codeblitz 全局服务注入**: 仅限框架层接口 (IFileServiceClient / CommandService /
+     编辑器等), 非某拓展私有
+- **业务功能模块范式**: 业务功能按用户交互行为、遵循 codeblitz 兼容拓展标准开发, 通过框架
+  扩展点 (ResourceProvider / EditorComponent / CommandContribution / opener / scheme 等)
+  **注册到框架承载业务数据与交互**, 不在框架外自建承载; 模块间交互走上述全局通信, 禁止直连
+- 反例 (2026-09 修正): PortsPanel 曾直接 import browser 拓展的 `BrowserToken` 注入 →
+  改回 `executeCommand('numas.browser.open', proxyUrl)` (见 docs/AI 工作台总体设计.md 依赖规则 4/5)
+
 ### 2.3 跨平台路径铁律
 
 > **路径以 opencode 服务端真实路径为单一事实源. 禁止自行拼接/重写/添加前导 `/`. 任何路径处理走 `sumi/src/infra/path.ts` 工具函数, 不要直接写正则/字符串拼接.**
