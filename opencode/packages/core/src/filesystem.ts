@@ -115,7 +115,10 @@ const baseLayer = Layer.effect(
       const absolute = path.resolve(location.directory, FSUtil.windowsPath(input ?? "."))
       if (!FSUtil.contains(location.directory, absolute))
         return yield* Effect.die(new Error("Path escapes the location"))
-      const real = yield* fs.realPath(absolute).pipe(Effect.orDie)
+      // 文件/父目录不存在时 realPath 直接 ENOENT die (到不了下方 fs.stat 抛的标准
+      // PlatformError NotFound, handler 的 fileSystem 包装识别不到 → 裸 500). 回退用
+      // absolute, 让 fs.stat 给出权威 NotFound → 404. (与上方 root realPath orElseSucceed 同写法)
+      const real = yield* fs.realPath(absolute).pipe(Effect.orElseSucceed(() => absolute))
       if (!FSUtil.contains(root, real)) return yield* Effect.die(new Error("Path escapes the location"))
       return { absolute, real, directory: location.directory, root }
     })

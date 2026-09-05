@@ -75,12 +75,17 @@ export class OpencodeServiceImpl implements IOpencodeService, ClientAppContribut
           || '';
         if (fallbackWs) hostCwd = normalizeCwdPath(fallbackWs);
         if (typeof resp.home === 'string' && resp.home) hostHome = normalizeCwdPath(resp.home);
+        // 锚点立即注入: 框架 storage 早期 (建 codeblitz 虚拟家目录 /home/.codeblitz) 在
+        // whenHostAnchors 等 home 锚点, 不能被下方 probeDefaultShell (/pty/shells 串行请求)
+        // 拖后 → /path 一返回就注入, 让早期 fs 请求拿到真实 home.
+        setHostAnchors({ directory: hostCwd || cwd, home: hostHome });
         defaultShell = await probeDefaultShell(sdk, cwd);
       }
     } catch { /* 忽略, 走默认 */ }
 
     // 宿主路径锚点: 所有发往 opencode 的路径只能锚定这里 (directory/home),
     // codeblitz 虚拟路径 (/home, /workspace, /home/AppData/Roaming) 由 toHostPath 映射.
+    // (sdk 为 null / /path 失败时的兜底; 成功时上面已注入, setHostAnchors 幂等合并)
     setHostAnchors({ directory: hostCwd || cwd, home: hostHome });
 
     // 2.1 hostCwd 兜底

@@ -26,7 +26,7 @@ let _anchors: HostAnchors | null = null;
 let _resolveReady: (() => void) | null = null;
 const _ready = new Promise<void>((resolve) => { _resolveReady = resolve; });
 
-/** initRuntime /path 响应后注入. 部分字段缺失时合并保留旧值. */
+/** initRuntime /path 响应后注入. directory + home 一次性同时注入 (同源 /path). */
 export function setHostAnchors(a: Partial<HostAnchors>): void {
   const prev = _anchors || { directory: '', home: '' };
   const next: HostAnchors = {
@@ -34,13 +34,16 @@ export function setHostAnchors(a: Partial<HostAnchors>): void {
     home: normalizeCwdPath(a.home || prev.home || ''),
   };
   _anchors = next;
-  if (next.directory) {
-    if (typeof window !== 'undefined' && next.home) {
-      (window as any).__APP_CONFIG__ = {
-        ...((window as any).__APP_CONFIG__ || {}),
-        userHome: next.home,
-      };
-    }
+  if (typeof window !== 'undefined' && next.home) {
+    (window as any).__APP_CONFIG__ = {
+      ...((window as any).__APP_CONFIG__ || {}),
+      userHome: next.home,
+    };
+  }
+  // directory 与 home 同源 (/path) 同时注入, 两者都就绪才算 ready:
+  // 框架 storage 早期会建 codeblitz 虚拟家目录 /home/.codeblitz, 需 home 锚点映射;
+  // 只等 directory 会让 home 尚空时提前放行 → toHostPath 映射 /home 失败 → FileNotFound.
+  if (next.directory && next.home) {
     _resolveReady?.();
     _resolveReady = null;
   }
@@ -52,9 +55,9 @@ export function getHostAnchors(): HostAnchors {
   return { directory: normalizeCwdPath(effectiveCwd() || ''), home: '' };
 }
 
-/** 等待锚点就绪 (directory 可用即 resolve; 超时返回当前最佳快照, 不阻塞调用方). */
+/** 等待锚点就绪 (directory + home 同时可用才 resolve; 超时返回当前最佳快照, 不阻塞调用方). */
 export async function whenHostAnchors(timeoutMs = 3000): Promise<HostAnchors> {
-  if (_anchors?.directory) return _anchors;
+  if (_anchors?.directory && _anchors?.home) return _anchors;
   await Promise.race([
     _ready,
     new Promise<void>((r) => setTimeout(r, timeoutMs)),

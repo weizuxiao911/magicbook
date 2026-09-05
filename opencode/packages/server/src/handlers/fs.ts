@@ -17,15 +17,25 @@ import { response } from "../location"
 const DEBOUNCE_MS = 200
 const TICK_MS = 100
 
-/** Map filesystem NotFound (surfaced as a die via `Effect.orDie` in core) to a typed 404. */
+/** Map filesystem NotFound (surfaced as a die via `Effect.orDie` in core) to a typed 404.
+ *  effect v4 beta 下 orDie 抛出的 not-found defect 形状不固定: 可能是 PlatformError
+ *  (reason._tag==='NotFound'), 也可能带 code='ENOENT' 或 message 含 ENOENT. 逐一识别,
+ *  避免文件/目录不存在时漏成裸 500 (前端只能当未知错误, 控制台刷 500 红字). */
 const fileSystem = <A, R>(self: Effect.Effect<A, never, R>) =>
   self.pipe(
     Effect.catchCause((cause) => {
       const die = cause.reasons.find(Cause.isDieReason)
-      const error = die?.defect
-      if (error instanceof PlatformError && error.reason._tag === "NotFound") {
-        const p = typeof error.reason.pathOrDescriptor === "string" ? error.reason.pathOrDescriptor : ""
-        return Effect.fail(new FileNotFoundError({ path: p, message: error.message }))
+      const error = die?.defect as { reason?: { _tag?: string; pathOrDescriptor?: unknown }; code?: string } | undefined
+      const reason = error?.reason
+      const msg = error instanceof Error ? error.message : String(error ?? "")
+      const notFound =
+        (error instanceof PlatformError && reason?._tag === "NotFound") ||
+        reason?._tag === "NotFound" ||
+        error?.code === "ENOENT" ||
+        /ENOENT|no such file|not found/i.test(msg)
+      if (notFound) {
+        const p = typeof reason?.pathOrDescriptor === "string" ? reason.pathOrDescriptor : ""
+        return Effect.fail(new FileNotFoundError({ path: p, message: msg }))
       }
       return Effect.failCause(cause)
     }),
@@ -45,12 +55,15 @@ export const FileSystemHandler = HttpApiBuilder.group(Api, "server.fs", (handler
         }).pipe(fileSystem),
       )
       .handle("fs.list", (ctx) =>
+        // fileSystem 必须在 response() 外层: response 经 LocationMiddleware provide, 其内层
+        // fail 的 typed error (FileNotFoundError) 无法被 HttpApi 正确序列化成 404 (漏成 500);
+        // 放到 response 外与 fs.read (handleRaw .pipe(fileSystem)) 同位才生效.
         response(
           Effect.gen(function* () {
             const fs = yield* FileSystem.Service
             return yield* fs.list(ctx.query)
-          }).pipe(fileSystem),
-        ),
+          }),
+        ).pipe(fileSystem),
       )
       .handle("fs.find", (ctx) =>
         response(
@@ -65,8 +78,8 @@ export const FileSystemHandler = HttpApiBuilder.group(Api, "server.fs", (handler
           Effect.gen(function* () {
             const fs = yield* FileSystem.Service
             return yield* fs.stat({ path: ctx.query.path })
-          }).pipe(fileSystem),
-        ),
+          }),
+        ).pipe(fileSystem),
       )
       .handle("fs.write", (ctx) =>
         Effect.gen(function* () {
@@ -80,7 +93,7 @@ export const FileSystemHandler = HttpApiBuilder.group(Api, "server.fs", (handler
         Effect.gen(function* () {
           const fs = yield* FileSystem.Service
           yield* fs.mkdir(ctx.payload)
-        }),
+        }).pipe(fileSystem),
       )
       .handle("fs.remove", (ctx) =>
         Effect.gen(function* () {
