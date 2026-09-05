@@ -10,9 +10,12 @@
 **/node_modules
 **/node_modules/**
 
-# dist (产物在 builder 阶段重 build; runtime 阶段另拷 binary)
+# dist: 轻量组装镜像需 COPY 的产物目录白名单 (sumi/dist + opencode dist), 其余 dist 一律排除
 **/dist
-**/dist/**
+!sumi/dist
+!sumi/dist/**
+!opencode/packages/opencode/dist
+!opencode/packages/opencode/dist/**
 
 # 构建缓存 marker
 **/.numas-*
