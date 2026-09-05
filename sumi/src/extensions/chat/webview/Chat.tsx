@@ -186,6 +186,9 @@ export const Chat: React.FC = () => {
   const [mentionQuery, setMentionQuery] = useState('');
   const FILE_TYPE_DIR = 2;
   const [error, setError] = useState('');
+  /** 会话级错误 (session.error 事件): 上游 502/限流等最终失败 → 显式错误条告知用户.
+   *  与 setError (API 调用错误) 分开: 事件错误挂在会话上, 切会话/重试后清除 */
+  const [sessionErrors, setSessionErrors] = useState<Record<string, { name?: string; message: string; at: number }>>({});
   const [notice, setNotice] = useState('');
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showNotice = useCallback((msg: string) => {
@@ -635,6 +638,27 @@ export const Chat: React.FC = () => {
               }
               break;
             }
+            case 'session.error': {
+              // 生成最终失败 (上游 502/限流/网络等, 服务端重试耗尽后发): 显式告知用户.
+              // 用户主动停止 (abort) 也走 error 事件 (MessageAbortedError) → 静默, 不弹错误.
+              const esid = properties.sessionID as string | undefined;
+              const errObj: any = properties.error || {};
+              const errName: string = typeof errObj?.name === 'string' ? errObj.name : '';
+              const rawMsg: string = typeof errObj?.data?.message === 'string'
+                ? errObj.data.message
+                : (typeof errObj?.message === 'string' ? errObj.message : '');
+              if (!esid) break;
+              if (/abort/i.test(errName) || /AbortError|aborted|interrupt/i.test(rawMsg)) {
+                setStatusBySession((prev) => ({ ...prev, [esid]: { type: 'idle' } }));
+                break;
+              }
+              // 提炼可读消息: 截首行 + 限长 (上游 message 可能夹带完整 responseBody)
+              const oneLine = rawMsg.split('\n').map((s: string) => s.trim()).filter(Boolean)[0] || '模型服务出错, 请稍后重试';
+              const msg = oneLine.length > 220 ? oneLine.slice(0, 220) + '…' : oneLine;
+              setSessionErrors((prev) => ({ ...prev, [esid]: { name: errName, message: msg, at: Date.now() } }));
+              setStatusBySession((prev) => ({ ...prev, [esid]: { type: 'idle' } }));
+              break;
+            }
             case 'question.asked': {
               // A2UI 提问: 存 que_xxx (持久化, QuestionCard 用它取 requestID); 卡片在消息流内直接交互, 无弹窗
               const qid = properties.id;
@@ -810,6 +834,8 @@ export const Chat: React.FC = () => {
           })()
         : undefined;
       if (sid) setStatusBySession((prev) => ({ ...prev, [sid]: { type: 'busy' } }));
+      // 新请求已发出 → 清除该会话历史错误 (重试/新问题都不该再残留旧错误条)
+      if (sid) setSessionErrors((prev) => (prev[sid] ? { ...prev, [sid]: undefined as any } : prev));
       // promptAsync: fire-and-forget, 回复由 SSE 事件流 (message.part.updated) 打字机式渲染
       const parts: any[] = [{ type: 'text', text: fullText }];
       if (images.length) {
@@ -833,6 +859,26 @@ export const Chat: React.FC = () => {
       setApiError(e);
     }
   }, [busy, sessionID, currentAgent, currentModel, models, client, setApiError]);
+
+  // 当前会话的生成错误 (session.error 事件渲染用)
+  const curSessionError = sessionID ? sessionErrors[sessionID] : undefined;
+  const clearSessionError = useCallback(() => {
+    if (!sessionID) return;
+    setSessionErrors((prev) => (prev[sessionID] ? { ...prev, [sessionID]: undefined as any } : prev));
+  }, [sessionID]);
+
+  /** 重试最后一条用户消息 (错误条"重试"按钮): 取 rows 最后一条真实 user 文本重发 */
+  const retryLastPrompt = useCallback(async () => {
+    if (!sessionID || !ready || !client) return;
+    const lastUser = [...rows].reverse().find((r) => r.role === 'user' && !String(r.id).startsWith('local-'));
+    const text = lastUser?.parts
+      ?.map((p: any) => (p.type === 'text' ? p.text : ''))
+      .join('')
+      .trim();
+    if (!text) return;
+    clearSessionError();
+    await sendPrompt(text);
+  }, [sessionID, ready, client, rows, clearSessionError, sendPrompt]);
 
   const onSend = useCallback(async () => {
     setError('');
@@ -1490,6 +1536,25 @@ export const Chat: React.FC = () => {
         <div className="chat__error">
           <span className="chat__error-text">{error}</span>
           <button onClick={() => { setError(''); if (sessionID) loadMessages(sessionID); }}>重试</button>
+        </div>
+      )}
+
+      {/* 会话生成错误条 (session.error 事件): 显式告知上游 502/限流等失败, 带重试/关闭 */}
+      {curSessionError && (
+        <div className="chat__error">
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>
+              AI 回复失败{curSessionError.name ? ` · ${curSessionError.name.replace(/Error$/, '')}` : ''}
+            </div>
+            <div style={{ opacity: 0.85, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
+              {curSessionError.message}
+            </div>
+            <div style={{ opacity: 0.6, marginTop: 2, fontSize: 11 }}>
+              可能是模型服务商过载或网络问题, 可稍后重试或切换模型
+            </div>
+          </div>
+          <button onClick={() => retryLastPrompt()}>重试</button>
+          <button onClick={() => clearSessionError()}>×</button>
         </div>
       )}
 
