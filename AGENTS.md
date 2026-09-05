@@ -376,3 +376,9 @@ AI **仍需 `question`**:
 - **问题描述**: 静态资源 provider 的 resolveStaticResource "简化"成一律 `registryBaseUrl + path`, 丢掉原实现的 `uri.authority` 分流语义 → codeblitz 市场资产 (alipay CDN 的 vsicons 图标, uri 自带 authority) 被指到本地 registry → 图标全 404.
 - **复现路径**: 改 kt-ext 静态解析后不对比旧 dist 视觉/网络行为.
 - **解决方案**: 改动前先理解字段语义 (authority = 外部市场 host, 无 authority = 本地 registry 扩展); 改动后用旧 dist 页面做网络级对照 (图标请求 host), 再下"简化"结论.
+
+#### 18. 容器缺 lsof → opencode 端口 scan 全空 → /proxy 反代 404 (非竞态)
+
+- **问题描述**: fork 的 /proxy 只代理 "known ports" (scan + whitelist); 容器精简镜像没装 lsof → scan `listenCands=0` → /proxy/7790 永远 404. 排查时先看到页面 500ms 请求失败, 误判为 scan 3s 窗口竞态.
+- **复现路径**: 容器内起服务 (绑 0.0.0.0) 后经 /proxy/<port> 访问持续 404; docker logs 里 `[ports] scan: listenCands=0`.
+- **解决方案**: 看 scan 日志区分竞态 (listenCands>0 但尚未收录) vs 工具缺失 (listenCands=0); 容器镜像 apt 装 lsof (scan POSIX 用 lsof). 后续架构已绕开该链: 扩展市场改 opencode 内置 /extensions 同源端点, 无端口反代依赖.
