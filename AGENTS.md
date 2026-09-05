@@ -299,8 +299,8 @@ function defaultDirectory(request, _url) {
 | 文档 | 内容 |
 | --- | --- |
 | [README.md](./README.md) | 给用户看的终态架构 + 快速开始 + CLI + FAQ |
-| [docs/AI 工作台总体架构设计.md](./docs/AI%20工作台总体架构设计.md) | 总体架构 + 客户端分层 + 三种部署形态 + 关键技术决策 |
+| [docs/AI 工作台总体设计.md](./docs/AI%20工作台总体设计.md) | 总体架构 + 客户端分层 + 三种部署形态 + 关键技术决策 |
 | [docs/AI 工作台功能清单.md](./docs/AI%20工作台功能清单.md) | 已落地功能勾选清单 |
-| [docs/文件系统设计与测试用例.md](./docs/文件系统设计与测试用例.md) | fs 设计 (DynamicRequest read + WriteSyncFS write + OverlayFS) + 验收 26 用例 |
+| [docs/文件系统服务设计与测试用例.md](./docs/文件系统服务设计与测试用例.md) | fs 设计 (DynamicRequest read + WriteSyncFS write + OverlayFS) + 验收 26 用例 |
 | [docs/标注功能设计与测试用例.md](./docs/标注功能设计与测试用例.md) | PDF 标注设计 + AI ask popover + 批注演示 |
 | [opencode/AGENTS.md](./opencode/AGENTS.md) | opencode fork 内部开发约定 (Effect-TS / 模块 shape / 测试 / typecheck) |

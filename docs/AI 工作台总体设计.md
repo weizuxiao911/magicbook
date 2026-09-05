@@ -36,7 +36,7 @@ Numas (牛马们) 是一个面向"打工人"的 AI 辅助工作环境, 基于 co
 ```mermaid
 flowchart LR
     src[sumi 源码<br/>sumi/src + codeblitz] --> |npm run build<br/>webpack 独立构建| dist[sumi/dist<br/>静态资源]
-    dist --> |dev.js 增量镜像<br/>mirror cp(mtime + size)| app[opencode/packages/app/dist]
+    dist --> |dev.js 增量镜像<br/>mirror cp（mtime + size）| app[opencode/packages/app/dist]
     app --> |bun run build.ts --single --skip-install<br/>NUMAS_WEB_DIST 内嵌| bin[dist/opencode-os-arch/bin/opencode<br/>单进程一体产物]
 ```
 
@@ -52,9 +52,9 @@ flowchart LR
 ```mermaid
 graph TD
 
-    subgraph sumi[客户端 (codeblitz 构建 UI 容器, 内置消息总线)]
+    subgraph sumi[客户端 （codeblitz 构建 UI 容器, 内置消息总线）]
         direction TB
-        subgraph config[配置模块 (配置 codeblitz)]
+        subgraph config[配置模块 （配置 codeblitz）]
             direction TB
             app[全局定义]
             brand[品牌信息]
@@ -65,7 +65,7 @@ graph TD
             preferences[默认喜好]
         end
 
-        subgraph commands[指令接口 (接口定义, 依赖注入)]
+        subgraph commands[指令接口 （接口定义, 依赖注入）]
             direction TB
             iagent[智能体接口]
             ienv[系统环境接口]
@@ -73,7 +73,7 @@ graph TD
             iregistry[vsix 拓展接口]
         end
 
-        subgraph service[系统服务 (接口实现, 提供全局单例对象)]
+        subgraph service[系统服务 （接口实现, 提供全局单例对象）]
             direction TB
             agent[智能体服务]
             env[系统环境服务]
@@ -82,13 +82,13 @@ graph TD
             terminal[终端服务]
         end
 
-        subgraph extensions[内置拓展 (内置交互功能, 禁止拓展间直接依赖或调用)]
+        subgraph extensions[内置拓展 （内置交互功能, 禁止拓展间直接依赖或调用）]
             direction TB
-            actions[活动面板<br/>(面板切换、主题切换等)]
-            filepicker[文件选择器<br/>(用于选择工作目录切换工作空间)]
-            opentype[打开方式<br/>(用于实现文件打开方式切换)]
-            workspace[工作空间<br/>(用于全局维护工作目录选择和切换)]
-            welcome[主页<br/>(用于快速了解产品功能, 指导用户使用)]
+            actions[活动面板<br/>（面板切换、主题切换等）]
+            filepicker[文件选择器<br/>（用于选择工作目录切换工作空间）]
+            opentype[打开方式<br/>（用于实现文件打开方式切换）]
+            workspace[工作空间<br/>（用于全局维护工作目录选择和切换）]
+            welcome[主页<br/>（用于快速了解产品功能, 指导用户使用）]
         end
 
         service --> |实现接口|commands
@@ -99,7 +99,7 @@ graph TD
         service --> |全局单例|extensions
     end
 
-    subgraph opencode[opencode (AI 对话 / 文件系统 / 终端 PTY / 会话控制)]
+    subgraph opencode[opencode （AI 对话 / 文件系统 / 终端 PTY / 会话控制）]
         direction TB
         fss[文件系统]
         pty[伪终端]
@@ -108,16 +108,16 @@ graph TD
         more[更多...]
     end
 
-    subgraph rg[vsix 拓展服务器 (opensumi 兼容 vscode 拓展标准)]
+    subgraph rg[vsix 拓展服务器 （opensumi 兼容 vscode 拓展标准）]
         direction LR
-        rgvsx[vsix 安装包<br/>(*.vsix)]
-        rgb[构建工具<br/>(扫描解压, 生成 metadata.json)]
-        rgs[文件服务器<br/>(kt-ext 协议分发)]
+        rgvsx[vsix 安装包<br/>（*.vsix）]
+        rgb[构建工具<br/>（扫描解压, 生成 metadata.json）]
+        rgs[文件服务器<br/>（kt-ext 协议分发）]
         rgvsx --> |扫描解压| rgb --> |IExtensionBasicMetadata| rgs
     end
 
-    sumi --> |拓展注册<br/>(/metadata.json)|rg
-    sumi --> |文件读写、终端进程、消息总线、AI 对话<br/>(fs/*、pty/*、session/*、……)| opencode
+    sumi --> |拓展注册<br/>（/metadata.json）|rg
+    sumi --> |文件读写、终端进程、消息总线、AI 对话<br/>（fs/*、pty/*、session/*、……）| opencode
 ```
 
 ### 2.3 通信协议
@@ -225,10 +225,10 @@ classDiagram
   class PdfReaderView {
     -fileService: IFileServiceClient
     -popoverState: PopoverState
-    +handleRunTool(tool, base)
+    +handleRunTool（tool, base）
   }
   class AnnotPopover {
-    -onTool(tool, base)
+    -onTool（tool, base）
     -onCancel / onClose
     -generating
   }
@@ -250,18 +250,18 @@ classDiagram
     -fileTreeService: IFileTreeService
     -commandService: CommandService
     -editorService: WorkbenchEditorService
-    +list() +read() +write() +rm() +mkdirp() +move()
+    +list（） +read（） +write（） +rm（） +mkdirp（） +move（）
   }
   class RemoteTerminalService {
     -terminalClient: ITerminalService
-    +create2() +onMessage() +resize()
+    +create2（） +onMessage（） +resize（）
   }
   class AgentServiceImpl {
     -sdk: OpencodeClient
-    +initRuntime() +applyRuntime()
+    +initRuntime（） +applyRuntime（）
   }
   class AskService {
-    +ask(prompt, cb, opts)
+    +ask（prompt, cb, opts）
   }
 
   class IFileServiceClient
@@ -275,19 +275,19 @@ classDiagram
   PdfReaderView ..> IFileServiceClient : useInjectable
   PdfReaderView ..> AskService : ask 生成产物
   PdfReaderView ..> AnnotPopover : onTool/onColorChange
-  AnnotPopover ..> PdfReaderView : onTool(tool, base)
+  AnnotPopover ..> PdfReaderView : onTool（tool, base）
   OpenTypeContribution ..> QuickOpenService : @Autowired
   OpenTypeContribution ..> CommandRegistry : @Autowired
 
-  %% commands → service (契约)
-  FileSystemServiceImpl ..|> IFileSystem : implements (FsToken)
-  AgentServiceImpl ..|> IAgent : implements (AgentToken)
+  %% commands → service （契约）
+  FileSystemServiceImpl ..|> IFileSystem : implements （FsToken）
+  AgentServiceImpl ..|> IAgent : implements （AgentToken）
 
   %% service → 外部
   FileSystemServiceImpl ..> IFileServiceClient : @Autowired
   FileSystemServiceImpl ..> IFileTreeService : @Autowired
   FileSystemServiceImpl ..> WorkbenchEditorService : @Autowired
-  FileSystemServiceImpl ..> OpencodeClient : fs 写/读 (SDK)
+  FileSystemServiceImpl ..> OpencodeClient : fs 写/读 （SDK）
   RemoteTerminalService ..> ITerminalService : @Autowired
   RemoteTerminalService ..> OpencodeClient : pty 终端
   AgentServiceImpl ..> OpencodeClient : 单例 __APP_OPENCODE__
@@ -348,7 +348,7 @@ graph TD
         web[浏览器 / API 调用方]
     end
 
-    subgraph gw[gateway 控制面<br/>(Spring Cloud Gateway + WebFlux)]
+    subgraph gw[gateway 控制面<br/>（Spring Cloud Gateway + WebFlux）]
         direction TB
         dp[动态路由过滤器<br/>DynamicProxyFilter]
         rc[生命周期 API<br/>RuntimeController]
@@ -363,7 +363,7 @@ graph TD
     subgraph k8s[Kubernetes]
         direction TB
         ing[Ingress<br/>*.domain]
-        inst[实例<br/>Deployment + Service<br/>(实例 id 标签)]
+        inst[实例<br/>Deployment + Service<br/>（实例 id 标签）]
         pvc[持久化工作区<br/>PVC + 子路径]
     end
 
@@ -400,27 +400,27 @@ sequenceDiagram
     participant K as K8s
     participant P as 实例容器
 
-    C->>G: POST /runtime(x-user-id)
+    C->>G: POST /runtime（x-user-id）
     G->>R: 按 userId 查询
     alt 实例已存在
         R-->>G: RuntimeSnapshot
-        G-->>C: 200(复用, 可更新配置)
+        G-->>C: 200（复用, 可更新配置）
     else 实例不存在
         G->>G: 生成实例 id = rt-{userId}-{suffix}
-        G->>R: 原子写入 PENDING(TTL)
+        G->>R: 原子写入 PENDING（TTL）
         G->>G: 发布 SCHEDULED 事件
-        G->>K: createRuntime<br/>(Deployment + Service, 实例 id 标签)
-        K->>P: 拉起集成模式镜像<br/>(opencode web :24096)
+        G->>K: createRuntime<br/>（Deployment + Service, 实例 id 标签）
+        K->>P: 拉起集成模式镜像<br/>（opencode web :24096）
         loop 轮询就绪
             K->>K: Deployment ReadyReplicas ≥ 1 ?
         end
         alt 就绪
-            G->>R: 更新 RUNNING(续 TTL)
+            G->>R: 更新 RUNNING（续 TTL）
             G->>K: exec 注入 auth / scope 配置
-            G-->>C: 200(webuiUrl = {实例id}.{domain})
+            G-->>C: 200（webuiUrl = {实例id}.{domain}）
         else 超时
             G->>R: 更新 FAILED
-            G-->>C: 200(失败, 经 SSE 通知)
+            G-->>C: 200（失败, 经 SSE 通知）
         end
     end
 ```
@@ -435,20 +435,20 @@ sequenceDiagram
     participant R as Redis
     participant S as 实例 Service
 
-    alt 子域名请求(WebUI)
-        C->>G: GET /**(Host: {实例id}.{domain})
+    alt 子域名请求（WebUI）
+        C->>G: GET /**（Host: {实例id}.{domain}）
         G->>F: 提取实例 id
         F->>R: findByRuntimeId
-        R-->>F: RuntimeSnapshot(RUNNING)
+        R-->>F: RuntimeSnapshot（RUNNING）
         F->>F: 构造 K8s 内部 DNS → svc:24096
         F->>G: 覆盖 GATEWAY_REQUEST_URL_ATTR
-        G->>S: 转发(WebSocket 全量透传)
+        G->>S: 转发（WebSocket 全量透传）
         S-->>C: WebUI 响应
-    else /agent/** 请求(Agent API)
-        C->>G: POST /agent/**(x-user-id)
+    else /agent/** 请求（Agent API）
+        C->>G: POST /agent/**（x-user-id）
         G->>F: 提取 userId
         F->>R: findByUserId
-        R-->>F: RuntimeSnapshot(RUNNING)
+        R-->>F: RuntimeSnapshot（RUNNING）
         F->>F: 去 /agent 前缀 → svc:24096
         F->>G: 覆盖转发目标
         G->>S: 转发
@@ -480,7 +480,7 @@ sequenceDiagram
 graph TD
 
     subgraph fe[sumi 前端 · 独立部署]
-        stat[静态资源 sumi/dist<br/>(CDN / nginx / 任意静态服务器)]
+        stat[静态资源 sumi/dist<br/>（CDN / nginx / 任意静态服务器）]
         base[连接配置<br/>window.__APP_CONFIG__.baseUrl]
     end
 
@@ -494,8 +494,8 @@ graph TD
         i1[实例容器<br/>基于集成模式镜像<br/>实例 id 子域名]
     end
 
-    base --> |选项 A: 直连 opencode<br/>(同源或 CORS)| s1
-    base --> |选项 B: 走网关<br/>(云端多租户)| s2
+    base --> |选项 A: 直连 opencode<br/>（同源或 CORS）| s1
+    base --> |选项 B: 走网关<br/>（云端多租户）| s2
     s2 --> |动态分配 / 反向代理| i1
 ```
 
