@@ -58,6 +58,10 @@ export function normalizeUrl(input: string): { real: string; src: string; extern
   const host = u.hostname.toLowerCase();
   const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
   if (isLocal && u.port) {
+    // 已是反代形态 (…/proxy/<port>/…): 直接加载, 不再二次包裹 (否则 /proxy/24102/proxy/8123/)
+    if (/^\/proxy\/\d+(\/|$)/.test(u.pathname)) {
+      return { real, src: real, external: real };
+    }
     const base = appBaseUrl();
     if (base) {
       const rest = u.pathname.replace(/^\//, '') + u.search + u.hash;

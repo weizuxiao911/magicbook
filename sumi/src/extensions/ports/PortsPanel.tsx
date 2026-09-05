@@ -18,6 +18,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { notification } from '@opensumi/ide-components/lib/notification';
 import { useInjectable } from '@opensumi/ide-core-browser/lib/react-hooks/injectable-hooks';
+import { CommandService } from '@opensumi/ide-core-common';
 import { IFileServiceClient } from '@opensumi/ide-file-service';
 
 import { PortsToken, type IPortsService, type PortEntry } from '../../service/ports';
@@ -80,6 +81,8 @@ const STYLES = `
 .pf-opbtn:hover{background:var(--ai-hover,rgba(255,255,255,0.08));color:var(--ai-fg,#e5e7eb)}
 .pf-opbtn--open:hover{color:#4ade80;border-color:rgba(74,222,128,0.3)}
 .pf-opbtn--del:hover{color:#f87171;border-color:rgba(248,113,113,0.3)}
+.pf-opbtn--kill{color:#fca5a5}
+.pf-opbtn--kill:hover{color:#fff;background:rgba(239,68,68,0.28);border-color:rgba(248,113,113,0.5)}
 
 .pf-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 20px;color:var(--ai-fg-muted,#9ca3af);font-size:12.5px;min-height:280px;gap:14px}
 .pf-empty-title{font-size:13.5px;color:var(--ai-fg-muted,#d1d5db);font-weight:500;text-align:center}
@@ -118,6 +121,7 @@ const PlusIcon = () => (
 
 export const PortsPanel: React.FC = () => {
   const ports = useInjectable<IPortsService>(PortsToken);
+  const commandService = useInjectable<CommandService>(CommandService);
   const fileService = useInjectable<IFileServiceClient>(IFileServiceClient);
 
   const [entries, setEntries] = useState<PortEntry[]>([]);
@@ -232,12 +236,10 @@ export const PortsPanel: React.FC = () => {
         const label = fr?.name || (e.process ? `${e.process}` : '');
         notification.info({
           message: `检测到服务 :${e.port}${label ? ` [${label}]` : ''}`,
-          description: '点击访问应用',
+          description: '点击在内置浏览器打开',
           type: 'info',
           duration: 8,
-          onClick: () => {
-            window.open(ports.proxyUrl(e.port), '_blank', 'noopener');
-          },
+          onClick: () => openPort(e.port),
         });
       } else if (e.type === 'ports.closed') {
         setEntries((prev) => prev.filter((p) => p.port !== e.port));
@@ -247,8 +249,23 @@ export const PortsPanel: React.FC = () => {
     return un;
   }, [ports, forwards]);
 
+  // 打开端口应用: 走 codeblitz 全局命令 (vscode 标准跨扩展契约, 命令 id 字符串即 API;
+  // 不直接 import 其它拓展). numas.browser.open = 内置浏览器打开; 传用户视角真实 URL
+  // (http://localhost:<port>/), 反代 (→ /proxy/<port>) 由内置浏览器 normalizeUrl 统一负责 —
+  // 避免把已反代 URL (proxyUrl) 二次包裹成 /proxy/<port>/proxy/<port>/
   const openPort = useCallback((port: number) => {
-    window.open(ports.proxyUrl(port), '_blank', 'noopener');
+    void commandService.executeCommand('numas.browser.open', `http://localhost:${port}/`);
+  }, [commandService]);
+
+  /** 关闭进程 (杀监听该端口的服务); 成功后乐观移除行, 服务端会发 ports.closed 兜底 */
+  const killProcess = useCallback(async (port: number) => {
+    try {
+      await ports.kill(port);
+      notification.info({ message: `已发送关闭: :${port}`, type: 'info', duration: 2 });
+      setEntries((prev) => prev.filter((p) => p.port !== port));
+    } catch (e: any) {
+      notification.error({ message: `关闭进程失败: ${e?.message || e}`, type: 'error', duration: 3 });
+    }
   }, [ports]);
 
   const copyUrl = useCallback(async (port: number) => {
@@ -561,7 +578,14 @@ export const PortsPanel: React.FC = () => {
                   </span>
                   <div className="pf-row-op">
                     <button className="pf-opbtn pf-opbtn--open" onClick={() => openPort(m.port)} title="在浏览器中打开应用">打开</button>
-                    <button className="pf-opbtn" onClick={() => void copyUrl(m.port)} title="复制反代 URL">复制</button>
+                    <button className="pf-opbtn pf-opbtn--copy" onClick={() => void copyUrl(m.port)} title="复制反代 URL">复制</button>
+                    {m.process && (
+                      <button
+                        className="pf-opbtn pf-opbtn--kill"
+                        onClick={() => void killProcess(m.port)}
+                        title={`关闭进程 — 终止监听 :${m.port} 的服务 (${m.process}${m.pid ? `, pid ${m.pid}` : ''})`}
+                      >⏹</button>
+                    )}
                     <button className="pf-opbtn pf-opbtn--del" onClick={() => void removePort(m.port)} title="从列表移除">✕</button>
                   </div>
                 </>

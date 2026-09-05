@@ -59,6 +59,14 @@ export class PortsServiceImpl implements IPortsService {
     } catch { /* 静默 */ }
   }
 
+  /** 关闭 (杀) 监听该端口的进程: 服务端杀后立即 scan → ports.closed 事件驱动前端行消失 */
+  async kill(port: number): Promise<void> {
+    const base = appBaseUrl();
+    if (!base) return;
+    const res = await fetch(`${base.replace(/\/+$/, '')}/ports/${port}/kill`, { method: 'POST' });
+    if (!res.ok) throw new Error(`kill :${port} failed: ${res.status}`);
+  }
+
   /** 注册 numas spawn 的根 PID (PTY/Agent 工具). 服务端自动 scan 一次 */
   async registerPid(pid: number): Promise<void> {
     const base = appBaseUrl();

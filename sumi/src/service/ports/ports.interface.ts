@@ -33,6 +33,8 @@ export interface IPortsService {
   add(port: number): Promise<void>;
   /** 从面板移除 (白名单删除或忽略已发现) */
   remove(port: number): Promise<void>;
+  /** 关闭 (杀) 监听该端口的进程 (面板"关闭进程"); 服务端杀后立即 scan, ports.closed 事件驱动行消失 */
+  kill(port: number): Promise<void>;
   /** 注册 numas 主动 spawn 的根 PID (PTY/Agent 工具). 服务端自动 scan */
   registerPid(pid: number): Promise<void>;
   /** 反注册 (PTY/Agent 工具退出时). 服务端自动清理 */
