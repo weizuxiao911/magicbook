@@ -58,6 +58,10 @@ export interface IBrowserService {
   queryDom(selector?: string): Promise<BrowserDomSnapshot>;
   /** 向合作页面 postMessage (跨域页面的桥接通道) */
   postMessage(data: unknown): void;
+  /** 在 numas 主编辑区打开本地文件 (file://); 由浏览器拦截到 PDF/可预览文件链接时调.
+   *  内部: 解析 host workspace root → 拼接 file path → editorService.open(file://...) →
+   *  由 PdfReaderView 等已注册的 file-scheme 组件接管. */
+  openFile(absPath: string): Promise<void>;
 
   /** @internal 视图注册/注销 (BrowserView 挂载时调, 外部勿用) */
   _registerView(api: BrowserViewApi): void;
@@ -74,4 +78,8 @@ export interface BrowserViewApi {
   getSrc(): string;
   getIframe(): HTMLIFrameElement | null;
   postMessage(data: unknown): void;
+  /** 通知服务: iframe 内部地址已变 (供 debugger.activeUrl/activeSrc 实时返回) */
+  notifyLocationChange?(real: string, src: string): void;
+  /** 通知服务: 用户在 iframe 内点击了 .pdf (或可预览) 链接, absPath 是推断出的本地绝对路径 */
+  notifyFileOpen?(absPath: string): void;
 }

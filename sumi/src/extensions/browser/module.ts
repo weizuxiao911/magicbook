@@ -53,10 +53,16 @@ export class BrowserContribution
   @Autowired(BrowserToken)
   private readonly browser: IBrowserService;
 
-  // ----- 打开标签的 opener 注入给 service (service 不直接依赖 editor, 解耦) -----
+  // ----- 打开标签的 opener / fileOpener 注入给 service (service 不直接依赖 editor, 解耦) -----
   onDidStart(): void {
     (this.browser as BrowserServiceImpl).opener = async () => {
       await this.editorService.open(BROWSER_URI, { preview: false, focus: true });
+    };
+    (this.browser as BrowserServiceImpl).fileOpener = async (absPath: string) => {
+      // 推断 file:// URI; normSep 处理跨平台; PdfReaderView (file scheme, .pdf 后缀) 自动接管
+      const normalized = absPath.replace(/\\/g, '/');
+      const uri = URI.file(normalized);
+      await this.editorService.open(uri, { preview: false, focus: true });
     };
   }
 

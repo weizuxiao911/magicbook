@@ -19,6 +19,8 @@ export interface PortEntry {
   port: number;
   pid?: number;
   process?: string;
+  /** 监听进程 cwd (服务端 lsof/readlink /proc 探测; 用于内置浏览器 PDF 拦截 → file:// 路径还原) */
+  cwd?: string;
   detectedAt: number;
 }
 

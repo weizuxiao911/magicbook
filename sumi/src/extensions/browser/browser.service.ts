@@ -68,13 +68,45 @@ export function normalizeUrl(input: string): { real: string; src: string; extern
   return { real, src: real, external: real };
 }
 
+/** 把反代地址 (${base}/proxy/<port>/rest) 还原为用户视角的原始地址 (http://localhost:<port>/rest).
+ *  用于: iframe 内部跳转后, 父窗口把 iframe.contentWindow.location 同步到地址栏展示.
+ *  解析失败 (非本工具产生的反代 URL) 返回原始值. */
+export function deproxyUrl(src: string): string {
+  if (!src) return src;
+  try {
+    const u = new URL(src);
+    const m = u.pathname.match(/^\/proxy\/(\d+)(\/.*)?$/);
+    if (!m) return src;
+    const port = m[1];
+    const rest = m[2] || '/';
+    return `http://localhost:${port}${rest}${u.search}${u.hash}`;
+  } catch {
+    return src;
+  }
+}
+
 @Injectable()
 export class BrowserServiceImpl implements IBrowserService {
   private view: BrowserViewApi | null = null;
   private pendingUrl: string | undefined;
+  // 视图层轮询/事件上报的最新地址 (iframe 内部跳转后), 供 debugger / 其它拓展实时读取
+  private currentReal: string = '';
+  private currentSrc: string = '';
 
   _registerView(api: BrowserViewApi): void {
     this.view = api;
+    // 包装可选回调: 把视图层 notifyLocationChange 落到本服务的 currentReal/currentSrc,
+    // 供 debugger (activeUrl/activeSrc) 实时返回 iframe 内部跳转后的地址.
+    const origNotify = api.notifyLocationChange?.bind(api);
+    const origFileOpen = api.notifyFileOpen?.bind(api);
+    (api as any).notifyLocationChange = (real: string, src: string) => {
+      this.currentReal = real;
+      this.currentSrc = src;
+      try { origNotify?.(real, src); } catch { /* 视图层 handler 容错 */ }
+    };
+    (api as any).notifyFileOpen = (absPath: string) => {
+      try { origFileOpen?.(absPath); } catch { /* 视图层 handler 容错 */ }
+    };
   }
   _unregisterView(api: BrowserViewApi): void {
     if (this.view === api) this.view = null;
@@ -94,6 +126,8 @@ export class BrowserServiceImpl implements IBrowserService {
 
   /** @internal 由 module 注入: 打开 numas-browser:// 标签 */
   opener: (() => Promise<void>) | null = null;
+  /** @internal 由 module 注入: 打开一个本地文件 (file:// URI), 由 file scheme 编辑器组件接管 (PDF 等) */
+  fileOpener: ((absPath: string) => Promise<void>) | null = null;
 
   navigate(url: string): void {
     this.pendingUrl = url;
@@ -109,13 +143,24 @@ export class BrowserServiceImpl implements IBrowserService {
     window.open(external, '_blank', 'noopener');
   }
   activeUrl(): string {
-    return this.view?.getRealUrl() || this.pendingUrl || '';
+    return this.currentReal || this.view?.getRealUrl() || this.pendingUrl || '';
   }
   activeSrc(): string {
-    return this.view?.getSrc() || '';
+    return this.currentSrc || this.view?.getSrc() || '';
   }
   postMessage(data: unknown): void {
     this.view?.postMessage(data);
+  }
+
+  async openFile(absPath: string): Promise<void> {
+    if (!absPath) return;
+    if (this.fileOpener) {
+      await this.fileOpener(absPath);
+      return;
+    }
+    // 兜底: 没注入 fileOpener 时走通用 anchor 触发 (file:// 浏览器原生打开, 配合 _blank)
+    // 实际产品里 fileOpener 必被注入, 此分支为防御性 fallback
+    window.open('file://' + absPath, '_blank', 'noopener');
   }
 
   /** 取同源 iframe 的 contentWindow; 跨域/无视图抛错 */
