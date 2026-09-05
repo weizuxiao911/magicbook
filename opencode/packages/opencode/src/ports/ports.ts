@@ -43,6 +43,8 @@ export namespace Ports {
     readonly registerPid: (pid: number) => Effect.Effect<void>
     readonly unregisterPid: (pid: number) => Effect.Effect<void>
     readonly trackedPids: () => Effect.Effect<readonly number[]>
+    /** 关闭 (杀) 监听该端口的进程; 无监听者静默. 端口关闭由周期 scan diff 发 ports.closed. */
+    readonly kill: (port: number) => Effect.Effect<void>
   }
 }
 
@@ -59,6 +61,26 @@ async function rawListenLines(): Promise<string[]> {
       return await Process.lines(["netstat", "-ano"], { nothrow: true, timeout: 5000 })
     }
     return await Process.lines(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"], { nothrow: true, timeout: 5000 })
+  } catch {
+    return []
+  }
+}
+
+/** 指定端口的监听 PID (kill 用, 只查该端口):
+ *  POSIX: lsof -t -iTCP:<port> -sTCP:LISTEN (纯 pid 行); Windows: netstat -ano 解析 LISTENING. */
+async function listenPidsForPort(port: number): Promise<number[]> {
+  try {
+    if (process.platform === "win32") {
+      const lines = await Process.lines(["netstat", "-ano"], { nothrow: true, timeout: 5000 })
+      const pids: number[] = []
+      for (const line of lines) {
+        const m = line.trim().match(/^TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)$/i)
+        if (m && Number(m[1]) === port) pids.push(Number(m[2]))
+      }
+      return [...new Set(pids)]
+    }
+    const out = await Process.lines(["lsof", "-t", `-iTCP:${port}`, "-sTCP:LISTEN"], { nothrow: true, timeout: 3000 })
+    return [...new Set(out.map((x) => Number(x.trim())).filter((p) => Number.isInteger(p) && p > 0))]
   } catch {
     return []
   }
@@ -124,8 +146,7 @@ function parseListenCandidates(lines: string[], selfPid: number): Array<{ port: 
   return out
 }
 
-/** 批量取 PID 的工作目录: mac lsof -d cwd; linux readlink /proc/<pid>/cwd; win 不支持 (TODO). */
-async function resolveCwds(pids: number[]): Promise<Map<number, string>> {
+/** 批量取 PID 的工作目录: mac lsof -d cwd; linux readlink /proc/<pid>/cwd; win 不支持 (TODO). */async function resolveCwds(pids: number[]): Promise<Map<number, string>> {
   const map = new Map<number, string>()
   const uniq = [...new Set(pids)].filter((p) => p > 0)
   if (uniq.length === 0) return map
@@ -389,6 +410,22 @@ export const layer = Layer.effect(
           void Effect.runPromise(doScan()).catch(() => {})
         }),
       trackedPids: () => Ref.get(trackedPids).pipe(Effect.map((s) => Array.from(s).sort((a, b) => a - b))),
+      kill: (port) =>
+        Effect.gen(function* () {
+          const pids = yield* Effect.promise(() => listenPidsForPort(port))
+          if (pids.length === 0) {
+            console.log(`[ports] kill port=${port}: 无监听进程`)
+            return
+          }
+          const cmd = process.platform === "win32" ? "taskkill" : "kill"
+          const args = process.platform === "win32" ? ["/T", ...pids.flatMap((p) => ["/PID", String(p)])] : pids.map(String)
+          yield* Effect.promise(() =>
+            Process.lines([cmd, ...args], { nothrow: true, timeout: 5000 }).then(() => undefined),
+          )
+          console.log(`[ports] kill port=${port} pids=[${pids.join(",")}]`)
+          // 杀完立即扫一次: ports.closed diff 立刻发出 (不等 3s 周期)
+          yield* doScan()
+        }),
     }
 
     return service

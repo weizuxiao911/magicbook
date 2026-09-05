@@ -97,6 +97,16 @@ export const portsRoute = HttpRouter.use((router) =>
         return HttpServerResponse.jsonUnsafe({ ok: true })
       }),
     )
+    // POST /ports/:port/kill : 关闭 (杀) 监听该端口的进程 (面板"关闭进程"按钮)
+    yield* router.add("POST", "/ports/:port/kill", (request) =>
+      Effect.gen(function* () {
+        const url = new URL(request.url, "http://localhost")
+        const m = url.pathname.match(/^\/ports\/(\d+)\/kill$/)
+        if (!m) return HttpServerResponse.jsonUnsafe({ error: "bad path" }, { status: 400 })
+        yield* ports.kill(Number(m[1]))
+        return HttpServerResponse.jsonUnsafe({ ok: true })
+      }),
+    )
     // /ports/pids {pid} : 注册 numas 主动 spawn 的根 PID (PTY create / Agent spawn 后调用)
     yield* router.add("POST", "/ports/pids", (request) =>
       Effect.gen(function* () {
