@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # numas (牛马 AI) docker 轻量镜像一键构建 — 本地产物组装, 无容器内编译
 #
-# 流程 (5 步, 每步产物存在则跳过):
-#   step 1/5: 依赖安装 (sumi npm install 含 postinstall 框架 patch + opencode bun install)
-#   step 2/5: sumi build                    → sumi/dist           → COPY → ui/
-#   step 3/5: opencode 交叉编译 (NUMAS_TARGET) → dist/opencode-linux-<arch> → COPY → exec/
-#   step 4/5: extensions npm run package    → registry/vsix/*.vsix → COPY → extensions/
-#             (扩展市场 = opencode fork 内置 /extensions 控制器, 扫 extensions/ vsix; 无独立进程)
-#   step 5/5: docker buildx 组装 (ubuntu 24.04 + COPY 挂载点产物 + tini entrypoint)
+# 流程 (4 步, 每步产物存在则跳过):
+#   step 1/4: 依赖安装 (sumi npm install 含 postinstall 框架 patch + opencode bun install)
+#   step 2/4: sumi build                    → sumi/dist           → COPY → ui/
+#   step 3/4: opencode 交叉编译 (NUMAS_TARGET) → dist/opencode-linux-<arch> → COPY → exec/
+#   step 4/4: docker buildx 组装 (ubuntu 24.04 + COPY 挂载点产物 + tini entrypoint)
+#             (扩展用 -v 挂载 vsix 到 /root/.numas/extensions, 镜像内置空目录)
 #
-# 产物复用: 产物已存在则跳过对应 build (强制重建: --sumi / --opencode / --extensions /
+# 产物复用: 产物已存在则跳过对应 build (强制重建: --sumi / --opencode /
 #   --force 全部). 迭代成本: 只改 sumi UI → bash scripts/docker-build.sh --sumi.
 #
 # 用法:
@@ -37,12 +36,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 
+# bun 可能装在 ~/.bun/bin (官方安装脚本默认), 非交互 shell (ssh/cron) PATH 不含 →
+# 补进 PATH, 否则 step1 bun install / step3 build.ts 报 "bun: command not found"
+export PATH="$HOME/.bun/bin:$PATH"
+
 # --- 解析参数 ---------------------------------------------------------------
 PLATFORM=""
 EXTRA_TAG=""
 FORCE_SUMI=false
 FORCE_OPENCODE=false
-FORCE_EXT=false
 NO_CACHE=""
 PUSH=false
 REGISTRY=""
@@ -52,8 +54,7 @@ while [[ $# -gt 0 ]]; do
     --tag) EXTRA_TAG="$2"; shift 2 ;;
     --sumi) FORCE_SUMI=true; shift ;;
     --opencode) FORCE_OPENCODE=true; shift ;;
-    --extensions) FORCE_EXT=true; shift ;;
-    --force) FORCE_SUMI=true; FORCE_OPENCODE=true; FORCE_EXT=true; shift ;;
+    --force) FORCE_SUMI=true; FORCE_OPENCODE=true; shift ;;
     --push) PUSH=true; shift ;;
     --registry) REGISTRY="$2"; shift 2 ;;
     --no-cache) NO_CACHE="--no-cache"; shift ;;
@@ -95,34 +96,32 @@ fi
 SUMIDIST="$ROOT/sumi/dist"
 OPENCODE_PKG="$ROOT/opencode/packages/opencode"
 OPENCODE_BIN="$OPENCODE_PKG/dist/opencode-${TARGET_NAME}/bin/opencode"
-REGISTRY_PKG="$ROOT/registry"
-REGISTRY_VSIX_DIR="$REGISTRY_PKG/vsix"
 
-# --- step 1/5: 依赖安装 (sumi npm + opencode bun workspace) ---------------------
+# --- step 1/4: 依赖安装 (sumi npm + opencode bun workspace) ---------------------
 # 全新克隆 / CI 环境必备: sumi 的 postinstall 框架 patch (fixLayout / customeditors /
 # storagepath 等, 见 sumi/scripts/patch-*.js) 只在 npm install 时触发, 漏装则补丁丢失;
 # opencode 是 bun workspaces (bun.lock + workspaces), 根目录 bun install 装全部包依赖.
 # 幂等: 依赖已装时 install 按 lockfile 校验, 秒过. extensions 的 install 在 step 4 内.
-echo "[numas] step 1/5: 依赖安装"
+echo "[numas] step 1/4: 依赖安装"
 echo "[numas]   sumi: npm install (含 postinstall 框架 patch)"
 (cd sumi && npm install --no-audit --no-fund)
 echo "[numas]   opencode: bun install (workspaces 根)"
 (cd opencode && bun install)
 
-# --- step 2/5: sumi build ------------------------------------------------------
+# --- step 2/4: sumi build ------------------------------------------------------
 if [ "$FORCE_SUMI" = true ] || [ ! -d "$SUMIDIST" ] || [ -z "$(ls -A "$SUMIDIST" 2>/dev/null)" ]; then
-  echo "[numas] step 2/5: sumi build"
+  echo "[numas] step 2/4: sumi build"
   (cd sumi && npm run build)
 else
-  echo "[numas] step 2/5: sumi dist 已存在, 跳过 (改 UI 代码后带 --sumi 强制重建)"
+  echo "[numas] step 2/4: sumi dist 已存在, 跳过 (改 UI 代码后带 --sumi 强制重建)"
 fi
 
-# --- step 3/5: opencode 交叉编译 -------------------------------------------------
+# --- step 3/4: opencode 交叉编译 -------------------------------------------------
 # build.ts 每次会 rm 整个 dist (含其它平台产物, 如本机 dev 用的 darwin) → 重建前把
 # 非目标平台产物暂移 .tmp, 完成后恢复, 避免交叉构建破坏本机 dev 可用产物.
 DARWIN_DIST="$OPENCODE_PKG/dist/opencode-darwin-arm64"
 if [ "$FORCE_OPENCODE" = true ] || [ ! -f "$OPENCODE_BIN" ]; then
-  echo "[numas] step 3/5: opencode 交叉编译 (NUMAS_TARGET=$TARGET_NAME, 本地产物单平台)"
+  echo "[numas] step 3/4: opencode 交叉编译 (NUMAS_TARGET=$TARGET_NAME, 本地产物单平台)"
   TMP_BAK=""
   if [ -d "$DARWIN_DIST" ] && [ "$TARGET_NAME" != "darwin-arm64" ]; then
     TMP_BAK="$ROOT/.tmp/opencode-darwin-arm64.bak"
@@ -135,28 +134,13 @@ if [ "$FORCE_OPENCODE" = true ] || [ ! -f "$OPENCODE_BIN" ]; then
     echo "[numas]   darwin-arm64 产物已恢复"
   fi
 else
-  echo "[numas] step 3/5: opencode ${TARGET_NAME} 产物已存在, 跳过 (改 opencode 代码后带 --opencode 强制重建)"
+  echo "[numas] step 3/4: opencode ${TARGET_NAME} 产物已存在, 跳过 (改 opencode 代码后带 --opencode 强制重建)"
 fi
 [ -f "$OPENCODE_BIN" ] || { echo "[numas] opencode 产物缺失: $OPENCODE_BIN" >&2; exit 1; }
 
-# --- step 4/5: extensions 打包 (.vsix → registry/vsix) --------------------------
-# 每扩展 npm run package; 依赖各扩展 node_modules (缺失自动 npm install).
-EXT_DIRS=("$ROOT"/extensions/*/)
-if [ -n "$(ls "$REGISTRY_VSIX_DIR"/*.vsix 2>/dev/null)" ] && [ "$FORCE_EXT" = false ]; then
-  echo "[numas] step 4/5: registry/vsix 已有 .vsix, 跳过 (改扩展源码后带 --extensions 强制重打包)"
-else
-  echo "[numas] step 4/5: extensions 打包 → registry/vsix/"
-  for d in "${EXT_DIRS[@]}"; do
-    [ -d "$d" ] || continue
-    name=$(basename "$d")
-    echo "[numas]   package: $name"
-    (cd "$d" && { [ -d node_modules ] || npm install --no-audit --no-fund; } && npm run package)
-  done
-fi
-VSIX_COUNT=$(ls "$REGISTRY_VSIX_DIR"/*.vsix 2>/dev/null | wc -l | tr -d ' ')
-[ "$VSIX_COUNT" -gt 0 ] || { echo "[numas] registry/vsix 无 .vsix 产物 (extensions 打包失败?)" >&2; exit 1; }
-
-# --- step 5/5: docker 组装 --------------------------------------------------------
+# --- step 4/4: docker 组装 --------------------------------------------------------
+# 注: 不再打包 extensions/vsix (用户拍板 2026-09): 镜像内 extensions 目录留空,
+# 运行时用 -v 挂载 vsix 目录实现扩展 (--extensions-dir 指向扫描, 空目录返回空正常).
 VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")
 GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 # tag 前缀: --registry xxx/yyy → xxx/yyy:tag (默认 docker.io/numas)
@@ -168,22 +152,29 @@ else
   TAGS+=(-t "${PREFIX}:v${VERSION}" -t "${PREFIX}:latest")
 fi
 
-echo "[numas] step 5/5: docker 组装镜像"
+echo "[numas] step 4/4: docker 组装镜像"
 echo "[numas]   platform:   $PLATFORM"
 echo "[numas]   sumi:       $SUMIDIST"
 echo "[numas]   opencode:   $OPENCODE_BIN"
-echo "[numas]   extensions: $REGISTRY_VSIX_DIR ($VSIX_COUNT .vsix)"
+echo "[numas]   extensions: 挂载方式 (-v vsix目录:/root/.numas/extensions), 镜像内置空目录"
 echo "[numas]   mode:       $([ "$PUSH" = true ] && echo push || echo load)"
 
-docker buildx build \
-  --platform "$PLATFORM" \
-  --build-arg "NUMAS_VERSION=$VERSION" \
-  --build-arg "NUMAS_GIT_SHA=$GIT_SHA" \
-  --build-arg "OPENCODE_ARTIFACT=opencode-${TARGET_NAME}" \
-  "${TAGS[@]}" \
-  ${NO_CACHE:-} \
-  $([ "$PUSH" = true ] && echo --push || echo --load) \
-  .
+# 本机/同构部署: legacy docker build (无需 docker/dockerfile frontend 镜像, docker hub 受限环境可用);
+# 跨平台/推远端 (--push) 才走 buildx (需 docker hub 可达拉 frontend).
+if [ "$PUSH" = true ]; then
+  docker buildx build \
+    --platform "$PLATFORM" \
+    --build-arg "NUMAS_VERSION=$VERSION" \
+    --build-arg "NUMAS_GIT_SHA=$GIT_SHA" \
+    --build-arg "OPENCODE_ARTIFACT=opencode-${TARGET_NAME}" \
+    "${TAGS[@]}" ${NO_CACHE:-} --push .
+else
+  docker build \
+    --build-arg "NUMAS_VERSION=$VERSION" \
+    --build-arg "NUMAS_GIT_SHA=$GIT_SHA" \
+    --build-arg "OPENCODE_ARTIFACT=opencode-${TARGET_NAME}" \
+    "${TAGS[@]}" ${NO_CACHE:-} .
+fi
 
 echo ""
 echo "[numas] 构建完成: ${TAGS[*]}"

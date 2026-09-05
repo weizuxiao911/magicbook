@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # numas (牛马 AI) 轻量组装镜像 — 无容器内编译, 本地产物直接 COPY
 #
 # 产物来源 (本地已构建, 与本仓库 dev 流程一致):
@@ -89,8 +88,8 @@ ARG OPENCODE_ARTIFACT=opencode-linux-arm64
 COPY opencode/packages/opencode/dist/${OPENCODE_ARTIFACT}/bin/opencode /root/.numas/exec/opencode
 # ② ui: sumi web 静态产物
 COPY sumi/dist /root/.numas/ui/
-# ③ extensions: vsix 包集合 (内置市场 --extensions-dir 扫描; 动态识别新放入的 .vsix)
-COPY registry/vsix/*.vsix /root/.numas/extensions/
+# ③ extensions: 镜像内置空目录 (vsix 不进镜像, 用户拍板 2026-09); 扩展运行时 -v 挂载
+#    vsix 目录到 /root/.numas/extensions/ (opencode --extensions-dir 扫描, 空目录返回空正常)
 
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
