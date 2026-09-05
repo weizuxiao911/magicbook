@@ -19,7 +19,7 @@
 #
 # 运行:
 #   docker run --rm -p 4096:4096 numas:latest
-#   → opencode web ... --web-ui /app/.exec/sumi (镜像内固定规则, 见 Dockerfile/entrypoint.sh)
+#   → opencode web ... --web-ui /root/.numas/sumi (镜像内固定规则, 见 Dockerfile/entrypoint.sh)
 #
 # 运维部署 (linux x86_64 服务器):
 #   1. 前置: docker + buildx; node 20+ / bun (产物缺失时自动构建需要)

@@ -11,12 +11,12 @@
 #
 # 运行 (entrypoint 拼参, env 映射见 scripts/entrypoint.sh):
 #   docker run --rm -p 4096:4096 numas:latest
-#   → opencode web --hostname 0.0.0.0 --port 4096 --cors '*' --web-ui /app/.exec/sumi
+#   → opencode web --hostname 0.0.0.0 --port 4096 --cors '*' --web-ui /root/.numas/sumi
 #   改端口: -e PORT=8080 改容器内监听, -p 映射需配套: docker run -p 8080:8080 -e PORT=8080 numas:latest
 #
 # 为什么轻量: 旧版多阶段在容器内 npm/bun install + build (网络依赖, 30+ 分钟/次);
 # 本版只做 COPY, 迭代 UI/代码 = 本地重跑对应 build + 重构建镜像 (秒~分钟级).
-# --web-ui 固定指向 /app/.exec/sumi, 替换 UI 成本有固定规则.
+# --web-ui 固定指向 /root/.numas/sumi, 替换 UI 成本有固定规则.
 #
 # 构建 (见 scripts/docker-build.sh):
 #   bash scripts/docker-build.sh          # 本机默认 arch
@@ -69,9 +69,10 @@ RUN apt-get update \
 # 与自建服务用户冲突, 不再 useradd)
 USER root
 
-# 容器内根 = /app (workdir + 默认工作区根); .exec = 本地产物目录 (opencode binary + sumi web ui)
+# 容器内根 = /app (workdir + 默认工作区根, explorer 只见用户文件);
+# 产物藏到 home 下 ~/.numas (root → /root/.numas, 不进工作区) = 程序目录 (opencode binary + sumi web ui)
 WORKDIR /app
-RUN mkdir -p /app/.exec
+RUN mkdir -p /root/.numas
 
 # 本地产物拷贝:
 #   opencode 单二进制 — arch 由构建脚本决定并显式传入 (docker-build.sh 传 OPENCODE_ARTIFACT,
@@ -79,14 +80,14 @@ RUN mkdir -p /app/.exec
 #   禁止用 glob (dist 里可能同时存在多平台产物, 会 COPY 冲突/装错 arch). 构建期 --version
 #   冒烟即验证 arch 匹配 (exec format error 会在此暴露).
 ARG OPENCODE_ARTIFACT=opencode-linux-arm64
-COPY opencode/packages/opencode/dist/${OPENCODE_ARTIFACT}/bin/opencode /app/.exec/opencode
+COPY opencode/packages/opencode/dist/${OPENCODE_ARTIFACT}/bin/opencode /root/.numas/opencode
 #   sumi web UI 静态产物 (--web-ui 固定指向这里, 替换 UI = 重 build + 重 COPY)
-COPY sumi/dist /app/.exec/sumi/
+COPY sumi/dist /root/.numas/sumi/
 
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
-  && chmod +x /app/.exec/opencode \
-  && /app/.exec/opencode --version
+  && chmod +x /root/.numas/opencode \
+  && /root/.numas/opencode --version
 
 # 端口/host/registry 默认值 (entrypoint 可见的镜像默认; 用户可用短名 env 覆盖, 如
 # -e PORT=8080 替换默认 4096 — entrypoint 读值规则: 短名优先, 长名兜底, 再默认)

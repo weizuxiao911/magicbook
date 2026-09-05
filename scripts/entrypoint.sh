@@ -10,7 +10,7 @@
 #   PORT        / NUMAS_PORT        → --port     (默认 4096)
 #   CORS        / NUMAS_CORS        → --cors     (默认 '*')
 #   REGISTRY    / NUMAS_REGISTRY    → --registry (默认空)
-#   WEB_UI      / NUMAS_WEB_UI      → --web-ui   (默认 /app/.exec/sumi, 镜像内拷贝的 sumi 产物; 可设其它路径)
+#   WEB_UI      / NUMAS_WEB_UI      → --web-ui   (默认 /root/.numas/sumi, 镜像内拷贝的 sumi 产物; 可设其它路径)
 #   WORKDIR     / NUMAS_WORKDIR     → cd         (默认 /app, 决定 instance dir)
 #   SUBCMD      / NUMAS_SUBCMD      → 子命令     (默认 web; 可换 serve/acp/...)
 #
@@ -45,7 +45,7 @@ PORT=$(v NUMAS_PORT PORT 4096)
 CORS=$(v NUMAS_CORS CORS '*')
 REGISTRY=$(v NUMAS_REGISTRY REGISTRY '')
 # 默认指向镜像内拷贝的 sumi 静态产物 (替换 UI = 本地重 build sumi + 重构建镜像)
-WEB_UI=$(v NUMAS_WEB_UI WEB_UI /app/.exec/sumi)
+WEB_UI=$(v NUMAS_WEB_UI WEB_UI /root/.numas/sumi)
 # 默认工作目录 = 容器根 /app (workdir 即容器内 workspace 根; NUMAS_WORKDIR 可覆盖)
 WORKDIR_VAL=$(v NUMAS_WORKDIR WORKDIR /app)
 SUBCMD=$(v NUMAS_SUBCMD SUBCMD web)
@@ -53,9 +53,9 @@ SUBCMD=$(v NUMAS_SUBCMD SUBCMD web)
 # 工作目录
 cd "$WORKDIR_VAL" || { echo "[numas] cannot cd to $WORKDIR_VAL" >&2; exit 1; }
 
-# 拼 opencode 命令 (binary 在 /app/.exec/opencode, 轻量组装镜像约定)
+# 拼 opencode 命令 (binary 在 /root/.numas/opencode, 轻量组装镜像约定)
 set --
-set -- /app/.exec/opencode "$SUBCMD" --hostname "$HOST" --port "$PORT" --cors "$CORS"
+set -- /root/.numas/opencode "$SUBCMD" --hostname "$HOST" --port "$PORT" --cors "$CORS"
 [ -n "$REGISTRY" ] && set -- "$@" --registry "$REGISTRY"
 [ -n "$WEB_UI" ]   && set -- "$@" --web-ui   "$WEB_UI"
 
