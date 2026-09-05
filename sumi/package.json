@@ -7,7 +7,7 @@
     "dev": "node node_modules/webpack-cli/bin/cli.js serve --config webpack.config.js",
     "build": "cross-env NODE_ENV=production node node_modules/webpack-cli/bin/cli.js --config webpack.config.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "postinstall": "node scripts/patch-codeblitz-constant.js && node scripts/patch-opensumi-customeditors.js && node scripts/patch-opensumi-filetreemodel.js"
+    "postinstall": "node scripts/patch-codeblitz-constant.js && node scripts/patch-opensumi-customeditors.js && node scripts/patch-opensumi-filetreemodel.js && node scripts/patch-opensumi-storagepath-userhome.js && node scripts/patch-codeblitz-homefileserviceprovider.js"
   },
   "dependencies": {
     "@codeblitzjs/ide-core": "2.4.6",
