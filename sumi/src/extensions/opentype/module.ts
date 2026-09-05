@@ -80,7 +80,12 @@ export class OpenTypeContribution implements BrowserEditorContribution, CommandC
       // 让 file-scheme 的 code resolver 继续跑, 打开方式列表保持完整 (customEditor + 文本编辑器),
       // 只通过高权重把 assoc 项排最前作为默认.
       // (之前 resolve() break 会把列表压到只剩 1 项, e.g. html 配了默认后丢"文本编辑器")
-      const hit = results.some((r) => (r as any).componentId === compId);
+      // hit 判定要覆盖 code: code 项是 type:'code' 无 componentId — 只查 componentId 会把
+      // assoc=code 时重复 push 成两个"文本编辑器" (叠加)
+      const hit = results.some((r) => {
+        const it = r as any;
+        return it.componentId === compId || (compId === 'code' && it.type === 'code');
+      });
       if (!hit) {
         const item = compId === 'code'
           ? { type: 'code' as const, weight: Number.MAX_SAFE_INTEGER }
@@ -190,7 +195,17 @@ export class OpenTypeContribution implements BrowserEditorContribution, CommandC
         types = await this.registry.resolveEditorComponent(resource);
       } catch { /* 解析失败 → 空列表 */ }
     }
-    return types.filter((t) => (t as any).componentId !== WELCOME_ID);
+    types = types.filter((t) => (t as any).componentId !== WELCOME_ID);
+    // 去重 (opensumi 的 uniqWith isEqual 因 weight 不同不去重; 多 resolver 链可能重复 push
+    // 同 type/组件 — 如 assoc=code 命中时 "文本编辑器" 出现两次). 保留首个 = 最高权重(默认项)
+    const seen = new Set<string>();
+    return types.filter((t) => {
+      const it = t as any;
+      const key = it.type === 'code' ? 'code' : `${it.type}:${it.componentId ?? ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   /** 用指定打开方式打开文件.
@@ -230,6 +245,7 @@ export class OpenTypeContribution implements BrowserEditorContribution, CommandC
 const COMPONENT_DESCRIPTIONS: Record<string, string> = {
   'numas.pdf-reader': '内置',
   'numas.html-viewer': '内置',
+  'MARKDOWN_EDITOR_COMPONENT_ID': '内置',
   'webapp.welcome': '欢迎页',
 };
 

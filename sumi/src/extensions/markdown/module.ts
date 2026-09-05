@@ -12,7 +12,7 @@
  */
 
 import { Injectable } from '@opensumi/di';
-import { BrowserModule } from '@opensumi/ide-core-browser';
+import { BrowserModule, Domain } from '@opensumi/ide-core-browser';
 import { Schemes } from '@opensumi/ide-core-common';
 import { EditorOpenType } from '@opensumi/ide-editor/lib/browser';
 import {
@@ -26,6 +26,7 @@ import { MarkdownEditorComponent } from '@opensumi/ide-markdown/lib/browser/edit
 const MARKDOWN_COMPONENT_ID = 'MARKDOWN_EDITOR_COMPONENT_ID';
 
 @Injectable()
+@Domain(BrowserEditorContribution)
 export class MarkdownPreviewContribution implements BrowserEditorContribution {
   registerEditorComponent(registry: EditorComponentRegistry): void {
     registry.registerEditorComponent({
