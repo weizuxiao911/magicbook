@@ -1105,7 +1105,8 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
     ].join('\n');
   }, [hostPath]);
 
-  /** ask 包装: 返回 promise + 记录 handle 供取消; 失败抛错 (宿主 notification 提示) */
+  /** ask 包装: 返回 promise + 记录 handle 供取消; 失败抛错 (宿主 notification 提示).
+   *  无超时看门狗: 生成时长由模型决定, 终态由 session.idle/error 事件或用户取消驱动. */
   const askWithCancel = useCallback((prompt: string): Promise<string> => {
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -1124,14 +1125,6 @@ export const PdfReaderView: React.FC<Props> = ({ resource }) => {
       })
         .then((req) => {
           generateReqRef.current = req;
-          // 兜底超时 (ask 内部有 90s 看门狗, 这里再兜一层)
-          setTimeout(() => {
-            if (settled || generateReqRef.current !== req) return;
-            settled = true;
-            generateReqRef.current = null;
-            try { void req.cancel(); } catch { /* */ }
-            reject(new Error('生成超时, 请重试'));
-          }, 120_000);
         })
         .catch(() => { /* request 抛错 → onError 已触发 */ });
     });

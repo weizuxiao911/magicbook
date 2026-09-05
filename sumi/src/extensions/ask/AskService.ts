@@ -5,12 +5,16 @@
  * 适用场景: PDF 标注的"生成"按钮 / 任何程序侧需要独立会话跟 AI 交互的功能.
  *
  * 链路:
- *   ask 调用 → 创建会话 → 发送提示词 → 全局监听按会话过滤 → 组装结果回调
+ *   ask 调用 → 创建会话 → 发送提示词 → 订阅[消息总线]按 sessionID 过滤 → 组装结果回调
  *
  * 架构:
- *   - 内部维护单 EventSource 订阅 /api/event (V2 SDK SSE)
+ *   - 事件来自客户端消息总线 (service/event/eventBus.ts), 全客户端唯一一条
+ *     `/global/event` SSE. ask **不**自建 EventSource (旧版自建 /api/event 缺
+ *     workspace 上下文, 非启动目录工作区收不到事件 — 见 docs/提问命令-Ask无头通道设计与测试用例.md).
  *   - 每次 ask 创建一个独立 session (client.session.create) + 异步发 prompt (client.session.promptAsync)
  *   - 流式响应按 sessionId 派发给对应回调, session.idle → 组装完整 text 回调
+ *   - 临时会话用完即删 (session.delete), 不污染 chat 会话列表
+ *   - 无看门狗: 终态只由 session.idle / session.error / 用户 cancel() 驱动, 不设超时
  *
  * 用法:
  *   import { ask } from '../ask/AskService';
@@ -20,19 +24,22 @@
  *   // 取消: req.cancel()
  */
 
+import { onSessionEvent } from '../../service/event/eventBus';
+import { effectiveCwd } from '../../infra/url';
+
 export interface AIRequestCallbacks {
   /** 流式增量 (打字机效果), 每次推送新 chunk */
   onDelta?: (chunk: string) => void;
   /** 流结束 (idle) 时推送完整累积 text */
   onComplete?: (text: string) => void;
-  /** 错误 (session 创建失败 / 流异常) */
+  /** 错误 (session 创建失败 / session.error / 流异常) */
   onError?: (err: Error) => void;
 }
 
 export interface AIRequestHandle {
   /** 内部 sessionId (opencode) */
   sessionId: string;
-  /** 取消: abort 后端对话 (client.session.abort) + 停止监听 + 清理. 返回 Promise. */
+  /** 取消: abort 后端对话 (client.session.abort) + 停止监听 + 删 session. 返回 Promise. */
   cancel: () => Promise<void>;
 }
 
@@ -40,73 +47,29 @@ interface ActiveRequest {
   sessionId: string;
   callbacks: AIRequestCallbacks;
   text: string;
-  /** 超时看门狗 timer */
-  timer: ReturnType<typeof setTimeout> | null;
-}
-
-/** 请求超时看门狗: 超过该时长未收到 idle → 判定失败 (后端可能卡死/模型无响应), 走 onError + 清理. */
-const REQUEST_TIMEOUT_MS = 90_000;
-
-const RUNTIME_KEY = '__APP_OPENCODE_RUNTIME__';
-
-function getBaseUrl(): string {
-  const base = (window as any)[RUNTIME_KEY]?.baseUrl;
-  if (!base) throw new Error('opencode baseUrl missing (window.__APP_OPENCODE_RUNTIME__.baseUrl)');
-  return base;
-}
-
-/** 拿全局 opencode SDK 客户端 (跟 service/agent.ts 共享同一实例). */
+  /** 退订消息总线 */
+  unsub: () => void;
+  /** 终态守卫 (complete/error/cancel 只走一次) */
+  settled: boolean;
+}/** 拿全局 opencode SDK 客户端 (跟 service/opencode 共享同一实例). */
 function getClient(): any {
   return (window as any).__APP_OPENCODE__;
 }
 
-/** AskService 单例: 维护单 EventSource + 多 active request 派发. */
+/** best-effort 删除临时会话 (失败静默, 不影响主流程). */
+async function deleteSession(sessionId: string): Promise<void> {
+  try {
+    const c = getClient();
+    if (c?.session?.delete) await c.session.delete({ sessionID: sessionId });
+  } catch { /* 删除失败忽略 */ }
+}
+
+/** AskService 单例: 维护多 active request, 事件来自消息总线. */
 class AskService {
-  private es: EventSource | null = null;
   private active = new Map<string, ActiveRequest>();
 
-  /** 启动单 EventSource 订阅 (惰性, 首次 request 时启动) */
-  private ensureStream() {
-    if (this.es) return;
-    const base = getBaseUrl();
-    const es = new EventSource(`${base}/api/event`);
-    this.es = es;
-    es.onmessage = (msg) => {
-      try {
-        const raw = JSON.parse(msg.data);
-        const ev = (raw && raw.payload) || raw;
-        const type = ev?.type as string | undefined;
-        const props = ev?.properties || ev?.data;
-        if (!type || !props) return;
-        const ssid = props.sessionID as string | undefined;
-        if (!ssid) return;
-        const req = this.active.get(ssid);
-        if (!req) return;
-        if (type === 'message.part.delta' && props.field === 'text' && typeof props.delta === 'string') {
-          req.text += props.delta;
-          req.callbacks.onDelta?.(props.delta);
-        } else if (type === 'message.part.updated' && props.part?.text != null) {
-          // 全量 upsert: 用最新 text 覆盖 (避免 delta + updated 双计数)
-          const part = props.part;
-          if (part.type === 'text' || typeof part.text === 'string') {
-            req.text = part.text;
-            req.callbacks.onDelta?.('');
-          }
-        } else if (type === 'session.idle' || (type === 'session.status' && props.status?.type === 'idle')) {
-          // 流结束: 清理 timer, 派发 onComplete, 移除 active
-          if (req.timer) clearTimeout(req.timer);
-          const finalText = req.text;
-          this.active.delete(ssid);
-          req.callbacks.onComplete?.(finalText);
-        }
-      } catch { /* ignore bad frame */ }
-    };
-    es.onerror = () => { /* EventSource 自动重连, 不需手动处理 */ };
-  }
-
-  /** 主动发请求: 创建 session + 异步发 prompt + 注册 callback. */
+  /** 主动发请求: 创建 session + 订阅总线 + 异步发 prompt + 注册 callback. */
   async request(prompt: string, callbacks: AIRequestCallbacks = {}, opts: AskOptions = {}): Promise<AIRequestHandle> {
-    this.ensureStream();
     const client = getClient();
     if (!client) {
       const err = new Error('opencode client not ready (window.__APP_OPENCODE__)');
@@ -114,15 +77,11 @@ class AskService {
       throw err;
     }
 
-    // 1) 创建 session (走 SDK; 带 location.directory = 工作目录, 跟 chat 一致,
-    //    否则 session 无目录上下文, 模型工具调用 (找 PDF 等) 会卡死)
+    // 1) 创建 session (走 SDK; 带 location.directory = 当前工作区 — 单一事实源 effectiveCwd(),
+    //    跟 chat 一致, 否则 session 无目录上下文, 模型工具调用 (找 PDF 等) 会卡死)
     let sessionId: string;
     try {
-      let directory: string | undefined;
-      try {
-        const { data } = await client.path.get();
-        directory = typeof data?.directory === 'string' ? data.directory : undefined;
-      } catch { /* 拿不到就用默认 */ }
+      const directory = effectiveCwd() || undefined;
       const { data, error } = await client.session.create(directory ? { location: { directory } } : {});
       if (error) throw error;
       sessionId = data?.id;
@@ -133,16 +92,12 @@ class AskService {
       throw err;
     }
 
-    // 2) 注册 active + 超时看门狗 (90s 无 idle → 判定失败, 防止按钮永久"生成中")
-    const timer = setTimeout(() => {
-      const req = this.active.get(sessionId);
-      if (!req) return;
-      this.active.delete(sessionId);
-      req.callbacks.onError?.(new Error('AI 生成超时 (90s), 请重试'));
-    }, REQUEST_TIMEOUT_MS);
-    this.active.set(sessionId, { sessionId, callbacks, text: '', timer });
+    // 2) 订阅消息总线 (按 sessionID 过滤) — 先订阅再发 prompt, 避免漏事件
+    const req: ActiveRequest = { sessionId, callbacks, text: '', unsub: () => {}, settled: false };
+    req.unsub = onSessionEvent(sessionId, (ev) => this.handleEvent(ev));
+    this.active.set(sessionId, req);
 
-    // 3) 异步发 prompt (fire-and-forget, 回复走 SSE 事件流)
+    // 3) 异步发 prompt (fire-and-forget, 回复走总线事件流)
     //    images: 走 type:'file' part (dataUrl 图片), 跟 chat 附件一致
     try {
       const parts: any[] = [{ type: 'text', text: prompt }];
@@ -163,30 +118,70 @@ class AskService {
       });
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
-      this.active.delete(sessionId);
-      callbacks.onError?.(err);
+      this.finish(sessionId, () => callbacks.onError?.(err));
       throw err;
     }
 
     return {
       sessionId,
       cancel: async () => {
-        // 终止后端生成 (session.abort) + 清理 active + 清超时 timer
-        const req = this.active.get(sessionId);
-        if (req?.timer) clearTimeout(req.timer);
+        const cur = this.active.get(sessionId);
+        if (!cur || cur.settled) return;
+        cur.settled = true;
+        cur.unsub();
         this.active.delete(sessionId);
+        // 终止后端生成 (session.abort) + 删 session
         try {
           const c = getClient();
           if (c?.session?.abort) await c.session.abort({ sessionID: sessionId });
         } catch { /* 终止失败忽略 */ }
+        await deleteSession(sessionId);
       },
     };
   }
 
-  /** 关闭全局 EventSource (卸载 / 重置时) */
+  /** 总线事件 → 处理流式累积 + 终态 (onSessionEvent 已按 sessionID 过滤). */
+  private handleEvent(ev: { type: string; properties: any }): void {
+    const { type, properties: props } = ev;
+    const sessionId = props?.sessionID as string | undefined;
+    if (!sessionId) return;
+    const req = this.active.get(sessionId);
+    if (!req || req.settled) return;
+
+    if (type === 'message.part.delta' && props.field === 'text' && typeof props.delta === 'string') {
+      req.text += props.delta;
+      req.callbacks.onDelta?.(props.delta);
+    } else if (type === 'message.part.updated' && props.part?.text != null) {
+      // 全量 upsert: 用最新 text 覆盖 (避免 delta + updated 双计数)
+      const part = props.part;
+      if (part.type === 'text' || typeof part.text === 'string') {
+        req.text = part.text;
+        req.callbacks.onDelta?.('');
+      }
+    } else if (type === 'session.idle' || (type === 'session.status' && props.status?.type === 'idle')) {
+      const finalText = req.text;
+      this.finish(sessionId, () => req.callbacks.onComplete?.(finalText));
+    } else if (type === 'session.error') {
+      const e = props.error;
+      const msg = (e && (e.message || e.error)) || (typeof e === 'string' ? e : '') || 'AI 生成出错';
+      this.finish(sessionId, () => req.callbacks.onError?.(new Error(msg)));
+    }
+  }
+
+  /** 终态清理: 退订总线 + 删临时会话 + 回调 (幂等, settled 守卫). */
+  private finish(sessionId: string, fn: () => void): void {
+    const req = this.active.get(sessionId);
+    if (!req || req.settled) return;
+    req.settled = true;
+    req.unsub();
+    this.active.delete(sessionId);
+    void deleteSession(sessionId);
+    fn();
+  }
+
+  /** 卸载 / 重置: 退订所有 active (总线共享, 不在此关闭). */
   dispose() {
-    this.es?.close();
-    this.es = null;
+    for (const req of this.active.values()) req.unsub();
     this.active.clear();
   }
 }

@@ -20,7 +20,8 @@ import {
   isAiReady,
 } from '@/extensions/chat/commands/api';
 import { modelPrefs } from '@/extensions/chat/commands/modelPrefs';
-import { getWorkspace, subscribeWorkspace, secureUrl } from '@/infra/url';
+import { getWorkspace, subscribeWorkspace } from '@/infra/url';
+import { onEvent } from '@/service/event/eventBus';
 import { PartRenderer } from './parts/PartRenderer';
 import { PermissionModal } from './parts/PermissionModal';
 import { ModelPicker } from './parts/ModelPicker';
@@ -464,8 +465,6 @@ export const Chat: React.FC = () => {
     // 订阅前先对账一次
     void refreshSessionStatuses();
     let stopped = false;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let es: EventSource | null = null;
     const upsertRow = (id: string, role: Row['role'], parts: any[], time?: { created?: number; completed?: number }) => {
       setRows((prev) => {
         const idx = prev.findIndex((r) => r.id === id);
@@ -475,66 +474,12 @@ export const Chat: React.FC = () => {
         return next;
       });
     };
-    /** V1 全局 SSE 订阅: EventSource('/global/event') → async iterable {type, properties}.
-     *  V1 wire format 是 {payload:{id,type,properties}} (chat 兼容), V2 /api/event 顶层
-     *  {id, type, data} 也做兜底. 用 /global/event 因为 V1 message.part.delta (流式增量)
-     *  只通过 V1 通道广播. */
-    const subscribeV1Events = async (): Promise<AsyncIterableIterator<{ type: string; properties: any }>> => {
-      const base = (window as any).__APP_OPENCODE_RUNTIME__?.baseUrl;
-      if (!base) throw new Error('opencode baseUrl missing');
-      const source = new EventSource(secureUrl(`${base}/global/event`), { withCredentials: false });
-      es = source;
-      const queue: Array<{ type: string; properties: any }> = [];
-      let resolveNext: ((v: IteratorResult<{ type: string; properties: any }>) => void) | null = null;
-      let closed = false;
-      source.onmessage = (msg) => {
-        if (closed) return;
-        try {
-          const raw = JSON.parse(msg.data);
-          // V2 顶层 {id, location?, type, data}; 兜底 v1 payload 包装 (旧 server).
-          const ev = (raw && raw.payload) || raw;
-          const { type, properties: props, data } = ev || {};
-          const properties = props || data;
+    /** 会话消息事件: 来自客户端消息总线 (service/event/eventBus.ts, 全客户端唯一
+     *  /global/event SSE). 总线已把帧归一化为 {type, properties}; 下方处理逻辑原样保留. */
+    const handleEvent = (ev: { type: string; properties: any }) => {
+      if (stopped) return;
+          const { type, properties } = ev || ({} as any);
           if (!type || !properties) return;
-          const item = { type, properties };
-          if (resolveNext) {
-            const r = resolveNext; resolveNext = null; r({ value: item, done: false });
-          } else {
-            queue.push(item);
-          }
-        } catch { /* ignore bad frame */ }
-      };
-      source.onerror = () => {
-        if (closed) return;
-        // EventSource 浏览器自动重连, 不需要手动 reconnect
-        console.warn('[chat] /global/event SSE 异常, 浏览器自动重连');
-      };
-      const it: AsyncIterableIterator<{ type: string; properties: any }> = {
-        [Symbol.asyncIterator]() { return this; },
-        next(): Promise<IteratorResult<{ type: string; properties: any }>> {
-          if (queue.length > 0) return Promise.resolve({ value: queue.shift()!, done: false });
-          if (closed) return Promise.resolve({ value: undefined, done: true });
-          return new Promise((resolve) => { resolveNext = resolve; });
-        },
-        return(): Promise<IteratorResult<{ type: string; properties: any }>> {
-          closed = true;
-          try { source.close(); } catch { /* */ }
-          if (resolveNext) {
-            const r = resolveNext; resolveNext = null;
-            r({ value: undefined, done: true });
-          }
-          return Promise.resolve({ value: undefined, done: true });
-        },
-      };
-      return it;
-    };
-    const run = async () => {
-      try {
-        const evt = await subscribeV1Events();
-        for await (const ev of evt) {
-          if (stopped) break;
-          const { type, properties } = ev || {};
-          if (!type || !properties) continue;
           // busy 状态全局维护: status/idle 事件总是处理 (带 sessionID), 不参与当前会话过滤,
           // 否则切走期间到达的 idle 事件被丢弃 → 旧会话 busy 悬挂
           if (type === 'session.status') {
@@ -547,15 +492,15 @@ export const Chat: React.FC = () => {
                 if (ssid === sessionIDRef.current) void loadMessages(ssid);
               }
             }
-            continue;
+            return;
           }
           if (type === 'session.idle') {
             const ssid = properties.sessionID;
             if (ssid) setBusyBySession((prev) => ({ ...prev, [ssid]: false }));
-            continue;
+            return;
           }
           // 只处理当前会话的事件
-          if (properties.sessionID && properties.sessionID !== sessionIDRef.current) continue;
+          if (properties.sessionID && properties.sessionID !== sessionIDRef.current) return;
           switch (type) {
             case 'message.part.updated': {
               // 按 part.id upsert 任意类型 part (text/reasoning/tool/step-start 等), 不丢非 text part
@@ -679,22 +624,12 @@ export const Chat: React.FC = () => {
               break;
             }
           }
-        }
-      } catch (e) {
-        // SSE 断开: 退化为慢轮询兜底
-        console.warn('[chat] event stream closed, fallback poll:', e);
-      }
-      if (!stopped) {
-        // 重连后对账 busy 状态 (事件可能丢失)
-        void refreshSessionStatuses();
-        reconnectTimer = setTimeout(() => { void run(); }, 3000);
-      }
     };
-    void run();
+    // 订阅消息总线 (EventSource 自动重连由总线负责); busy 丢事件对账靠初始 + 15s 定时
+    const off = onEvent(handleEvent);
     return () => {
       stopped = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (es) { try { es.close(); } catch { /* */ } es = null; }
+      off();
     };
   }, [ready, loadMessages, refreshSessionStatuses]);
 
