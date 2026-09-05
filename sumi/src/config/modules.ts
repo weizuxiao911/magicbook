@@ -17,6 +17,8 @@ import { FilePickerModule } from '../extensions/filepicker';
 import { PdfReaderModule } from '../extensions/pdf';
 import { OpenTypeModule } from '../extensions/opentype';
 import { PortsExtensionModule } from '../extensions/ports';
+import { MarkdownPreviewModule } from '../extensions/markdown';
+import { BuiltinBrowserModule } from '../extensions/browser';
 
 import { AgentModule } from '../service/opencode';
 import { ExtensionModule } from '../service/extension';
@@ -56,6 +58,8 @@ export function getBuiltinModules(_opts?: { vsixMetadata?: any[] }): any[] {
     PdfReaderModule,
     OpenTypeModule,
     PortsExtensionModule,  // 端口面板 (底部 tab, 服务发现提示)
+    MarkdownPreviewModule, // markdown 预览 (双击 .md 默认渲染预览, 可切 code)
+    BuiltinBrowserModule,  // 内置浏览器 (main 编辑器标签, iframe + debugger API)
 
     // 自定义 file scheme provider (覆盖 codeblitz 默认 DiskFileSystemProvider)
     // 放最后: codeblitz 默认 fsProviders 先就位, 我们 fsProviders.delete + registerProvider

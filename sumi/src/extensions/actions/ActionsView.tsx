@@ -7,6 +7,7 @@ import { PreferenceScope } from '@opensumi/ide-core-common/lib/preferences/prefe
 
 import { getWorkspace, subscribeWorkspace } from '../../infra/url';
 import { APP_CHAT_CONFIG } from '../../config/brand';
+import { BrowserToken, type IBrowserService } from '../browser';
 
 function requestShowPicker(): void {
   if (typeof window === 'undefined') return;
@@ -32,6 +33,7 @@ const THEME_KEY = 'general.theme';
 export const ActionsView: React.FC = () => {
   const layoutService = useInjectable<IMainLayoutService>(IMainLayoutService);
   const preferenceService = useInjectable<PreferenceService>(PreferenceService);
+  const browserService = useInjectable<IBrowserService>(BrowserToken as any);
   const [leftVisible, setLeftVisible] = useState(false);
   const [bottomVisible, setBottomVisible] = useState(false);
   const [rightVisible, setRightVisible] = useState(true);
@@ -243,6 +245,18 @@ export const ActionsView: React.FC = () => {
         </svg>
       </button>
       <span style={{ flex: 1 }} />
+      <button
+        type="button"
+        title="内置浏览器"
+        style={iconBtnStyle}
+        onClick={() => { void browserService.open(); }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="2" y1="12" x2="22" y2="12" />
+          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+        </svg>
+      </button>
       <button type="button" title={isDark ? '切换到浅色主题' : '切换到深色主题'} onClick={toggleTheme} style={iconBtnStyle}>
         {isDark ? <SunIcon /> : <MoonIcon />}
       </button>
