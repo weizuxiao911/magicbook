@@ -326,3 +326,45 @@ AI **仍需 `question`**:
 - **问题描述**: headless Chrome 无 PDFium, 部分 Chrome flag 禁用 PDF viewer, `<embed src=blob type=application/pdf>` 渲染失败显示空白.
 - **复现路径**: 启用 PDF plugin 禁用的 Chrome.
 - **解决方案**: 默认 `pdfMode='pdfjs'`, 走 pdf.js + canvas 渲染, 跨环境可靠. worker 从 unpkg/jsdelivr CDN 拉, CSP `worker-src * blob:` 已透传.
+
+#### 11. 代码/patch 改了但运行镜像没重建 → "改了没修复"假象
+
+- **问题描述**: sumi postinstall patch (storage 路径) 与 Dockerfile 已改, 但容器内 binary 仍是旧产物 (marker 为 0), 用户验证仍失败, 误判方案无效.
+- **复现路径**: 改 Dockerfile/package.json/patch 后直接跑旧镜像验证.
+- **解决方案**: 验证前先确认"运行中产物"确实含改动: docker 镜像用 `docker exec strings /app/... | grep marker`; 本地 dist 用 grep marker; 交叉/重编产物看构建时间戳. 先对产物版本, 再谈方案对错.
+
+#### 12. 改完源码忘了重编产物就验证 → 旧产物报错误导排查
+
+- **问题描述**: 修 opencode 注入链后直接起旧 binary 验证, 反复报 `provideService is not a function`, 误以为修复方向错.
+- **复现路径**: 源码改动后, 运行验证用的 binary/dist 是改动前构建的.
+- **解决方案**: 改服务端/前端源码后, 验证前必须重新构建对应产物 (记录构建时间/日志尾部 smoke 通过), 或先 `git log`/时间戳确认产物新于源码改动.
+
+#### 13. 项目 fork 的 Effect 是 v4 beta, 标准 API 可能运行时缺失
+
+- **问题描述**: `Layer.provideService` 编译能过 (类型有), 运行时 `b.provideService is not a function` 直接崩.
+- **复现路径**: 用标准 Effect v3 API 在 opencode fork (v4 beta) 里 provide context.
+- **解决方案**: fork 内新代码先搜同仓用法/避开重 context 注入; 参数直传优先于 context provide; 跑 smoke test 确认运行时 API 存在.
+
+#### 14. ubuntu 镜像预置 uid 1000 用户, useradd 撞 UID
+
+- **问题描述**: Dockerfile `useradd --uid 1000` 在 debian:12-slim 正常, 换 ubuntu:24.04 后 exit 4 "UID 1000 is not unique" (官方镜像预置 ubuntu 用户 uid 1000).
+- **复现路径**: 基础镜像 debian → ubuntu 后不检查预置用户直接构建.
+- **解决方案**: 换 base 镜像先核对预置用户/包差异 (apt 包可用性实测一次通过); 本项目按用户拍板直接 USER root, 不自建服务用户.
+
+#### 15. 镜像层 ENV 默认值抢占用户 `-e` 覆盖 → "改端口没生效"
+
+- **问题描述**: Dockerfile `ENV NUMAS_PORT=4096` + entrypoint 优先读长名 NUMAS_PORT → `docker run -e PORT=8080` 永远 4096.
+- **复现路径**: 镜像留默认 ENV, entrypoint 长名优先.
+- **解决方案**: 约定"短名 env (-e PORT) 是用户替换镜像默认的主通道": 读值顺序 短名 → 长名 → 内置默认 (entrypoint v() 已实现); `-e PORT` 与 `-p` 映射必须配套 (8080:8080), 提示文案写明.
+
+#### 16. fork flag 传了但没人消费 → 前端永远用编译期默认 (dev 碰巧掩盖)
+
+- **问题描述**: opencode `--registry` 参数从未 provide 到 UI 注入层 (RegistryConfig 无 provide 点), 前端 registryBaseUrl 恒为 sumi webpack 编译期默认 `http://127.0.0.1:7790`; dev 时浏览器本机恰好跑着 registry 所以"碰巧工作", 容器部署语义反转 (浏览器侧 127.0.0.1 是用户电脑) 才暴露.
+- **复现路径**: 注入链无 provide; 验证只看"功能正常"没查运行时注入值.
+- **解决方案**: 验证"配置/注入链"要看运行时实际值 (页面 evaluate `window.__APP_CONFIG__.registryBaseUrl`), 不能只凭功能 OK; 容器场景 registry 必须经同源反代 (--registry /proxy/7790), 启动方显式传参, 不写死编译期.
+
+#### 17. "简化"框架适配逻辑丢字段语义 → 资源路由回归 (explorer 图标全 404)
+
+- **问题描述**: 静态资源 provider 的 resolveStaticResource "简化"成一律 `registryBaseUrl + path`, 丢掉原实现的 `uri.authority` 分流语义 → codeblitz 市场资产 (alipay CDN 的 vsicons 图标, uri 自带 authority) 被指到本地 registry → 图标全 404.
+- **复现路径**: 改 kt-ext 静态解析后不对比旧 dist 视觉/网络行为.
+- **解决方案**: 改动前先理解字段语义 (authority = 外部市场 host, 无 authority = 本地 registry 扩展); 改动后用旧 dist 页面做网络级对照 (图标请求 host), 再下"简化"结论.
