@@ -3,6 +3,9 @@
  *
  * - 自定义 scheme numas-browser:// (仿 welcome): registerResource + registerEditorComponent,
  *   BrowserView 作为主编辑区(main slot)编辑器标签打开, 内部 <iframe> 渲染网页.
+ * - 多开: 每窗口 = 一个编辑器 tab, URI 唯一标识 = 首次打开 URL 的 hash
+ *   (`numas-browser://<urlHash>`; 无 URL 空窗口 = numas-browser://browser).
+ *   同 URL 再 open → 聚焦已有 tab (编辑器按 URI 去重); 不同 URL → 独立 tab 各自 iframe.
  * - DI: BrowserToken → BrowserServiceImpl (内置拓展 useInjectable 调).
  * - 全局命令 numas.browser.* (CommandContribution): vsix / 其他拓展用 vscode 标准
  *   executeCommand 调用 (open/navigate/reload/openExternal/executeJs/queryDom/activeUrl).
@@ -22,7 +25,7 @@ import {
 } from '@opensumi/ide-editor/lib/browser/types';
 
 import { BrowserView } from './BrowserView';
-import { BrowserServiceImpl } from './browser.service';
+import { BrowserServiceImpl, browserUriFor, viewIdFromUri, windowTitleFor } from './browser.service';
 import {
   BrowserToken,
   BROWSER_SCHEME,
@@ -30,7 +33,7 @@ import {
   type IBrowserService,
 } from './browser.interface';
 
-const BROWSER_URI = new URI(`${BROWSER_SCHEME}://browser`);
+const BROWSER_URI = browserUriFor();
 
 /** 全局命令 id (vscode/codeblitz 标准, 供 executeCommand 调用) */
 export const BROWSER_COMMANDS = {
@@ -55,8 +58,9 @@ export class BrowserContribution
 
   // ----- 打开标签的 opener / fileOpener 注入给 service (service 不直接依赖 editor, 解耦) -----
   onDidStart(): void {
-    (this.browser as BrowserServiceImpl).opener = async () => {
-      await this.editorService.open(BROWSER_URI, { preview: false, focus: true });
+    (this.browser as BrowserServiceImpl).opener = async (uri: URI) => {
+      // 同 URI (同 url hash) → 编辑器聚焦已有 tab, 不重复开; 不同 URI → 多开
+      await this.editorService.open(uri, { preview: false, focus: true });
     };
     (this.browser as BrowserServiceImpl).fileOpener = async (absPath: string) => {
       // 推断 file:// URI; normSep 处理跨平台; PdfReaderView (file scheme, .pdf 后缀) 自动接管
@@ -70,12 +74,17 @@ export class BrowserContribution
   registerResource(resourceService: ResourceService): void {
     resourceService.registerResourceProvider({
       scheme: BROWSER_SCHEME,
-      provideResource: (uri: URI): IResource => ({
-        uri,
-        name: '内置浏览器',
-        icon: 'codicon codicon-globe',
-        supportsRevive: false,
-      }),
+      provideResource: (uri: URI): IResource => {
+        // 多开标签名: 窗口 url (knownUrls) 的域名; 无 → 默认名. 每窗口独立 tab.
+        const host = viewIdFromUri(uri);
+        const known = (this.browser as BrowserServiceImpl).knownUrlFor(host);
+        return {
+          uri,
+          name: windowTitleFor(known),
+          icon: 'codicon codicon-globe',
+          supportsRevive: false,
+        };
+      },
       shouldCloseResourceWithoutConfirm: () => true,
     });
   }
@@ -127,3 +136,4 @@ export class BuiltinBrowserModule extends OpenSumiBrowserModule {
   ];
   contributionProvider = [BrowserEditorContribution, CommandContribution, ClientAppContribution];
 }
+

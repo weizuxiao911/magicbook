@@ -19,7 +19,7 @@ import { useInjectable } from '@opensumi/ide-core-browser';
 import * as pdfjsLib from 'pdfjs-dist';
 
 import { BrowserToken, type IBrowserService, type BrowserViewApi } from './browser.interface';
-import { normalizeUrl, deproxyUrl } from './browser.service';
+import { normalizeUrl, deproxyUrl, viewIdFromUri } from './browser.service';
 import { PortsToken, type IPortsService } from '../../service/ports/ports.interface';
 import { normalizeSep } from '../../infra/path';
 
@@ -173,9 +173,15 @@ const PdfjsPages: React.FC<{ src: string }> = ({ src }) => {
   );
 };;
 
-export const BrowserView: React.FC<{ resource?: any }> = () => {
+export const BrowserView: React.FC<{ resource?: any }> = ({ resource }) => {
   const browser = useInjectable<IBrowserService>(BrowserToken as any);
   const portsService = useInjectable<IPortsService>(PortsToken as any);
+
+  // 多开窗口标识: URI host 段 = 首次打开 URL 的 hash (无 url 空窗口 = 'browser').
+  // 每窗口 (每编辑器 tab) 独立组件实例 → 独立 iframe/地址栏; 挂载/卸载时按 viewId 注册/注销.
+  const viewId = viewIdFromUri(resource?.uri);
+  const viewIdRef = useRef(viewId);
+  viewIdRef.current = viewId;
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [addr, setAddr] = useState('');          // 地址栏文本: 用户输入的真实地址 (跟随 iframe 内部跳转)
@@ -247,11 +253,14 @@ const [nonce, setNonce] = useState(0);         // 刷新用 (改 key 强制重�
       },
     };
     viewApiRef.current = api;
-    browser._registerView(api);
-    const pending = browser._consumePendingUrl();
-    if (pending) doNavigateRef.current(pending);
+    browser._registerView(api, viewIdRef.current);
+    // 消费本窗口的起始导航: open 带的新 url 优先; 无 → 上次地址 (tab 切回重挂恢复, 不白屏)
+    const start = browser._takeStartUrl(viewIdRef.current);
+    if (start) doNavigateRef.current(start);
     return () => {
-      browser._unregisterView(api);
+      // 卸载时上报当前地址: 非激活编辑器 tab 组件会被 unmount, 切回时靠它恢复导航
+      browser._rememberUrl(viewIdRef.current, addrRef.current || srcRef.current);
+      browser._unregisterView(viewIdRef.current);
       viewApiRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
