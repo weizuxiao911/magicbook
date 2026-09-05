@@ -149,7 +149,18 @@ const targets = singleFlag
 
       return true
     })
-  : allTargets
+  : process.env.NUMAS_TARGET
+    ? // numas: NUMAS_TARGET=linux-arm64 / linux-x64 / darwin-arm64 单平台交叉构建.
+      //   (轻量 docker 组装: 本地产物 cp 进 ubuntu 镜像, 不经容器内全量编译)
+      //   取该 (os, arch) 下无 abi + 非 baseline 的标准 glibc 项 (名字不带后缀)
+      allTargets.filter(
+        (item) =>
+          item.os === process.env.NUMAS_TARGET!.split("-")[0] &&
+          item.arch === process.env.NUMAS_TARGET!.split("-")[1] &&
+          item.abi === undefined &&
+          item.avx2 !== false,
+      )
+    : allTargets
 
 try {
   await rm("dist", { recursive: true, force: true })
