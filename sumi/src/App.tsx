@@ -72,31 +72,7 @@ async function ensureUrlWorkspace(): Promise<boolean> {
   } catch { return false; }
 }
 
-/** 渲染前暂存上次打开的编辑器 uris（容器初始化恢复失败会清空 storage, 登录后按暂存恢复）.
- *  key 跟 contribution/editor-session 一致: 按 workspace 隔离 (editor.restore.{ws}.uris). */
-function stashSavedEditorUris(): void {
-  try {
-    // 自建持久化 key（watchEditorState 维护）; 兜底旧 opensumi workbench storage
-    const ws = getWorkspace();
-    const wsTag = ws.replace(/^\/+|\/+$/g, '').replace(/[\\/:]/g, '_') || 'default';
-    const raw = localStorage.getItem(`editor.restore.${wsTag}.uris`);
-    const activeUri = localStorage.getItem(`editor.restore.${wsTag}.activeUri`);
-    if (activeUri) (window as any).__SAVED_EDITOR_ACTIVE_URI__ = activeUri;
-    if (raw) {
-      const arr = JSON.parse(raw) as string[];
-      if (Array.isArray(arr) && arr.length) { (window as any).__SAVED_EDITOR_URIS__ = arr; return; }
-    }
-    const legacy = localStorage.getItem('scoped:/workspace/:/workbench');
-    if (!legacy) return;
-    const state = JSON.parse(legacy) as { grid?: string };
-    const grid = JSON.parse(state.grid || '{}') as { editorGroup?: { uris?: string[] } };
-    const uris = grid?.editorGroup?.uris || [];
-    if (uris.length) (window as any).__SAVED_EDITOR_URIS__ = uris;
-  } catch { /* ignore */ }
-}
-
 export const App: React.FC = () => {
-  stashSavedEditorUris();
   const defaultModules = getDefaultAppConfig().modules || [];
   const [extensionMetadata, setExtensionMetadata] = useState<ExtensionMetadata[]>([]);
   const [ready, setReady] = useState(false);

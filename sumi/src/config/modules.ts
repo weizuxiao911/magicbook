@@ -10,7 +10,6 @@ import { TerminalNextModule } from '@opensumi/ide-terminal-next/lib/browser';
 import { TaskModule } from '@opensumi/ide-task/lib/browser';
 
 import { ActionsModule } from '../extensions/actions';
-import { WelcomeModule } from '../extensions/welcome';
 import { ChatModule } from '../extensions/chat';
 import { WorkspaceModule } from '../extensions/workspace';
 import { FilePickerModule } from '../extensions/filepicker';
@@ -29,7 +28,7 @@ import { EditorModule } from '../service/editor';
 import { StateModule } from '../service/state';
 import { PortsModule } from '../service/ports';
 
-import { EditorSessionModule } from '../contribution/editor-session';
+import { EditorRestoreFallbackModule } from '../contribution/editor-restore';
 
 export function getBuiltinModules(_opts?: { vsixMetadata?: any[] }): any[] {
   return [
@@ -47,11 +46,10 @@ export function getBuiltinModules(_opts?: { vsixMetadata?: any[] }): any[] {
     PortsModule,           // 本地服务端口发现 (面板 + 事件)
 
     // contribution 层 (lifecycle / UI 状态)
-    EditorSessionModule,   // 编辑器 tab 持久化 (刷新后恢复)
+    EditorRestoreFallbackModule, // 官方 workbench tab 恢复的延迟兜底 (早期 handlesUri 未就绪)
 
     // 内置 UI 拓展
     ActionsModule,
-    WelcomeModule,
     ChatModule,
     WorkspaceModule,
     FilePickerModule,

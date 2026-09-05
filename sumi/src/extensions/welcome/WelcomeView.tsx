@@ -7,14 +7,12 @@ import { getWorkspace } from '@/infra/url';
 import { APP_CHAT_CONFIG } from '@/config/brand';
 
 /**
- * WelcomeView — webapp 主区欢迎页
+ * WelcomeView — numas 欢迎页 UI 组件
  *
- * 注册为 editor component (scheme = 'welcome'), 资源 URI = welcome://home.
- * 工作区无打开文件时由 WelcomeContribution.onDidRestoreState 自动打开.
- *
- * 内容:
- *   - logo (品牌 logo) + 品牌名 + 标语 (单一来源: config/brand.ts)
- *   - 快捷操作: 上传文件到工作区
+ * 显示/打开规则走 codeblitz 官方 welcome 机制 (官方 WelcomeContribution:
+ * onDidRestoreState 时无打开资源才 open welcome://), 本组件经官方扩展点
+ * runtimeConfig.WelcomePage 注入替换官方默认欢迎组件 (见 src/config/runtime.ts).
+ * 自建 welcome 扩展注册 (module.ts) 已删除 — 与官方机制重复会双开欢迎页.
  */
 export const WelcomeView: React.FC<{ resource?: any }> = () => {
   const commandService = useInjectable<CommandService>(CommandService);
