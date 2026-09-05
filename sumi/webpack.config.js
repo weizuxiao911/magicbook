@@ -228,6 +228,9 @@ const config = {
         // 单一事实源: cli's --port 注入 process.env.APP_BASE_URL, 此处优先; .env 兜底
         new webpack_1.default.DefinePlugin({
             __APP_BASE_URL__: JSON.stringify(getEnv('APP_BASE_URL', '/')),
+            // 编译期默认 (仅 --registry 未注入时兜底): dev 本机 registry 直连.
+            // 生产/容器部署的 registry 地址必须由 opencode --registry 启动参数显式传入
+            // (注入 __APP_CONFIG__.registryBaseUrl 覆盖此处), 不在此写死 /proxy 等部署形态.
             __APP_REGISTRY_BASE_URL__: JSON.stringify(getEnv('REGISTRY_BASE_URL', 'http://127.0.0.1:7790')),
             __APP_DEPLOY_ENV__: JSON.stringify(process.env.DEPLOY_ENV || 'development'),
         }),

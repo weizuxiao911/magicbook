@@ -14,7 +14,15 @@ import type { ExtensionMetadata, IExtensionService } from './extension.interface
 import { ExtensionToken } from './extension.interface';
 
 function registryBaseUrl(): string {
-  return ((window as any).__APP_CONFIG__?.registryBaseUrl || '').replace(/\/+$/, '');
+  let base = ((window as any).__APP_CONFIG__?.registryBaseUrl || '').trim();
+  if (!base) return '';
+  // 相对路径 (如 /proxy/7790, 经 opencode 同源反代到容器内 registry) → 归一化为同源绝对 URL:
+  // 下游 new URL(base) / 静态资源拼接都需要绝对形态; 绝对 URL (dev 直连 127.0.0.1:7790) 原样保留
+  if (base.startsWith('/')) {
+    try { base = new URL(base, window.location.origin).toString(); }
+    catch { return ''; }
+  }
+  return base.replace(/\/+$/, '');
 }
 
 /** kt-ext 静态资源贡献 — 覆盖 codeblitz 默认的 kt-ext→https 解析.
@@ -27,13 +35,17 @@ export class RegistryStaticResourceContribution implements StaticResourceContrib
     service.registerStaticResourceProvider({
       scheme: EXT_SCHEME,
       resolveStaticResource: (uri) => {
-        const path = uri.path.toString();
-        const scheme = uri.scheme === 'https' || uri.scheme === 'http' ? uri.scheme : base.startsWith('https') ? 'https' : 'http';
-        return URI.from({
-          scheme,
-          authority: uri.authority || new URL(base).host,
-          path: `${path}`,
-        });
+        // uri.authority 有值 = 外部市场资产 (codeblitz 默认市场 alipay CDN 的 vsicons 等):
+        // 保留原 host (scheme 跟随 registry 的 https/http), 不能落本地 registry.
+        if (uri.authority) {
+          const scheme = uri.scheme === 'https' || uri.scheme === 'http'
+            ? uri.scheme
+            : base.startsWith('https') ? 'https' : 'http';
+          return URI.from({ scheme, authority: uri.authority, path: uri.path.toString() });
+        }
+        // 无 authority = 本地 registry 扩展 (docxreader/html/paper 等):
+        // 直接拼完整 URL 保留 registryBaseUrl 前缀 (同源反代 /proxy/7790 或 dev 直连 host)
+        return URI.parse(`${base}${uri.path.toString()}`);
       },
       roots: [base],
     });
