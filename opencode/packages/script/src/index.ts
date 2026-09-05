@@ -31,9 +31,25 @@ const CHANNEL = await (async () => {
 })()
 const IS_PREVIEW = CHANNEL !== "latest"
 
+// numas fork 版本命名: numas-v<numas根package.json version>-<时间戳> (如 numas-v0.1.0-202609050903).
+// 根版本在构建期读取 (import.meta.dir 此时指向源码 packages/script/src, 上溯 4 层 = numas 根);
+// 读不到兜底 0.0.0. 时间戳 UTC yyyyMMddHHmm, 保证每次构建可追溯.
+const NUMAS_VERSION = await (async () => {
+  try {
+    const pkg = await Bun.file(path.resolve(import.meta.dir, "../../../../package.json")).json()
+    return typeof pkg?.version === "string" && pkg.version ? pkg.version : "0.0.0"
+  } catch {
+    return "0.0.0"
+  }
+})()
+
 const VERSION = await (async () => {
   if (env.OPENCODE_VERSION) return env.OPENCODE_VERSION
-  if (IS_PREVIEW) return `0.0.0-${CHANNEL}-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`
+  if (IS_PREVIEW) {
+    const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")
+    // numas: 覆盖 upstream 的 0.0.0-<channel>-<ts>, 用 numas-标识 + v<仓库版本>-<ts> (fork 产物可识别)
+    return `numas-v${NUMAS_VERSION}-${ts}`
+  }
   const version = await fetch("https://registry.npmjs.org/opencode-ai/latest")
     .then((res) => {
       if (!res.ok) throw new Error(res.statusText)
