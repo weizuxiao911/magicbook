@@ -6,7 +6,8 @@
     "numas": "./dev.js"
   },
   "scripts": {
-    "dev": "node dev.js"
+    "dev": "node dev.js",
+    "docker": "bash scripts/build-docker.sh"
   },
   "dependencies": {
     "opencode-ai": "^1.18.11"

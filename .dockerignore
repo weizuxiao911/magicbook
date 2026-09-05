@@ -1,0 +1,44 @@
+# git / 临时
+# (保留 .git: opencode build.ts 跑 'git branch --show-current' 拿 channel,
+#  无 .git 会导致 build 失败)
+.tmp
+.tmp/**
+*.log
+.DS_Store
+
+# node_modules (在 builder 阶段内 npm/bun install 重新装)
+**/node_modules
+**/node_modules/**
+
+# dist (产物在 builder 阶段重 build; runtime 阶段另拷 binary)
+**/dist
+**/dist/**
+
+# 构建缓存 marker
+**/.numas-*
+**/.numas-*/**
+**/.tsbuildinfo
+**/*.tsbuildinfo
+
+# docs (与运行时无关)
+docs
+docs/**
+
+# registry 是 vsix 拓展注册服务 (开发用, 不进镜像)
+registry
+registry/**
+
+# extensions (vsix 源码; dev 模式不加载, 进镜像也用不上)
+extensions
+extensions/**
+
+# IDE 配置
+.vscode
+.vscode/**
+.idea
+.idea/**
+*.swp
+*.swo
+
+# 注: opencode/packages/opencode/test/tool/fixtures/models-api.json 需保留
+# (build.ts 用 MODELS_DEV_API_JSON env 读取); 不在 ignore 列表内, 自然被 COPY 进 builder
