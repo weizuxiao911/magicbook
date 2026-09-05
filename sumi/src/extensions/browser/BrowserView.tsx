@@ -15,6 +15,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useInjectable } from '@opensumi/ide-core-browser';
 
+// @ts-ignore — pdfjs-dist v4 ships ESM types, loose import
+import * as pdfjsLib from 'pdfjs-dist';
+
 import { BrowserToken, type IBrowserService, type BrowserViewApi } from './browser.interface';
 import { normalizeUrl, deproxyUrl } from './browser.service';
 import { PortsToken, type IPortsService } from '../../service/ports/ports.interface';
@@ -26,6 +29,38 @@ const iconBtn: React.CSSProperties = {
   background: 'transparent', border: 'none', borderRadius: 6,
   color: 'var(--editor-foreground, #e5e7eb)',
 };
+
+/** pdf.js worker 兜底: 用本地 node_modules 的 mjs (webpack 不打包, 我们运行时 fetch
+ *  opencode 反代路径 /proxy/<port>/...). 但开发模式 numas 主进程跑 24096, 本地文件在 sumi/dist
+ *  不可直接 URL 访问. 兜底走 unpkg/jsdelivr CDN (与 PdfReaderView 一致). */
+const PDF_WORKER_CACHE_KEY = '__NUMAS_BROWSER_PDF_WORKER_URL__';
+function ensurePdfWorker(): void {
+  if (typeof window === 'undefined') return;
+  const lib = pdfjsLib as any;
+  if (lib.GlobalWorkerOptions?.workerSrc) return;
+  const cached = (window as any)[PDF_WORKER_CACHE_KEY];
+  if (cached) { lib.GlobalWorkerOptions.workerSrc = cached; return; }
+  const version = lib.version || '4.10.38';
+  const candidates = [
+    `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`,
+    `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build/pdf.worker.min.mjs`,
+  ];
+  (async () => {
+    for (const u of candidates) {
+      try {
+        const r = await fetch(u);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const text = await r.text();
+        const blob = new Blob([text], { type: 'text/javascript' });
+        const blobUrl = URL.createObjectURL(blob);
+        (window as any)[PDF_WORKER_CACHE_KEY] = blobUrl;
+        lib.GlobalWorkerOptions.workerSrc = blobUrl;
+        return;
+      } catch { /* next */ }
+    }
+  })();
+}
+ensurePdfWorker();
 
 /** 注入到同源 iframe 的拦截脚本. 拦截 .pdf (后续可扩展 .mp4/.html) 链接点击, 通过 postMessage
  *  通知父窗口在 numas 主编辑区打开, 避免 Chrome 在 iframe 内降级为下载. */
@@ -57,7 +92,86 @@ function isPdfUrl(url: string): boolean {
   } catch {
     return /\.pdf(\?.*)?$/i.test(url);
   }
-};
+}
+
+/** PDF 渲染模式:
+ *  - embed:  <embed type="application/pdf" src=blob> — 真实 Chrome 可渲染, headless / 无 PDF plugin 失败
+ *  - pdfjs:  pdf.js (js实现的 PDF 解析+canvas 渲染) — 跨环境可靠, 但首屏需 fetch 全部 bytes
+ /** 极简 pdf.js 多页渲染器: 拉 bytes → getDocument → 顺序渲染每页到 <canvas>, 自适应宽度. */
+const PdfjsPages: React.FC<{ src: string }> = ({ src }) => {
+  const [doc, setDoc] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [numPages, setNumPages] = useState(0);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDoc(null);
+    setErr(null);
+    setNumPages(0);
+    (async () => {
+      try {
+        const res = await fetch(src);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buf = await res.arrayBuffer();
+        if (cancelled) return;
+        const task = (pdfjsLib as any).getDocument({
+          data: new Uint8Array(buf),
+          cMapUrl: 'https://unpkg.com/pdfjs-dist@4.10.38/cmaps/',
+          cMapPacked: true,
+          isEvalSupported: false,
+        });
+        const d = await task.promise;
+        if (cancelled) return;
+        setDoc(d);
+        setNumPages(d.numPages);
+      } catch (e: any) {
+        if (!cancelled) setErr(e?.message || String(e));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [src]);
+
+  useEffect(() => {
+    if (!doc || !containerRef.current) return;
+    const root = containerRef.current;
+    root.innerHTML = '';
+    const maxWidth = root.clientWidth || 800;
+    (async () => {
+      for (let i = 1; i <= doc.numPages; i++) {
+        const page = await doc.getPage(i);
+        const baseVp = page.getViewport({ scale: 1 });
+        const scale = Math.min(maxWidth / baseVp.width, 2);
+        const vp = page.getViewport({ scale });
+        const canvas = document.createElement('canvas');
+        canvas.width = vp.width;
+        canvas.height = vp.height;
+        canvas.style.display = 'block';
+        canvas.style.margin = '0 auto 12px';
+        canvas.style.boxShadow = '0 1px 3px rgba(0,0,0,0.4)';
+        root.appendChild(canvas);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) continue;
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      }
+    })();
+  }, [doc]);
+
+  if (err) return (
+    <div style={{ padding: 24, color: '#e88' }}>
+      PDF.js 渲染失败: {err}
+      <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
+        可尝试: 1) 刷新; 2) 切回浏览器内置渲染; 3) 在系统真实浏览器中打开
+      </div>
+    </div>
+  );
+  if (!doc) return <div style={{ padding: 24, color: '#aaa' }}>PDF.js 加载中...</div>;
+  return (
+    <div ref={containerRef} style={{ width: '100%', height: '100%', overflow: 'auto', background: '#2a2a2a', padding: 12 }}>
+      <div style={{ color: '#aaa', fontSize: 12, marginBottom: 8 }}>PDF.js 渲染 · 共 {numPages} 页</div>
+    </div>
+  );
+};;
 
 export const BrowserView: React.FC<{ resource?: any }> = () => {
   const browser = useInjectable<IBrowserService>(BrowserToken as any);
@@ -66,9 +180,9 @@ export const BrowserView: React.FC<{ resource?: any }> = () => {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [addr, setAddr] = useState('');          // 地址栏文本: 用户输入的真实地址 (跟随 iframe 内部跳转)
   const [src, setSrc] = useState('about:blank'); // iframe 实际加载地址
-  const [nonce, setNonce] = useState(0);         // 刷新用 (改 key 强制重载)
-  // PDF 模式: src 是 PDF 时, 不渲染 iframe (Chrome iframe 不渲染 PDF), 改用 <embed> + blob URL.
-  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | undefined>();
+const [nonce, setNonce] = useState(0);         // 刷新用 (改 key 强制重载)
+  // PDF 模式: src 是 PDF 时, 不渲染 iframe (Chrome iframe 不渲染 PDF), 改用 PdfjsPages 渲染
+  const [isPdf, setIsPdf] = useState(false);
   // refs: 供 mount 时注册的视图句柄读取最新值 (避免闭包过期)
   const addrRef = useRef('');
   const srcRef = useRef('about:blank');
@@ -81,20 +195,8 @@ export const BrowserView: React.FC<{ resource?: any }> = () => {
     const norm = normalizeUrl(input);
     setAddr(norm.real || input);   // 地址栏展示用户输入的真实地址, 不暴露反代
     setSrc(norm.src || 'about:blank'); // iframe 实际加载地址 (本地服务 = 反代)
-    // 若是 PDF: 改用 <embed> + blob URL 渲染 (Chrome 的 PDF viewer 不渲染 iframe 内的 PDF, 需顶级 / blob).
-    if (isPdfUrl(norm.src) && norm.src !== 'about:blank') {
-      void fetchPdfBlob(norm.src).then((blobUrl) => {
-        setPdfBlobUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
-          return blobUrl || undefined;
-        });
-      });
-    } else {
-      setPdfBlobUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return undefined;
-      });
-    }
+    // PDF 检测: 切到 PdfjsPages 渲染 (不依赖 Chrome PDF plugin, 跨环境可靠)
+    setIsPdf(isPdfUrl(norm.src) && norm.src !== 'about:blank');
   }, []);
   // 始终指向最新 doNavigate (供 mount 时注册的句柄调用, 避免闭包过期)
   const doNavigateRef = useRef(doNavigate);
@@ -114,18 +216,13 @@ export const BrowserView: React.FC<{ resource?: any }> = () => {
     }
     if (!real || real === 'about:blank') return;
     // PDF 模式: iframe 不渲染, 跳过地址同步 (addr 已经在 doNavigate 时设置)
-    if (pdfBlobUrl) return;
+    if (isPdf) return;
     const deproxied = deproxyUrl(real);
     if (deproxied !== addrRef.current) {
       setAddr(deproxied);
       viewApiRef.current?.notifyLocationChange?.(deproxied, real);
     }
-  }, [pdfBlobUrl]);
-
-  // 卸载时回收 blob URL, 避免内存泄漏
-  useEffect(() => () => {
-    if (pdfBlobUrl) URL.revokeObjectURL(pdfBlobUrl);
-  }, [pdfBlobUrl]);
+  }, [isPdf]);
 
   // 挂载: 注册视图句柄 + 消费待打开 URL
   useEffect(() => {
@@ -221,8 +318,7 @@ export const BrowserView: React.FC<{ resource?: any }> = () => {
         viewApiRef.current?.notifyFileOpen?.(absPath);
         return;
       }
-      // 兜底: 路径在 workspace 外 → 让 iframe 导航到原始 href (deproxy 后), 让浏览器原生处理
-      //   (Chrome 内嵌 PDF viewer 渲染或下载; 用户也可点 ↗ 在真实浏览器打开)
+      // 兜底: 路径在 workspace 外 → 让 iframe 导航到原始 href (deproxy 后), PdfjsPages 直接 fetch 渲染
       if (iframeRef.current && real) {
         const cw = iframeRef.current.contentWindow;
         if (cw) {
@@ -233,15 +329,7 @@ export const BrowserView: React.FC<{ resource?: any }> = () => {
             // src 由 iframe 导航驱动, 无需手动 set; 但跨端口路径仍走反代, 故 normalize 后给 src:
             const norm = normalizeUrl(real);
             setSrc(norm.src);
-            // PDF 单独触发 (norm 后会进 doNavigate 同样的 PDF 模式)
-            if (isPdfUrl(norm.src)) {
-              void fetchPdfBlob(norm.src).then((blobUrl) => {
-                setPdfBlobUrl((prev) => {
-                  if (prev) URL.revokeObjectURL(prev);
-                  return blobUrl || undefined;
-                });
-              });
-            }
+            setIsPdf(isPdfUrl(norm.src));
           } catch {
             /* 跨域时无法 navigate, 静默 */
           }
@@ -270,33 +358,15 @@ async function fetchAllPortsCwd(port: number): Promise<string | undefined> {
   }
 }
 
-/** 拉取 PDF 字节并转 blob URL (供 <embed> 用). 失败抛错, 返回 undefined. */
-async function fetchPdfBlob(src: string): Promise<string | undefined> {
-  if (!src) return undefined;
-  try {
-    const res = await fetch(src);
-    if (!res.ok) return undefined;
-    const blob = await res.blob();
-    return URL.createObjectURL(blob);
-  } catch {
-    return undefined;
-  }
-}
-
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     doNavigate(addr);
   };
 
   const reload = () => {
-    if (pdfBlobUrl) {
-      // PDF: 重新拉 blob 强制刷新 (Chrome PDF viewer 不能 reload <embed src=blob>)
-      void fetchPdfBlob(src).then((b) => {
-        setPdfBlobUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
-          return b || undefined;
-        });
-      });
+    if (isPdf) {
+      // PDF: 增加 nonce 让 PdfjsPages 重新加载 (fetch + render)
+      setNonce((n) => n + 1);
       return;
     }
     try { iframeRef.current?.contentWindow?.location.reload(); } catch { setNonce((n) => n + 1); }
@@ -343,14 +413,9 @@ async function fetchPdfBlob(src: string): Promise<string | undefined> {
         </button>
       </div>
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-        {pdfBlobUrl ? (
-          // PDF 模式: <embed> + blob URL (Chrome 的 PDF viewer 不能渲染 iframe 内的 PDF)
-          <embed
-            key={nonce}
-            src={pdfBlobUrl}
-            type="application/pdf"
-            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-          />
+        {isPdf ? (
+          // PDF 走 pdf.js 渲染 (跨环境可靠; 不依赖 Chrome PDF plugin)
+          <PdfjsPages key={nonce} src={src} />
         ) : (
           <iframe
             key={nonce}
@@ -361,7 +426,7 @@ async function fetchPdfBlob(src: string): Promise<string | undefined> {
             style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
           />
         )}
-        {iframeProxied && !pdfBlobUrl && (
+        {iframeProxied && !isPdf && (
           <div style={{ position: 'absolute', right: 8, bottom: 8, fontSize: 11, padding: '2px 8px', borderRadius: 10, background: 'rgba(0,0,0,0.55)', color: '#9ae6b4', pointerEvents: 'none' }}>
             反代同源 · 可调试
           </div>
