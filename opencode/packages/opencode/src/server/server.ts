@@ -36,6 +36,8 @@ type ListenOptions = CorsOptions & {
   mdnsDomain?: string
   registry?: string
   webUI?: string
+  /** vsix 扩展市场目录 (内置 /extensions 控制器扫描; 缺省不扫 → 空市场) */
+  extensionsDir?: string
 }
 type ListenerState = {
   scope: Scope.Scope
@@ -100,7 +102,7 @@ const listenEffect: (opts: ListenOptions) => Effect.Effect<EffectListener, unkno
 )
 
 function listenerLayer(opts: ListenOptions, port: number) {
-  return HttpRouter.serve(HttpApiApp.createRoutes(opts, opts.webUI, opts.registry), {
+  return HttpRouter.serve(HttpApiApp.createRoutes(opts, opts.webUI, opts.registry, opts.extensionsDir), {
     middleware: disposeMiddleware,
     disableLogger: true,
     disableListenLog: true,

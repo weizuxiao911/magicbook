@@ -69,6 +69,7 @@ import * as SessionExecutionLocal from "@opencode-ai/core/session/execution/loca
 import { lazy } from "@/util/lazy"
 import { CorsConfig, isAllowedCorsOrigin, type CorsOptions } from "@opencode-ai/server/cors"
 import { serveUIEffect } from "@/server/shared/ui"
+import { extensionsRoute } from "@/server/extensions-route"
 import { ServerAuth } from "@/server/auth"
 import { InstanceHttpApi, RootHttpApi } from "./api"
 import { Api } from "@opencode-ai/server/api"
@@ -283,6 +284,7 @@ export function createRoutes(
   corsOptions?: CorsOptions,
   webUIRoot?: string,
   registry?: string,
+  extensionsDir?: string,
 ): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
   const locationServiceMapV2 = buildLocationServiceMap()
 
@@ -294,6 +296,7 @@ export function createRoutes(
     serverRoutes,
     docRoute,
     numasPortsRoute,
+    extensionsRoute(extensionsDir),
     uiRoute(webUIRoot, registry),
   ).pipe(
     Layer.provide([

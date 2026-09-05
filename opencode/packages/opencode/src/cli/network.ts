@@ -48,7 +48,12 @@ const options = {
   },
   registry: {
     type: "string" as const,
-    describe: "registry service URL for the web UI (e.g. https://registry.example.com)",
+    describe: "extension market URL injected into the web UI (default: /extensions = built-in market controller)",
+    default: "/extensions" as string | undefined,
+  },
+  "extensions-dir": {
+    type: "string" as const,
+    describe: "vsix extension directory scanned by the built-in /extensions market (e.g. registry/vsix)",
   },
   "web-ui": {
     type: "string" as const,
@@ -101,6 +106,7 @@ export function resolveNetworkOptionsNoConfig(args: NetworkOptions, config?: Con
   const cors = [...configCors, ...argsCors]
   const registry = args.registry
   const webUI = args["web-ui"]
+  const extensionsDir = args["extensions-dir"]
 
-  return { hostname, port, mdns, mdnsDomain, cors, registry, webUI }
+  return { hostname, port, mdns, mdnsDomain, cors, registry, webUI, extensionsDir }
 }
