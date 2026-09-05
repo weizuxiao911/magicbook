@@ -130,10 +130,13 @@ export function serveUIEffect(
     /** 磁盘 UI 目录 (--web-ui): 运行时用磁盘上的 web UI 静态产物替换内嵌 bundle.
      *  dev 场景: sumi 改完只需重建产物 + 重启 server, 不必重编 opencode 二进制. */
     webUIRoot?: string
+    /** registry 地址 (--registry 启动参数透传): 注入前端 __APP_CONFIG__.registryBaseUrl.
+     *  绕开 context Reference 注入 (Effect v4 beta 无 Layer.provideService), 参数直传. */
+    registry?: string
   },
 ) {
   return Effect.gen(function* () {
-    const registry = yield* RegistryConfig
+    const registry = services.registry
     const path = new URL(request.url, "http://localhost").pathname
 
     // --web-ui 磁盘目录优先: 每次请求实时读盘

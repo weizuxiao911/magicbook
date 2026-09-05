@@ -100,7 +100,7 @@ const listenEffect: (opts: ListenOptions) => Effect.Effect<EffectListener, unkno
 )
 
 function listenerLayer(opts: ListenOptions, port: number) {
-  return HttpRouter.serve(HttpApiApp.createRoutes(opts, opts.webUI), {
+  return HttpRouter.serve(HttpApiApp.createRoutes(opts, opts.webUI, opts.registry), {
     middleware: disposeMiddleware,
     disableLogger: true,
     disableListenLog: true,
